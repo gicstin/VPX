@@ -6,7 +6,9 @@ const JOURNAL := "user://rename-transaction.cfg"
 const UNDO := "user://rename-undo.cfg"
 const Detector := preload("res://scripts/format_detector.gd")
 const PanoramaFiles := preload("res://scripts/panorama_files.gd")
-const SIDECARS := ["srt", "ass", "ssa", "vtt", "sub", "idx", "sup", "smi"]
+const MediaTracks := preload("res://scripts/media_tracks.gd")
+const SIDECARS := ["srt", "ass", "ssa", "vtt", "sub", "idx", "sup", "smi", "sami"]
+const MAX_MOVES := 1024
 
 var player: VPXPlayer
 var ui: Control
@@ -110,16 +112,25 @@ func rename_current(name: String) -> Dictionary:
 	if not checked["ok"] or checked["unchanged"]:
 		return checked
 	var moves: Array = [{"from": from, "to": checked["target"]}]
-	for filename: String in DirAccess.get_files_at(from.get_base_dir()):
-		if filename.get_basename() == from.get_file().get_basename() and filename.get_extension().to_lower() in SIDECARS:
-			var sidecar := from.get_base_dir().path_join(filename)
-			moves.append({"from": sidecar, "to": str(checked["target"]).get_basename() + "." + filename.get_extension()})
+	var stem := from.get_file().get_basename()
+	var directories := PackedStringArray([from.get_base_dir()])
+	for directory: String in DirAccess.get_directories_at(from.get_base_dir()):
+		if directory.to_lower() in MediaTracks.SUBTITLE_FOLDERS:
+			directories.append(from.get_base_dir().path_join(directory))
+	for directory in directories:
+		for filename: String in DirAccess.get_files_at(directory):
+			var belongs := MediaTracks.matches_stem(filename, stem)
+			if belongs and filename.get_extension().to_lower() in SIDECARS:
+				moves.append({"from": directory.path_join(filename), "to": directory.path_join(str(checked["target"]).get_file().get_basename() + filename.substr(stem.length()))})
 	for move: Dictionary in moves:
 		if _exists_exact(move["to"]) or DirAccess.dir_exists_absolute(move["to"]):
 			return {"ok": false, "error": "A target or subtitle filename already exists"}
 		move["size"] = FileAccess.get_size(move["from"])
 		move["mtime"] = FileAccess.get_modified_time(move["from"])
-	return await _execute(moves)
+	var subtitles := PackedStringArray()
+	for track: Dictionary in MediaTracks.find_external(from):
+		subtitles.append(track["path"])
+	return await _execute(moves, true, subtitles)
 
 
 func undo() -> Dictionary:
@@ -139,7 +150,7 @@ func undo() -> Dictionary:
 	return result
 
 
-func _execute(moves: Array, save_undo := true) -> Dictionary:
+func _execute(moves: Array, save_undo := true, subtitles := PackedStringArray()) -> Dictionary:
 	if not _valid_journal({"phase": "moving", "moves": moves}):
 		return {"ok": false, "error": "Invalid rename operation"}
 	for move: Dictionary in moves:
@@ -159,6 +170,10 @@ func _execute(moves: Array, save_undo := true) -> Dictionary:
 	for move: Dictionary in moves:
 		before_files[move["from"]] = Library.entries[move["from"]].duplicate(true) if Library.entries.has(move["from"]) else null
 	var journal := {"phase": "moving", "moves": moves, "steps": steps, "before": {"files": before_files, "last": Settings.last_file, "format_path": Settings.format_path}}
+	journal["subtitles"] = Array(subtitles)
+	if not _valid_journal(journal):
+		busy = false
+		return {"ok": false, "error": "Rename metadata exceeds supported limits"}
 	if not _write(JOURNAL, journal):
 		busy = false
 		return {"ok": false, "error": "Could not save rename recovery data"}
@@ -199,7 +214,7 @@ func _execute(moves: Array, save_undo := true) -> Dictionary:
 		if not _write(JOURNAL, journal):
 			failure = "Could not record renamed files"
 	if failure.is_empty():
-		_apply_paths(moves)
+		_apply_paths(moves, subtitles)
 		if active:
 			Library.set_pref(moves[0]["to"], "format", visual_format)
 		if Library.save() != OK or Settings.flush() != OK:
@@ -246,7 +261,13 @@ func _rekey_live(moves: Array) -> void:
 	player.current_path = mapping.get(player.current_path, player.current_path)
 	player.music_path = mapping.get(player.music_path, player.music_path)
 	player.loading_path = mapping.get(player.loading_path, player.loading_path)
-	player.prefetched.clear()
+	player.image_path = mapping.get(player.image_path, player.image_path)
+	player.image_file_info = Library._replace_paths(player.image_file_info, mapping)
+	player.loading_file_info = Library._replace_paths(player.loading_file_info, mapping)
+	for state: Dictionary in [player.load_state, player.playback_state]:
+		if state.has("path"):
+			state["path"] = mapping.get(state["path"], state["path"])
+	player.prefetch_images(PackedStringArray())
 	ui.playlist = _rekey_list(ui.playlist, mapping)
 	ui.music_playlist = _rekey_list(ui.music_playlist, mapping)
 	ui.listing = _rekey_list(ui.listing, mapping)
@@ -268,9 +289,18 @@ static func _rekey_list(paths: PackedStringArray, mapping: Dictionary) -> Packed
 	return result
 
 
-func _apply_paths(moves: Array) -> void:
+func _apply_paths(moves: Array, subtitles := PackedStringArray()) -> void:
 	var mapping := _mapping(moves)
 	Library.rekey_paths(mapping)
+	if not subtitles.is_empty():
+		var path: String = moves[0]["to"]
+		var saved: Variant = Library.get_pref(path, "subtitle_files", [])
+		var files: Array = saved.duplicate() if saved is Array else []
+		for source: String in subtitles:
+			var target: String = mapping.get(source, source)
+			if target not in files:
+				files.append(target)
+		Library.set_pref(path, "subtitle_files", files)
 	Settings.last_file = mapping.get(Settings.last_file, Settings.last_file)
 	Settings.format_path = mapping.get(Settings.format_path, Settings.format_path)
 	Settings.save_config()
@@ -284,8 +314,14 @@ static func _mapping(moves: Array) -> Dictionary:
 
 
 static func _valid_journal(data: Dictionary) -> bool:
-	if data.get("phase") not in ["moving", "moved", "committed", "rollback"] or not data.get("moves") is Array or data["moves"].is_empty() or data["moves"].size() > SIDECARS.size() + 1:
+	if data.get("phase") not in ["moving", "moved", "committed", "rollback"] or not data.get("moves") is Array or data["moves"].is_empty() or data["moves"].size() > MAX_MOVES:
 		return false
+	if data.has("subtitles"):
+		if not data["subtitles"] is Array or data["subtitles"].size() > MAX_MOVES:
+			return false
+		for path: Variant in data["subtitles"]:
+			if not path is String or not path.is_absolute_path() or path.contains("://"):
+				return false
 	var used := {}
 	for move: Variant in data["moves"]:
 		if not move is Dictionary or not move.get("from") is String or not move.get("to") is String or not move.get("size") is int or not move.get("mtime") is int:
@@ -381,7 +417,7 @@ func recover() -> void:
 				return
 			if data.has("before") and not Library.entries.has(move["from"]) and not Library.entries.has(move["to"]) and data["before"]["files"][move["from"]] is Dictionary:
 				Library.entries[move["from"]] = data["before"]["files"][move["from"]].duplicate(true)
-		_apply_paths(data["moves"])
+		_apply_paths(data["moves"], PackedStringArray(data.get("subtitles", [])))
 		if Library.save() != OK or Settings.flush() != OK or not _write(UNDO, data):
 			recovery_error = "Could not save recovered rename"
 			return

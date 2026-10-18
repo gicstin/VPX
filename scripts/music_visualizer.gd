@@ -19,6 +19,7 @@ var menu: Node3D
 var field: ResonanceField
 var analyzer: AudioEffectSpectrumAnalyzerInstance
 var bus_index := -1
+var output_bus: StringName = &"Master"
 var effect: AudioEffectSpectrumAnalyzer
 var spectrum: SpectrumCanvas
 var desktop_rect: TextureRect
@@ -28,7 +29,7 @@ var analysing := false
 var levels := PackedFloat32Array()
 var targets := PackedFloat32Array()
 var frequencies := PackedFloat32Array()
-var fallback_weights := PackedVector2Array()
+var fallback_axes := PackedVector3Array()
 var bound_playback: FFmpegVideoStreamPlayback
 var native_analysis := false
 var last_position := -1.0
@@ -55,6 +56,13 @@ var mono_position := 0
 var mono_low := 0.0
 var mono_smooth := 0.0
 var scope_gain := 1.0
+var native_features := {}
+var audio_power := Vector3.ZERO
+var audio_envelope := 0.0
+var audio_onset := 0.0
+var source_channels := 2
+var analysis_history: Array[Dictionary] = []
+var last_analysis_time := -1.0
 
 
 func _ready() -> void:
@@ -70,30 +78,32 @@ func _ready() -> void:
 		var az := float(cell % 16) * TAU / 16.0
 		var el := float(cell / 16 - 1) * PI / 4.0
 		var direction := Vector3(sin(az) * cos(el), sin(el), -cos(az) * cos(el))
-		fallback_weights.append(Vector2(pow(maxf(0.0, direction.dot(Vector3(-0.9063, 0, -0.4226))), 10.0), pow(maxf(0.0, direction.dot(Vector3(0.9063, 0, -0.4226))), 10.0)))
+		fallback_axes.append(direction)
 	super._ready()
 	bus_index = AudioServer.get_bus_index(BUS)
 	if bus_index < 0:
 		AudioServer.add_bus()
 		bus_index = AudioServer.bus_count - 1
 		AudioServer.set_bus_name(bus_index, BUS)
-		AudioServer.set_bus_send(bus_index, "Master")
+	output_bus = player.bus
+	AudioServer.set_bus_send(bus_index, output_bus)
 	effect = AudioEffectSpectrumAnalyzer.new()
 	effect.buffer_length = 0.1
 	effect.fft_size = AudioEffectSpectrumAnalyzer.FFT_SIZE_2048
 	AudioServer.add_bus_effect(bus_index, effect)
-	analyzer = AudioServer.get_bus_effect_instance(bus_index, AudioServer.get_bus_effect_count(bus_index) - 1)
 	AudioServer.set_bus_effect_enabled(bus_index, _effect_index(), false)
 	capture_effect = AudioEffectCapture.new()
 	capture_effect.buffer_length = 0.15
 	AudioServer.add_bus_effect(bus_index, capture_effect)
+	analyzer = AudioServer.get_bus_effect_instance(bus_index, _effect_index())
 	AudioServer.set_bus_effect_enabled(bus_index, _effect_index(capture_effect), false)
 	wave_left.resize(WAVE_HISTORY)
 	wave_right.resize(WAVE_HISTORY)
 	scope_left.resize(WAVE_HISTORY)
 	scope_right.resize(WAVE_HISTORY)
-	mono.resize(SCOPE_HISTORY)
-	mono_trigger.resize(SCOPE_HISTORY)
+	var scope_history := maxi(SCOPE_HISTORY, ceili(AudioServer.get_mix_rate() * (0.5 + SCOPE_WINDOW + SCOPE_SEARCH)) + 1)
+	mono.resize(scope_history)
+	mono_trigger.resize(scope_history)
 	player.bus = BUS
 	if desktop_rect != null:
 		desktop_rect.texture = viewport.get_texture()
@@ -118,6 +128,7 @@ func _bind() -> void:
 	if bound_playback != null and native_analysis:
 		bound_playback.set_visualizer_enabled(false)
 	bound_playback = player.playback
+	source_channels = int(bound_playback.get_audio_info().get("channels", 2)) if bound_playback != null else 2
 	native_analysis = bound_playback != null and bound_playback.has_method("get_visualizer_state") and bound_playback.has_method("set_visualizer_enabled")
 	if native_analysis:
 		bound_playback.set_visualizer_enabled(analysing)
@@ -131,6 +142,8 @@ func _reset() -> void:
 	last_feature_time = -1.0
 	last_position = -1.0
 	sample_age = 0.0
+	native_features.clear()
+	analysis_history.clear()
 	_reset_waveform()
 	if field != null:
 		field.reset()
@@ -172,9 +185,10 @@ func _process(delta: float) -> void:
 	if last_position >= 0.0 and absf(position_now - last_position) > maxf(0.3, delta * Settings.playback_speed * 4.0):
 		_reset()
 	last_position = position_now
-	var silent := player.paused or Settings.muted or Settings.volume == 0 or not player.is_playing()
+	var silent := player.paused or not player.is_playing()
 	if silent:
 		_reset_waveform()
+		analysis_history.clear()
 		targets.fill(0.0)
 		if field != null:
 			field.silence()
@@ -183,14 +197,11 @@ func _process(delta: float) -> void:
 			_sample_waveform()
 		elapsed += delta
 		sample_age += delta
-		if native_analysis or elapsed >= ANALYSIS_INTERVAL:
+		if elapsed >= ANALYSIS_INTERVAL:
 			elapsed = fmod(elapsed, ANALYSIS_INTERVAL)
 			if native_analysis:
 				_sample_native()
-				if sample_age > NATIVE_GAP_TIMEOUT:
-					_sample_fallback(false)
-			else:
-				_sample_fallback()
+			_sample_fallback(not native_analysis)
 	for i in BANDS:
 		var blend := 1.0 - exp(-delta * (60.0 if targets[i] > levels[i] else 10.0))
 		levels[i] = lerpf(levels[i], targets[i], blend)
@@ -221,6 +232,10 @@ func _reset_waveform() -> void:
 	mono_low = 0.0
 	mono_smooth = 0.0
 	scope_gain = 1.0
+	audio_power = Vector3.ZERO
+	audio_envelope = 0.0
+	audio_onset = 0.0
+	last_analysis_time = -1.0
 	spectrum.wave = PackedFloat32Array()
 	if capture_effect != null:
 		capture_effect.clear_buffer()
@@ -239,7 +254,10 @@ func _sample_waveform() -> void:
 	var scope_blend := 1.0 - exp(-TAU * 1600.0 / rate)
 	var trigger_blend := 1.0 - exp(-TAU * 300.0 / rate)
 	var display_blend := 1.0 - exp(-TAU * 3000.0 / rate)
+	var power_blend := 1.0 - exp(-1.0 / 256.0)
 	for frame in frames:
+		audio_power = audio_power.lerp(Vector3(frame.x * frame.x, frame.y * frame.y, frame.x * frame.y), power_blend)
+		wave_phase += WAVE_RATE / rate
 		wave_dc = wave_dc.lerp(frame, dc_blend)
 		wave_low = wave_low.lerp(frame - wave_dc, low_blend)
 		wave_filtered = wave_filtered.lerp(wave_low, low_blend)
@@ -252,8 +270,7 @@ func _sample_waveform() -> void:
 		mono_smooth = lerpf(mono_smooth, mixed, display_blend)
 		mono[mono_position] = mono_smooth
 		mono_trigger[mono_position] = mono_low
-		mono_position = (mono_position + 1) % SCOPE_HISTORY
-		wave_phase += WAVE_RATE / rate
+		mono_position = (mono_position + 1) % mono.size()
 		if wave_phase >= 1.0:
 			wave_phase -= 1.0
 			wave_left[wave_position] = wave_bass.x
@@ -263,13 +280,17 @@ func _sample_waveform() -> void:
 			wave_position = (wave_position + 1) % WAVE_HISTORY
 	if Settings.music_visualizer and Settings.music_visualizer_mode == OSCILLOSCOPE:
 		_update_scope(rate, frames.size() / rate)
+	_update_waveform()
+
+
+func _update_waveform() -> void:
 	if field == null or not field.active:
 		return
 	var data := PackedFloat32Array()
 	data.resize(WAVE_SAMPLES * 2)
 	var scope := PackedFloat32Array()
 	scope.resize(WAVE_SAMPLES * 2)
-	var delay_samples := int(clampf(AudioServer.get_output_latency() - Settings.visualizer_sync, 0.0, 0.5) * WAVE_RATE)
+	var delay_samples := int(_analysis_delay() * WAVE_RATE)
 	for i in WAVE_SAMPLES:
 		var index := posmod(wave_position - WAVE_SAMPLES - delay_samples + i, WAVE_HISTORY)
 		data[i] = wave_left[index]
@@ -280,14 +301,18 @@ func _sample_waveform() -> void:
 	field.feed_scope(scope)
 
 
+func _analysis_delay() -> float:
+	return clampf(AudioServer.get_output_latency() - minf(Settings.visualizer_sync, Settings.visualizer_advance_limit()), 0.0, 0.5)
+
+
 func _update_scope(rate: float, delta: float) -> void:
 	var window := int(SCOPE_WINDOW * rate)
-	var delay := int(clampf(AudioServer.get_output_latency() - Settings.visualizer_sync, 0.0, 0.5) * rate)
+	var delay := int(_analysis_delay() * rate)
 	var start := mono_position - delay - window
 	var trigger := start
 	for offset in int(SCOPE_SEARCH * rate):
 		var index := start - offset
-		if mono_trigger[posmod(index - 1, SCOPE_HISTORY)] < 0.0 and mono_trigger[posmod(index, SCOPE_HISTORY)] >= 0.0:
+		if mono_trigger[posmod(index - 1, mono.size())] < 0.0 and mono_trigger[posmod(index, mono.size())] >= 0.0:
 			trigger = index
 			break
 	var peak := 0.0
@@ -298,7 +323,7 @@ func _update_scope(rate: float, delta: float) -> void:
 		var to := maxi(trigger + (point + 1) * window / SCOPE_POINTS, from + 1)
 		var total := 0.0
 		for index in range(from, to):
-			total += mono[posmod(index, SCOPE_HISTORY)]
+			total += mono[posmod(index, mono.size())]
 		wave[point] = total / (to - from)
 		peak = maxf(peak, absf(wave[point]))
 	var wanted_gain := clampf(0.8 / maxf(peak, 0.0001), 1.0, 10.0)
@@ -314,7 +339,7 @@ static func _mix(left: float, right: float) -> float:
 
 
 func _sample_native() -> void:
-	var offset := Settings.visualizer_sync * 1000.0 - AudioServer.get_output_latency() * 1000.0
+	var offset := -_analysis_delay() * 1000.0
 	var features: Dictionary = bound_playback.get_visualizer_state(offset)
 	if features.is_empty():
 		return
@@ -326,37 +351,73 @@ func _sample_native() -> void:
 		return
 	last_feature_time = time
 	sample_age = 0.0
-	for i in BANDS:
-		targets[i] = _mix(data[i], data[BANDS + i])
-	if field != null and field.active:
-		if int(features.get("channels", 2)) > 2:
-			features["spatial"] = bound_playback.get_audio_info().get("spatial", false)
-		field.feed(data, features)
+	native_features = features
+	source_channels = int(features.get("channels", source_channels))
 
 
 func _sample_fallback(reset_age := true) -> void:
 	var data := PackedFloat32Array()
 	data.resize(BANDS * 50)
-	var sum := 0.0
+	var magnitudes := PackedVector2Array()
 	for i in BANDS:
-		var magnitude := analyzer.get_magnitude_for_frequency_range(frequencies[i], frequencies[i + 1], AudioEffectSpectrumAnalyzerInstance.MAGNITUDE_AVERAGE)
+		magnitudes.append(analyzer.get_magnitude_for_frequency_range(frequencies[i], frequencies[i + 1], AudioEffectSpectrumAnalyzerInstance.MAGNITUDE_AVERAGE))
+	var now := Time.get_ticks_usec() * 0.000001
+	var delta := maxf(0.0, now - last_analysis_time) if last_analysis_time >= 0.0 else ANALYSIS_INTERVAL
+	last_analysis_time = now
+	analysis_history.append({"time": now, "magnitudes": magnitudes, "power": audio_power})
+	while analysis_history.size() > 128 or (analysis_history.size() > 1 and now - float(analysis_history[0]["time"]) > 0.65):
+		analysis_history.pop_front()
+	var selected := {}
+	for i in range(analysis_history.size() - 1, -1, -1):
+		if float(analysis_history[i]["time"]) <= now - _analysis_delay():
+			selected = analysis_history[i]
+			break
+	var power: Vector3 = selected.get("power", Vector3.ZERO)
+	magnitudes = selected.get("magnitudes", PackedVector2Array())
+	if magnitudes.is_empty():
+		magnitudes.resize(BANDS)
+	var rms := sqrt(maxf(0.0, (power.x + power.y) * 0.5))
+	var correlation := clampf(power.z / sqrt(power.x * power.y), -1.0, 1.0) if power.x * power.y > 0.000000000001 else 1.0
+	var width := sqrt(clampf((power.x + power.y - 2.0 * power.z) / maxf(0.000000000001, 2.0 * (power.x + power.y)), 0.0, 1.0))
+	audio_onset = maxf(maxf(0.0, rms - audio_envelope * 1.15), audio_onset * exp(-delta * 22.0))
+	audio_envelope = lerpf(audio_envelope, rms, 1.0 - exp(-delta * (40.0 if rms > audio_envelope else 4.0)))
+	var features := {"rms": rms, "onset": audio_onset, "width": width, "correlation": correlation, "channels": 1 if source_channels == 1 else 2}
+	var native_data: PackedFloat32Array = native_features.get("spectrum", PackedFloat32Array())
+	var spatial := native_analysis and sample_age <= NATIVE_GAP_TIMEOUT and int(native_features.get("channels", 2)) > 2 and native_data.size() == BANDS * 50
+	if spatial:
+		features["channels"] = native_features["channels"]
+		features["ambisonic"] = native_features.get("ambisonic", false)
+		features["spatial"] = bound_playback.get_audio_info().get("spatial", false)
+	for i in BANDS:
+		var magnitude := magnitudes[i]
 		data[i] = clampf((linear_to_db(maxf(magnitude.x, 0.000001)) + 60.0) / 60.0, 0.0, 1.0)
 		data[BANDS + i] = clampf((linear_to_db(maxf(magnitude.y, 0.000001)) + 60.0) / 60.0, 0.0, 1.0)
 		targets[i] = clampf((linear_to_db(maxf((magnitude.x + magnitude.y) * 0.5, 0.000001)) + 60.0) / 60.0, 0.0, 1.0)
-		sum += magnitude.length()
+		if field == null or not field.active:
+			continue
+		var pan := (magnitude.y * magnitude.y - magnitude.x * magnitude.x) / maxf(0.000000000001, magnitude.length_squared())
+		var direction := Vector3(pan, 0, -sqrt(maxf(0.0, 1.0 - pan * pan)))
+		var diffuse := (1.0 - correlation) * 0.35
 		for cell in 48:
-			data[(cell + 2) * BANDS + i] = clampf((linear_to_db(maxf(magnitude.dot(fallback_weights[cell]), 0.000001)) + 60.0) / 60.0, 0.0, 1.0)
+			var index := (cell + 2) * BANDS + i
+			if spatial:
+				var native_peak := maxf(native_data[i], native_data[BANDS + i])
+				data[index] = clampf(native_data[index] + maxf(data[i], data[BANDS + i]) - native_peak, 0.0, 1.0) if native_data[index] > 0.0 else 0.0
+			else:
+				var dot := maxf(0.0, fallback_axes[cell].dot(direction))
+				var weight := pow(dot, 10.0) * (1.0 - diffuse) + dot * dot * diffuse
+				data[index] = clampf((linear_to_db(maxf(maxf(magnitude.x, magnitude.y) * weight, 0.000001)) + 60.0) / 60.0, 0.0, 1.0)
 	if reset_age:
 		sample_age = 0.0
 	if field != null and field.active:
-		field.feed(data, {"rms": minf(sum, 0.3), "channels": 2})
+		field.feed(data, features)
 
 
 func _exit_tree() -> void:
 	if bound_playback != null and native_analysis:
 		bound_playback.set_visualizer_enabled(false)
 	if is_instance_valid(player) and player.bus == BUS:
-		player.bus = "Master"
+		player.bus = output_bus
 	var index := AudioServer.get_bus_index(BUS)
 	if index >= 0:
 		var capture_index := _effect_index(capture_effect)

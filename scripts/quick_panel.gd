@@ -1,5 +1,6 @@
 extends PanelContainer
 
+signal bookmark_name_requested(text: String)
 signal menu_requested
 signal close_requested
 signal recenter_requested
@@ -36,6 +37,11 @@ var current_tab := 0
 var sleep_hint: Label
 var loop_button: Button
 var loop_clear: Button
+var bookmark_editor: VBoxContainer
+var bookmark_name_field: LineEdit
+var bookmark_presets: OptionButton
+var bookmark_edit_time := -1.0
+var bookmark_edit_path := ""
 var bookmark_list: VBoxContainer
 var chapter_list: VBoxContainer
 var shown_chapter := -2
@@ -204,7 +210,6 @@ func _build_format(page: VBoxContainer) -> void:
 
 
 func _build_audio(page: VBoxContainer) -> void:
-	Rows.music_visualizer(page)
 	sleep_hint = Rows.hint(Rows.playback(page), "")
 	var tracks := Rows.section(page, "Audio track")
 	audio_list = VBoxContainer.new()
@@ -273,7 +278,10 @@ func _build_marks(page: VBoxContainer) -> void:
 	actions.add_theme_constant_override("separation", 10)
 	marks.add_child(actions)
 	var add := _action("Add bookmark", "bookmark")
-	add.pressed.connect(func() -> void: player.add_bookmark())
+	add.pressed.connect(func() -> void:
+		var time := player.add_bookmark()
+		if time >= 0.0:
+			_edit_bookmark(time))
 	actions.add_child(add)
 	loop_button = _action("Loop: set A", "loop")
 	loop_button.pressed.connect(player.set_loop_point)
@@ -281,6 +289,35 @@ func _build_marks(page: VBoxContainer) -> void:
 	loop_clear = _action("Clear loop", "close")
 	loop_clear.pressed.connect(player.clear_loop)
 	actions.add_child(loop_clear)
+	bookmark_editor = VBoxContainer.new()
+	bookmark_editor.visible = false
+	marks.add_child(bookmark_editor)
+	bookmark_name_field = LineEdit.new()
+	bookmark_name_field.placeholder_text = "Bookmark name (optional)"
+	bookmark_name_field.max_length = VPXPlayer.BOOKMARK_NAME_MAX
+	bookmark_name_field.custom_minimum_size.y = TRACK_HEIGHT
+	bookmark_name_field.text_submitted.connect(func(_text: String) -> void: _save_bookmark_name())
+	bookmark_editor.add_child(bookmark_name_field)
+	bookmark_presets = OptionButton.new()
+	bookmark_presets.fit_to_longest_item = false
+	bookmark_presets.clip_text = true
+	bookmark_presets.action_mode = BaseButton.ACTION_MODE_BUTTON_RELEASE
+	bookmark_presets.custom_minimum_size.y = TRACK_HEIGHT
+	bookmark_presets.item_selected.connect(func(index: int) -> void:
+		if index > 0:
+			bookmark_name_field.text = bookmark_presets.get_item_text(index))
+	bookmark_editor.add_child(bookmark_presets)
+	var edit_actions := HBoxContainer.new()
+	bookmark_editor.add_child(edit_actions)
+	var keyboard := _action("Keyboard", "keyboard")
+	keyboard.pressed.connect(func() -> void: bookmark_name_requested.emit(bookmark_name_field.text))
+	edit_actions.add_child(keyboard)
+	var save := _action("Save name", "check")
+	save.pressed.connect(_save_bookmark_name)
+	edit_actions.add_child(save)
+	var cancel := _action("Cancel", "close")
+	cancel.pressed.connect(func() -> void: bookmark_editor.hide())
+	edit_actions.add_child(cancel)
 	bookmark_list = VBoxContainer.new()
 	bookmark_list.add_theme_constant_override("separation", 4)
 	marks.add_child(bookmark_list)
@@ -288,6 +325,30 @@ func _build_marks(page: VBoxContainer) -> void:
 	chapter_list = VBoxContainer.new()
 	chapter_list.add_theme_constant_override("separation", 4)
 	chapters.add_child(chapter_list)
+
+
+func _edit_bookmark(time: float) -> void:
+	bookmark_edit_time = time
+	bookmark_edit_path = player.bookmark_path()
+	bookmark_name_field.text = player.bookmark_name(time)
+	bookmark_presets.clear()
+	bookmark_presets.add_item("Previous names")
+	for title: String in player.bookmark_name_history():
+		bookmark_presets.add_item(title)
+	bookmark_presets.disabled = bookmark_presets.item_count == 1
+	bookmark_editor.show()
+	bookmark_name_field.grab_focus()
+
+
+func set_bookmark_name_text(text: String) -> void:
+	if bookmark_editor.visible and bookmark_edit_path == player.bookmark_path():
+		bookmark_name_field.text = text.left(VPXPlayer.BOOKMARK_NAME_MAX)
+
+
+func _save_bookmark_name() -> void:
+	if bookmark_editor.visible and bookmark_edit_path == player.bookmark_path():
+		if player.rename_bookmark(bookmark_edit_time, bookmark_name_field.text):
+			bookmark_editor.hide()
 
 
 func _action(text: String, icon_name: String) -> Button:
@@ -303,6 +364,7 @@ func _action(text: String, icon_name: String) -> Button:
 func _rebuild_marks() -> void:
 	if bookmark_list == null:
 		return
+	bookmark_editor.hide()
 	if player.loop_a < 0.0:
 		loop_button.text = "Loop: set A"
 	elif player.loop_b < 0.0:
@@ -320,7 +382,10 @@ func _rebuild_marks() -> void:
 		row.add_theme_constant_override("separation", 6)
 		bookmark_list.add_child(row)
 		var jump := Button.new()
-		jump.text = "%s   %s" % [MediaInfo.duration_text(time), player.chapter_title(player.chapter_at(time))]
+		var title := player.bookmark_name(time)
+		jump.text = "%s   %s" % [MediaInfo.duration_text(time), title if not title.is_empty() else player.chapter_title(player.chapter_at(time))]
+		jump.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		jump.tooltip_text = jump.text
 		jump.icon = VpxTheme.icon("bookmark", 22)
 		jump.theme_type_variation = &"Chip"
 		jump.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -329,6 +394,9 @@ func _rebuild_marks() -> void:
 		jump.custom_minimum_size.y = TRACK_HEIGHT
 		jump.pressed.connect(func() -> void: player.seek_to(time))
 		row.add_child(jump)
+		var rename := _header_button("Rename", "keyboard")
+		rename.pressed.connect(func() -> void: _edit_bookmark(time))
+		row.add_child(rename)
 		var remove := _header_button("", "trash")
 		remove.pressed.connect(func() -> void: player.remove_bookmark(time))
 		row.add_child(remove)
@@ -871,10 +939,6 @@ func _fill_list(list: VBoxContainer, entries: Array, selected: int, pick: Callab
 func _sync() -> void:
 	spirit_level.visible = SpiritLevel.applicable(player, Settings.projection == Settings.ProjectionMode.FLAT)
 	level_button.visible = spirit_level.visible
-	var key := "%d:%d" % [Settings.projection, Settings.stereo]
-	var sizes: Dictionary = Settings.subtitle_size_by_format
-	if sizes.has(key):
-		Settings.apply("subtitle_size", float(sizes[key]))
 	var flat := Settings.projection == Settings.ProjectionMode.FLAT
 	for row in flat_rows:
 		row.visible = flat

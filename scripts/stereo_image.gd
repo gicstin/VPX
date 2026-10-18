@@ -15,6 +15,8 @@ const SOURCE_THRESHOLD := 0.2
 const SOURCE_PAN_STEP := 0.25
 const MATCH_DISTANCE := 0.45
 
+var correlation_ring := Ring.new(1, HISTORY, RATE)
+var correlation := 1.0
 var band_ring := Ring.new(BANDS, HISTORY, RATE)
 var field_ring := Ring.new(PAN_BINS, HISTORY, RATE)
 var source_ring := Ring.new(SLOTS, SOURCE_HISTORY, RATE)
@@ -22,6 +24,7 @@ var scope_image: Image
 var scope_texture: ImageTexture
 var scope_head := 0
 var scope_elapsed := 0.0
+var scope_delta := 0.0
 var scope_gain := 1.0
 var scope_active := false
 var left_targets := PackedFloat32Array()
@@ -69,10 +72,8 @@ class Ring extends RefCounted:
 
 	func due(delta: float) -> int:
 		elapsed += delta
-		var count := 0
-		while elapsed >= 1.0 / rate:
-			elapsed -= 1.0 / rate
-			count += 1
+		var count := int(floor((elapsed + 0.00000001) * rate))
+		elapsed = maxf(0.0, elapsed - count / rate)
 		return count
 
 	func write() -> void:
@@ -112,7 +113,8 @@ func _init() -> void:
 	scope_texture = ImageTexture.create_from_image(scope_image)
 
 
-func feed(data: PackedFloat32Array, single: bool) -> void:
+func feed(data: PackedFloat32Array, single: bool, phase := 1.0) -> void:
+	correlation = clampf(phase, -1.0, 1.0)
 	mono = single
 	for band in BANDS:
 		left_targets[band] = data[band]
@@ -124,18 +126,21 @@ func feed_scope(data: PackedFloat32Array) -> void:
 	var peak := 0.0001
 	for value in data:
 		peak = maxf(peak, absf(value))
-	scope_gain = lerpf(scope_gain, clampf(0.85 / peak, 1.0, 300.0), 0.08 if 0.85 / peak < scope_gain else 0.02)
+	var speed := -log(0.92 if 0.85 / peak < scope_gain else 0.98) * 90.0
+	scope_gain = lerpf(scope_gain, clampf(0.85 / peak, 1.0, 300.0), 1.0 - exp(-scope_delta * speed))
 	var scaled := PackedFloat32Array()
 	scaled.resize(data.size())
 	for i in data.size():
 		scaled[i] = clampf(data[i] * scope_gain, -1.2, 1.2)
-	if scope_elapsed >= 1.0 / SCOPE_RATE:
-		scope_elapsed = fmod(scope_elapsed, 1.0 / SCOPE_RATE)
-		scope_head = (scope_head + 1) % SCOPE_FRAMES
 	var frame := Image.create_from_data(SCOPE_SAMPLES, 2, false, Image.FORMAT_RF, scaled.to_byte_array())
+	while scope_elapsed >= 1.0 / SCOPE_RATE:
+		scope_elapsed -= 1.0 / SCOPE_RATE
+		scope_head = (scope_head + 1) % SCOPE_FRAMES
+		scope_image.blit_rect(frame, Rect2i(0, 0, SCOPE_SAMPLES, 2), Vector2i(0, scope_head * 2))
 	scope_image.blit_rect(frame, Rect2i(0, 0, SCOPE_SAMPLES, 2), Vector2i(0, scope_head * 2))
 	scope_texture.update(scope_image)
 	scope_active = true
+	scope_delta = 0.0
 
 
 func clear_scope() -> void:
@@ -145,6 +150,9 @@ func clear_scope() -> void:
 	scope_image.fill(Color(0, 0, 0, 0))
 	scope_texture.update(scope_image)
 	scope_gain = 1.0
+	scope_elapsed = 0.0
+	scope_delta = 0.0
+	scope_head = 0
 
 
 func clear() -> void:
@@ -155,6 +163,8 @@ func clear() -> void:
 	right_levels.fill(0.0)
 	levels.fill(0.0)
 	pans.fill(0.0)
+	correlation_ring.clear()
+	correlation = 1.0
 	band_ring.clear()
 	field_ring.clear()
 	source_ring.clear()
@@ -172,6 +182,7 @@ func clear() -> void:
 
 func update(delta: float) -> void:
 	scope_elapsed += delta
+	scope_delta += delta
 	var attack := 1.0 - exp(-delta * 35.0)
 	var release := 1.0 - exp(-delta * 9.0)
 	var steer := 1.0 - exp(-delta * 10.0)
@@ -196,15 +207,22 @@ func update(delta: float) -> void:
 			slot.level = 0.0
 	if active:
 		var ticks := band_ring.due(delta)
+		correlation_ring.elapsed = band_ring.elapsed
 		field_ring.elapsed = band_ring.elapsed
 		source_ring.elapsed = band_ring.elapsed
-		if ticks > 0:
+		for tick in ticks:
 			_identify()
 			_write_rows()
+		if ticks > 0:
+			correlation_ring.texture.update(correlation_ring.image)
+			band_ring.texture.update(band_ring.image)
+			field_ring.texture.update(field_ring.image)
+			source_ring.texture.update(source_ring.image)
 	_publish()
 
 
 func bind(material: ShaderMaterial) -> void:
+	material.set_shader_parameter("correlation_texture", correlation_ring.texture)
 	material.set_shader_parameter("band_texture", band_ring.texture)
 	material.set_shader_parameter("field_texture", field_ring.texture)
 	material.set_shader_parameter("source_texture", source_ring.texture)
@@ -212,6 +230,7 @@ func bind(material: ShaderMaterial) -> void:
 
 
 func apply(material: ShaderMaterial) -> void:
+	correlation_ring.bind(material, "correlation")
 	band_ring.bind(material, "band")
 	field_ring.bind(material, "field")
 	source_ring.bind(material, "source")
@@ -273,12 +292,11 @@ func _write_rows() -> void:
 	for i in SLOTS:
 		var slot := slots[i]
 		source_ring.row[i] = Color(slot.pan, slot.band, slot.level, slot.hue)
+	correlation_ring.row[0] = Color(correlation, maxf(channel_balance.x, channel_balance.y), 0.0, 0.0)
+	correlation_ring.write()
 	band_ring.write()
 	field_ring.write()
 	source_ring.write()
-	band_ring.texture.update(band_ring.image)
-	field_ring.texture.update(field_ring.image)
-	source_ring.texture.update(source_ring.image)
 
 
 func _identify() -> void:

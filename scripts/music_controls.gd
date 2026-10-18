@@ -29,6 +29,7 @@ var visualizer_button: Button
 var immersive_button: Button
 var previous_style_button: Button
 var next_style_button: Button
+var scene_picker: Dropdown
 var play_button: Button
 var favorite_button: Button
 var seeking := false
@@ -61,7 +62,7 @@ func _init() -> void:
 	metadata.add_child(time_label)
 	visualizer_button = _icon_button(header, "audio", func() -> void: Settings.apply("music_visualizer", not Settings.music_visualizer))
 	visualizer_button.toggle_mode = true
-	immersive_button = _icon_button(header, "format", _toggle_immersive)
+	immersive_button = _icon_button(header, "format", Callable())
 	immersive_button.toggle_mode = true
 	favorite_button = _favorite_button(header)
 	volume_button = _icon_button(header, "volume", func() -> void: volume_row.visible = not volume_row.visible)
@@ -125,6 +126,12 @@ func _init() -> void:
 	next_style_button = _icon_button(controls, "chevron_right", func() -> void: _cycle_style(1))
 	next_style_button.tooltip_text = "Next immersive visualizer style"
 	next_style_button.visible = false
+	scene_picker = preload("res://scripts/visualizer_picker.gd").new()
+	scene_picker.scene_selected.connect(func() -> void: player.enter_immersive_music())
+	scene_picker.external_button = immersive_button
+	scene_picker.setting = &"visualizer_preset"
+	scene_picker.options = PackedStringArray(Settings.VISUALIZER_PRESETS)
+	rows.add_child(scene_picker)
 	preview_button = _icon_button(self, "audio", func() -> void: set_collapsed(false), 48)
 	preview_button.custom_minimum_size = Vector2.ONE * (PREVIEW_SIZE - 16.0)
 	preview_button.visible = false
@@ -164,9 +171,12 @@ func refresh() -> void:
 	spectrum_view.visible = Settings.music_visualizer
 	visualizer_button.set_pressed_no_signal(Settings.music_visualizer)
 	visualizer_button.tooltip_text = "Hide compact music visualizer" if Settings.music_visualizer else "Show compact music visualizer"
+	if not player._audio_only_playing():
+		scene_picker.close()
+	immersive_button.visible = player._audio_only_playing()
 	var immersive := player.is_immersive_visualizer_active()
 	immersive_button.set_pressed_no_signal(immersive)
-	immersive_button.tooltip_text = "Exit immersive music visualizer" if immersive else "Enter immersive music visualizer"
+	scene_picker._pull()
 	previous_style_button.visible = immersive
 	next_style_button.visible = immersive
 	var length := player.get_stream_length()
@@ -181,15 +191,6 @@ func refresh() -> void:
 	play_button.icon = VpxTheme.icon("pause" if playing else "play", 36)
 	play_button.tooltip_text = "Pause music" if playing else "Play music"
 	_refresh_favorite()
-
-
-func _toggle_immersive() -> void:
-	if player.is_immersive_visualizer_active():
-		Settings.apply("immersive_music_visualizer", false)
-	else:
-		Settings.apply("immersive_music_visualizer", true)
-		Settings.apply("visualizer_over_images", true)
-	refresh()
 
 
 func _cycle_style(direction: int) -> void:
@@ -302,6 +303,7 @@ func _icon_button(parent: Control, icon_name: String, action: Callable, size := 
 	button.add_theme_constant_override("icon_max_width", size)
 	button.icon = VpxTheme.icon(icon_name, size)
 	button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	button.pressed.connect(action)
+	if action.is_valid():
+		button.pressed.connect(action)
 	parent.add_child(button)
 	return button

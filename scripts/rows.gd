@@ -83,20 +83,3 @@ static func playback(parent: Control) -> VBoxContainer:
 	stepper(rows, "Speed", &"playback_speed", 0.5, 2.0, 0.25, {"decimals": 2, "suffix": "×", "resettable": true})
 	choice(rows, "Sleep timer", &"sleep_timer", PackedStringArray(["Off", "15 m", "30 m", "45 m", "60 m", "90 m", "End"]))
 	return rows
-
-
-static func music_visualizer(parent: Control) -> VBoxContainer:
-	var rows := section(parent, "Resonance Field")
-	toggle(rows, "Compact music visualizer", &"music_visualizer")
-	dropdown(rows, "Compact display", &"music_visualizer_mode", PackedStringArray(["Compact spectrum", "Compact oscilloscope"]), PackedInt32Array([0, 2]))
-	toggle(rows, "Immersive music visualizer", &"immersive_music_visualizer")
-	dropdown(rows, "Scene", &"visualizer_preset", PackedStringArray(Settings.VISUALIZER_PRESETS))
-	dropdown(rows, "Visual quality", &"visualizer_quality", PackedStringArray(["Automatic", "Performance", "Balanced", "High"]))
-	stepper(rows, "Intensity", &"visualizer_intensity", 0.0, 1.5, 0.05, {"scale": 100.0, "suffix": "%", "resettable": true})
-	stepper(rows, "Depth sensitivity", &"visualizer_sensitivity", 0.5, 4.0, 0.05, {"scale": 100.0, "suffix": "%", "resettable": true})
-	stepper(rows, "Motion", &"visualizer_motion", 0.0, 1.0, 0.05, {"scale": 100.0, "suffix": "%", "resettable": true})
-	stepper(rows, "Visual timing", &"visualizer_sync", -0.25, 0.25, 0.005, {"scale": 1000.0, "suffix": " ms", "resettable": true})
-	toggle(rows, "Change scenes automatically", &"visualizer_auto_change")
-	toggle(rows, "Immersive visuals over photos", &"visualizer_over_images")
-	hint(rows, "Short thumbstick press cycles scenes; hold to recenter. Depth scenes show recent left/right audio history flowing from far away towards you. Photos keep the compact spectrum unless enabled above. Positive timing advances the visuals.")
-	return rows

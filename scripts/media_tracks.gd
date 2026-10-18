@@ -19,6 +19,8 @@ var audio_choice := -1
 var subtitle_choice := -1
 var source: VPXSubtitles
 var restoring := false
+var subtitle_serial := 0
+var subtitle_tasks: Array[int] = []
 var applied_audio_delay := 0.0
 var applied_subtitle_delay := 0.0
 
@@ -27,7 +29,15 @@ func _ready() -> void:
 	Settings.changed.connect(_on_settings_changed)
 
 
+func _process(_delta: float) -> void:
+	for task in subtitle_tasks.duplicate():
+		if WorkerThreadPool.is_task_completed(task):
+			WorkerThreadPool.wait_for_task_completion(task)
+			subtitle_tasks.erase(task)
+
+
 func reset() -> void:
+	subtitle_serial += 1
 	playback = null
 	path = ""
 	audio_tracks = []
@@ -38,7 +48,7 @@ func reset() -> void:
 	changed.emit()
 
 
-func load_for(file_path: String, video_playback: FFmpegVideoStreamPlayback) -> void:
+func load_for(file_path: String, video_playback: FFmpegVideoStreamPlayback, external: Variant = null) -> void:
 	restoring = true
 	playback = video_playback
 	path = file_path
@@ -48,12 +58,15 @@ func load_for(file_path: String, video_playback: FFmpegVideoStreamPlayback) -> v
 		for track in playback.get_subtitle_tracks():
 			track["kind"] = "embedded"
 			subtitle_tracks.append(track)
-	subtitle_tracks.append_array(find_external(file_path))
-	var imported: Variant = Library.get_pref(path, "subtitle_files", [])
-	if imported is Array:
-		for external_path in imported:
-			if FileAccess.file_exists(str(external_path)) and not _has_external_path(str(external_path)):
-				subtitle_tracks.append(_external_track(str(external_path), str(external_path).get_file()))
+	if external is Array:
+		subtitle_tracks.append_array(external)
+	else:
+		subtitle_tracks.append_array(find_external(file_path))
+		var imported: Variant = Library.get_pref(path, "subtitle_files", [])
+		if imported is Array:
+			for external_path in imported:
+				if FileAccess.file_exists(str(external_path)) and not _has_external_path(str(external_path)):
+					subtitle_tracks.append(_external_track(str(external_path), str(external_path).get_file()))
 	audio_choice = playback.get_audio_track() if playback != null else -1
 	subtitle_choice = -1
 	source = null
@@ -214,7 +227,12 @@ func _restore_subtitle() -> void:
 	if saved is Dictionary:
 		for i in subtitle_tracks.size():
 			var track: Dictionary = subtitle_tracks[i]
-			if track["kind"] == saved.get("kind") and (track.get("index", -1) == int(saved.get("index", -2)) or track.get("path", "") == saved.get("path", "")):
+			var matches: bool
+			if track["kind"] == "embedded":
+				matches = int(saved.get("index", -1)) >= 0 and track.get("index", -1) == int(saved["index"])
+			else:
+				matches = not str(saved.get("path", "")).is_empty() and track.get("path", "") == saved["path"]
+			if track["kind"] == saved.get("kind") and matches:
 				select_subtitle(i, false)
 				return
 	select_subtitle(auto_subtitle(), false)
@@ -260,6 +278,7 @@ func select_audio(stream_index: int, remember := true) -> void:
 
 
 func select_subtitle(choice: int, remember := true) -> void:
+	subtitle_serial += 1
 	subtitle_choice = choice if choice >= 0 and choice < subtitle_tracks.size() else -1
 	source = null
 	var track: Dictionary = subtitle_tracks[subtitle_choice] if subtitle_choice >= 0 else {}
@@ -271,11 +290,7 @@ func select_subtitle(choice: int, remember := true) -> void:
 			var player := get_parent() as VideoStreamPlayer
 			player.stream_position = player.stream_position
 	elif track.get("kind", "") == "external":
-		var loaded := VPXSubtitles.new()
-		if loaded.load_file(track["path"]):
-			source = loaded
-		else:
-			Log.warn("subtitle file %s: %s" % [track["path"].get_file(), loaded.get_error()])
+		_load_external(track["path"], subtitle_serial)
 	if remember and not path.is_empty():
 		if track.is_empty():
 			Library.set_pref(path, "subtitle", "off")
@@ -357,11 +372,41 @@ func _on_settings_changed() -> void:
 			Library.set_pref(path, "subtitle_delay", Settings.subtitle_delay)
 
 
+func _load_external(file_path: String, serial: int) -> void:
+	var loaded := VPXSubtitles.new()
+	var task := WorkerThreadPool.add_task(func() -> void: loaded.load_file(file_path))
+	var deadline := Time.get_ticks_msec() + 15000
+	while not WorkerThreadPool.is_task_completed(task):
+		if serial != subtitle_serial or Time.get_ticks_msec() >= deadline:
+			subtitle_tasks.append(task)
+			return
+		await get_tree().process_frame
+	WorkerThreadPool.wait_for_task_completion(task)
+	if serial != subtitle_serial:
+		return
+	if loaded.get_error().is_empty():
+		source = loaded
+	else:
+		Log.warn("subtitle file %s: %s" % [file_path.get_file(), loaded.get_error()])
+	changed.emit()
+
+
 func _apply_delays() -> void:
 	applied_audio_delay = Settings.audio_delay
 	applied_subtitle_delay = Settings.subtitle_delay
 	if playback != null:
 		playback.set_audio_delay(Settings.audio_delay * 1000.0)
+
+
+static func matches_stem(filename: String, stem: String) -> bool:
+	var base := filename.get_basename().to_lower()
+	var prefix := stem.to_lower()
+	if base == prefix:
+		return true
+	for separator in [".", "_", "-", " "]:
+		if base.begins_with(prefix + separator):
+			return true
+	return false
 
 
 static func find_external(video_path: String) -> Array:
@@ -371,7 +416,7 @@ static func find_external(video_path: String) -> Array:
 	if video_path.contains("://"):
 		return found
 	for file in DirAccess.get_files_at(folder):
-		if file.get_extension().to_lower() in SUBTITLE_EXTENSIONS and file.to_lower().begins_with(stem.to_lower()):
+		if file.get_extension().to_lower() in SUBTITLE_EXTENSIONS and matches_stem(file, stem):
 			found.append(_external_track(folder.path_join(file), file.substr(stem.length())))
 	for sub in DirAccess.get_directories_at(folder):
 		if sub.to_lower() not in SUBTITLE_FOLDERS:
@@ -385,9 +430,9 @@ static func find_external(video_path: String) -> Array:
 				if file.get_extension().to_lower() not in SUBTITLE_EXTENSIONS:
 					continue
 				var in_nested: bool = dir == nested
-				var matches_stem := file.to_lower().begins_with(stem.to_lower())
-				if in_nested or matches_stem:
-					found.append(_external_track(dir.path_join(file), file.substr(stem.length()) if matches_stem else file))
+				var matches := matches_stem(file, stem)
+				if in_nested or matches:
+					found.append(_external_track(dir.path_join(file), file.substr(stem.length()) if matches else file))
 	found.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return Languages.display_name(a["language"]) + a["path"] < Languages.display_name(b["language"]) + b["path"])
 	return found
 

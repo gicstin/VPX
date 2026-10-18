@@ -47,7 +47,5 @@ func _layout() -> void:
 	var margin := MARGIN * scale
 	root.size = root.wanted_size()
 	var available_height := window.y - margin * 2.0
-	if main.desktop_view.osd_rect.visible:
-		available_height = minf(available_height, main.desktop_view.osd_rect.position.y - margin * 2.0)
 	root.scale = Vector2.ONE * maxf(0.001, minf(scale, minf((window.x - margin * 2.0) / root.size.x, available_height / root.size.y)))
 	root.position = Vector2(margin, margin).round()

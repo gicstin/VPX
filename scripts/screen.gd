@@ -99,7 +99,7 @@ func _process(delta: float) -> void:
 	if Settings.projection != Settings.ProjectionMode.FLAT and is_instance_valid(view_origin):
 		global_position = view_origin.global_position
 	if player.is_image():
-		visible = not player.is_immersive_visualizer_active()
+		visible = true
 		if bound_image != player.image:
 			_bind_image(player.image, player.image_info)
 		return

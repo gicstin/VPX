@@ -12,7 +12,7 @@ ffmpeg-sys/
 build/
 dist/
 /.run/
-/tests/
+tests/
 /AGENTS.md
 /report.json
 /b[0-9]*

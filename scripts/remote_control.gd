@@ -4,14 +4,20 @@ signal clients_changed(count: int)
 
 const STATUS_INTERVAL := 0.5
 const MAX_MESSAGE := 1 << 20
+const WRITE_BUDGET := 65536
+const SEND_TIMEOUT_MSEC := 5000
 const STATE_PLAYING := 0
 const STATE_PAUSED := 1
 
 var player: VPXPlayer
 var open_path: Callable
+var opening_path: Callable
+var pending_path := ""
+var pending_options := {}
 var server: TCPServer
 var clients: Array[StreamPeerTCP] = []
 var buffers: Array[PackedByteArray] = []
+var outgoing := {}
 var status_timer := 0.0
 var last_status := ""
 var sent_time := 0.0
@@ -61,6 +67,7 @@ func _stop() -> void:
 		client.disconnect_from_host()
 	clients.clear()
 	buffers.clear()
+	outgoing.clear()
 	if server != null:
 		server.stop()
 		server = null
@@ -85,6 +92,7 @@ func _process(delta: float) -> void:
 		if client.get_status() != StreamPeerTCP.STATUS_CONNECTED:
 			clients.remove_at(i)
 			buffers.remove_at(i)
+			outgoing.erase(client)
 			Log.info("remote control: client disconnected")
 			clients_changed.emit(clients.size())
 			continue
@@ -107,6 +115,8 @@ func _process(delta: float) -> void:
 		sent_msec = now
 		for client in clients:
 			_send(client, status)
+	for client in clients:
+		_flush(client)
 
 
 func _drain(index: int) -> void:
@@ -131,22 +141,43 @@ func _handle(text: String) -> void:
 		return
 	var command := data as Dictionary
 	var path := str(command.get("path", ""))
-	if not path.is_empty() and path != player.current_path and open_path.is_valid():
-		Log.info("remote control: open %s" % path)
-		open_path.call(path)
 	if command.has("playbackSpeed"):
 		Settings.apply("playback_speed", clampf(float(command["playbackSpeed"]), 0.5, 2.0))
-	if command.has("currentTime") and not player.current_path.is_empty():
+	var options := {}
+	if command.has("currentTime"):
+		options["start_time"] = maxf(0.0, float(command["currentTime"]))
+	if command.has("playerState"):
+		options["paused"] = int(command["playerState"]) == STATE_PAUSED
+	var opening := str(opening_path.call()) if opening_path.is_valid() else (str(player.load_state.get("path", "")) if player.load_state.get("status") == "opening" else "")
+	if not opening.is_empty() and (path.is_empty() or path == opening):
+		if pending_path == opening:
+			pending_options.merge(options, true)
+		if player.load_state.get("status") == "opening" and player.load_state.get("path") == opening:
+			player.load_options.merge(options, true)
+		return
+	var active_path := _playback_path()
+	if not path.is_empty() and (path != active_path or not opening.is_empty()) and open_path.is_valid():
+		Log.info("remote control: open %s" % path)
+		pending_path = path
+		pending_options = options
+		open_path.call(path, pending_options)
+		return
+	if command.has("currentTime") and not active_path.is_empty():
 		player.seek_to(float(command["currentTime"]))
-	if command.has("playerState") and not player.current_path.is_empty() and not player.is_image():
+	if command.has("playerState") and not active_path.is_empty():
 		player.paused = int(command["playerState"]) == STATE_PAUSED
 
 
+func _playback_path() -> String:
+	return player.music_path if not player.music_path.is_empty() else ("" if player.is_image() else player.current_path)
+
+
 func _status() -> Dictionary:
-	if player.current_path.is_empty() or player.is_image():
+	var path := _playback_path()
+	if path.is_empty():
 		return {}
 	return {
-		"path": player.current_path,
+		"path": path,
 		"duration": player.get_stream_length(),
 		"currentTime": player.stream_position,
 		"playbackSpeed": Settings.playback_speed,
@@ -156,7 +187,41 @@ func _status() -> Dictionary:
 
 func _send(client: StreamPeerTCP, message: Dictionary) -> void:
 	var body := JSON.stringify(message).to_utf8_buffer() if not message.is_empty() else PackedByteArray()
+	if body.size() > MAX_MESSAGE:
+		client.disconnect_from_host()
+		return
 	var header := PackedByteArray()
 	header.resize(4)
 	header.encode_u32(0, body.size())
-	client.put_data(header + body)
+	var packet := header + body
+	if not outgoing.has(client):
+		outgoing[client] = {"packet": packet, "offset": 0, "next": PackedByteArray(), "progress": Time.get_ticks_msec()}
+	else:
+		outgoing[client]["next"] = packet
+
+
+func _flush(client: StreamPeerTCP) -> void:
+	if not outgoing.has(client):
+		return
+	var pending: Dictionary = outgoing[client]
+	if Time.get_ticks_msec() - int(pending["progress"]) >= SEND_TIMEOUT_MSEC:
+		client.disconnect_from_host()
+		outgoing.erase(client)
+		return
+	var packet: PackedByteArray = pending["packet"]
+	var offset: int = pending["offset"]
+	var result := client.put_partial_data(packet.slice(offset, mini(offset + WRITE_BUDGET, packet.size())))
+	if result[0] != OK:
+		client.disconnect_from_host()
+		outgoing.erase(client)
+		return
+	if result[1] > 0:
+		pending["progress"] = Time.get_ticks_msec()
+		pending["offset"] += int(result[1])
+	if int(pending["offset"]) == packet.size():
+		if pending["next"].is_empty():
+			outgoing.erase(client)
+		else:
+			pending["packet"] = pending["next"]
+			pending["next"] = PackedByteArray()
+			pending["offset"] = 0

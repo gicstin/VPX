@@ -182,6 +182,8 @@ func _on_load_changed(state: Dictionary) -> void:
 			title.text = "Buffering media"
 			stage("Waiting for the stream to continue…")
 		"failed":
+			if source != state["path"]:
+				begin(state["path"], state.get("options", {}))
 			fail(state["message"], state.get("details", ""), state.get("kind", "decode"))
 		"ready":
 			complete()

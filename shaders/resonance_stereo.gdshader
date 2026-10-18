@@ -1,6 +1,9 @@
 shader_type spatial;
 render_mode unshaded, blend_add, depth_draw_never, cull_disabled, shadows_disabled, fog_disabled;
 
+uniform sampler2D correlation_texture : filter_linear, repeat_disable;
+uniform float correlation_head = -1.0;
+uniform float correlation_fraction = 0.0;
 uniform sampler2D band_texture : filter_linear, repeat_disable;
 uniform sampler2D field_texture : filter_linear, repeat_disable;
 uniform sampler2D source_texture : filter_nearest, repeat_disable;
@@ -18,6 +21,7 @@ uniform vec4 source_bursts[8];
 uniform vec2 channel_balance = vec2(0.0);
 uniform float balance = 0.0;
 uniform float width = 0.0;
+uniform float correlation = 1.0;
 uniform int stereo_style = 0;
 uniform int shape = 0;
 uniform int instance_count = 64;
@@ -1395,6 +1399,301 @@ Pulse crystal_city(vec3 v, float id, float count, vec4 c) {
 	return hidden();
 }
 
+vec3 studio_channel(float channel) {
+	return channel < 0.5 ? vec3(0.08, 0.8, 1.0) : vec3(1.0, 0.22, 0.55);
+}
+
+Pulse spectrum_observatory(vec3 v, float id, float count) {
+	if (shape == 0) {
+		if (id >= 96.0) return hidden();
+		float channel = floor(id / 48.0);
+		float band = mod(id, 48.0) / 47.0;
+		vec4 f = band_at(band, 0.0);
+		float level = channel < 0.5 ? f.z : f.w;
+		float az = mix(-1.35, 1.35, band) + (channel - 0.5) * 0.025;
+		vec3 base = dir_az(az) * (7.0 + channel * 0.8);
+		base.y = -1.4;
+		vec3 point = base + vec3(0.0, v.x * level * 5.5, 0.0);
+		return make(point + vec3(cos(az), 0.0, sin(az)) * v.y * 0.055, mix(studio_channel(channel), band_colour(band), 0.3), (0.12 + level * 0.8) * intensity, v.y);
+	} else if (shape == 2) {
+		if (id >= 7.0) return hidden();
+		float az = mix(-1.4, 1.4, v.x);
+		vec3 point = dir_az(az) * (7.0 + v.y * 0.025);
+		point.y = -1.4 + id * 5.5 / 6.0;
+		return make(point, vec3(0.2, 0.4, 0.6), (id == 0.0 ? 0.24 : 0.065) * intensity, v.y);
+	} else if (shape == 1) {
+		if (id >= 96.0) return hidden();
+		float channel = floor(id / 48.0);
+		float band = mod(id, 48.0) / 47.0;
+		vec4 f = band_at(band, 0.0);
+		vec3 point = dir_az(mix(-1.35, 1.35, band) + (channel - 0.5) * 0.025) * (7.0 + channel * 0.8);
+		point.y = -1.4 + (channel < 0.5 ? f.z : f.w) * 5.5;
+		return make(point + v * 0.055, vec3(0.85, 0.95, 1.0), 0.6 * max(f.z, f.w) * intensity, 0.0);
+	}
+	return hidden();
+}
+
+Pulse phase_cathedral(vec3 v, float id, float count) {
+	if (shape == 0) {
+		if (id >= 40.0) return hidden();
+		vec2 s = scope_point(id, v.x);
+		vec2 next = scope_point(id, v.x + 1.0 / 255.0);
+		vec3 point = vec3(s.x * 3.0, s.y * 3.0 + 0.5, -5.0 - id * 0.45);
+		vec3 tangent = vec3((next - s) * 3.0, 0.0);
+		vec3 tint = mix(vec3(1.0, 0.28, 0.12), vec3(0.12, 1.0, 0.65), clamp(correlation * 0.5 + 0.5, 0.0, 1.0));
+		return make(ribbon(point, point + tangent, v.y * 0.035), tint, 0.95 / (1.0 + id * 0.15) * intensity, v.y);
+	} else if (shape == 2) {
+		if (id >= 12.0) return hidden();
+		float frame = floor(id / 3.0);
+		float axis = mod(id, 3.0);
+		float a = (v.x * 2.0 - 1.0) * 3.8;
+		vec3 point = axis < 0.5 ? vec3(a, 0.5, -5.1 - frame * 4.0) : (axis < 1.5 ? vec3(0.0, a + 0.5, -5.1 - frame * 4.0) : vec3(cos(v.x * TAU) * 3.8, sin(v.x * TAU) * 3.8 + 0.5, -5.1 - frame * 4.0));
+		return make(point + vec3(v.y * 0.015, v.y * 0.015, 0.0), axis < 0.5 ? vec3(1.0, 0.28, 0.12) : vec3(0.15, 0.6, 0.55), 0.09 / (1.0 + frame) * intensity, v.y);
+	}
+	return hidden();
+}
+
+Pulse stereo_ribbonfall(vec3 v, float id, float count) {
+	if (shape == 0) {
+		float channel = mod(id, 2.0);
+		float delay = floor(id / 2.0) / max(1.0, floor(count / 2.0) - 1.0) * 3.8;
+		vec4 f = band_at(v.x, delay);
+		float level = channel < 0.5 ? f.z : f.w;
+		float x = (channel < 0.5 ? -1.0 : 1.0) * (1.0 + v.x * 8.0);
+		vec3 point = vec3(x, -1.6 + level * 4.0, -3.2 - delay * 7.5);
+		return make(point + vec3(0.0, v.y * 0.035, 0.0), mix(studio_channel(channel), band_colour(v.x), 0.4), (0.035 + level * level * 0.9) * (1.0 - smoothstep(3.0, 3.8, delay)) * intensity, v.y);
+	} else if (shape == 2) {
+		float channel = mod(id, 2.0);
+		float band = floor(id / 2.0) / max(1.0, floor(count / 2.0) - 1.0);
+		vec4 f = band_at(band, v.x * 3.8);
+		float level = channel < 0.5 ? f.z : f.w;
+		vec3 point = vec3((channel < 0.5 ? -1.0 : 1.0) * (1.0 + band * 8.0) + v.y * 0.018, -1.6 + level * 4.0, -3.2 - v.x * 28.5);
+		return make(point, studio_channel(channel), (0.02 + level * 0.2) * (1.0 - smoothstep(0.8, 1.0, v.x)) * intensity, v.y);
+	}
+	return hidden();
+}
+
+Pulse pan_meridian(vec3 v, float id, float count) {
+	if (shape == 0) {
+		if (id >= 96.0) return hidden();
+		float band = mod(id, 48.0) / 47.0;
+		float frame = floor(id / 48.0);
+		vec4 f = band_at(band, frame * 0.25);
+		float x = (v.x * 2.0 - 1.0) * 7.0;
+		float level = gate(f.y);
+		float peak = gaussian((x / 7.0 - f.x) / 0.065) * level;
+		vec3 point = vec3(x, -1.5 + band * 5.0 + peak * 0.18, -6.0 - frame * 2.0 - peak * 0.8);
+		return make(point + vec3(0.0, v.y * (0.018 + peak * 0.045), 0.0), band_colour(band), (0.018 + peak * 1.5) / (1.0 + frame) * intensity, v.y);
+	} else if (shape == 1) {
+		if (id >= 1536.0) return hidden();
+		float band = mod(id, 48.0) / 47.0;
+		float age = floor(id / 48.0) / 31.0;
+		vec4 f = band_at(band, age * 2.5);
+		return make(vec3(f.x * 7.0, -1.5 + band * 5.0, -6.0 - age * 13.0) + v * (0.035 + gate(f.y) * 0.04), band_colour(band), gate(f.y) * (1.0 - age) * 0.6 * intensity, 0.0);
+	} else if (shape == 2) {
+		if (id >= 5.0) return hidden();
+		return make(vec3((id / 4.0 * 2.0 - 1.0) * 7.0 + v.y * 0.02, -1.5 + v.x * 5.0, -6.1), vec3(0.3, 0.45, 0.6), (id == 2.0 ? 0.22 : 0.06) * intensity, v.y);
+	}
+	return hidden();
+}
+
+Pulse transient_loom(vec3 v, float id, float count) {
+	if (shape == 0 || shape == 2) {
+		float band = shape == 0 ? (id + 0.5) / count : v.x;
+		float delay = shape == 0 ? v.x * 3.8 : id / count * 3.8;
+		vec4 f = band_at(band, delay);
+		vec4 old = band_at(band, delay + 0.045);
+		float attack = max(0.0, f.y - old.y) * 5.0;
+		float height = f.y * 2.0 + min(1.5, attack) * 2.0;
+		vec3 point = vec3((band * 2.0 - 1.0) * 10.0, -1.8 + height, -3.0 - delay * 8.0);
+		point += shape == 0 ? vec3(v.y * 0.025, 0.0, 0.0) : vec3(0.0, v.y * 0.025, 0.0);
+		vec3 tint = mix(band_colour(band) * 0.65, vec3(1.0, 0.85, 0.35), min(1.0, attack));
+		return make(point, tint, (0.025 + f.y * 0.22 + attack * 0.8) * (1.0 - smoothstep(3.0, 3.8, delay)) * intensity, v.y);
+	}
+	return hidden();
+}
+
+Pulse stereo_difference(vec3 v, float id, float count) {
+	if (shape == 0) {
+		if (id >= 96.0) return hidden();
+		float band = mod(id, 48.0) / 47.0;
+		float frame = floor(id / 48.0);
+		vec4 f = band_at(band, frame * 0.15);
+		float left = pow(10.0, (f.z * 60.0 - 60.0) / 20.0);
+		float right = pow(10.0, (f.w * 60.0 - 60.0) / 20.0);
+		float delta = (right - left) / max(0.00001, left + right);
+		float az = mix(-1.3, 1.3, band);
+		vec3 point = dir_az(az) * (8.0 + frame * 2.0);
+		point.y = 0.5 + v.x * delta * gate(f.y) * 3.5;
+		vec3 tint = delta < 0.0 ? studio_channel(0.0) : studio_channel(1.0);
+		return make(point + vec3(cos(az), 0.0, sin(az)) * v.y * 0.07, tint, (0.04 + abs(delta) * gate(f.y)) / (1.0 + frame) * intensity, v.y);
+	} else if (shape == 2) {
+		if (id >= 7.0) return hidden();
+		vec3 point = dir_az(mix(-1.35, 1.35, v.x)) * (8.0 + v.y * 0.02);
+		point.y = 0.5 + (id - 3.0);
+		return make(point, id == 3.0 ? vec3(0.85, 0.8, 0.6) : vec3(0.2, 0.3, 0.5), (id == 3.0 ? 0.24 : 0.055) * intensity, v.y);
+	} else if (shape == 1) {
+		if (id >= 48.0) return hidden();
+		float band = id / 47.0;
+		vec4 f = band_at(band, 0.0);
+		vec3 point = dir_az(mix(-1.3, 1.3, band)) * 8.0;
+		point.y = 0.5;
+		return make(point + v * (0.025 + gate(f.y) * 0.075), vec3(0.9, 0.85, 0.6), gate(f.y) * 0.7 * intensity, 0.0);
+	}
+	return hidden();
+}
+
+vec3 atrium_point(float channel, float frame, float along) {
+	vec2 s = scope_point(frame, along);
+	float sample_value = channel < 0.5 ? s.y : s.x;
+	float angle = along * TAU;
+	float radius = 2.3 + sample_value * 0.9 + frame * 0.055;
+	return vec3(sin(angle) * radius, (channel < 0.5 ? -0.9 : 1.8) + sample_value * 0.5, -7.0 + cos(angle) * radius - frame * 0.15);
+}
+
+Pulse mid_side_atrium(vec3 v, float id, float count) {
+	if (shape == 0) {
+		if (id >= 48.0) return hidden();
+		float channel = mod(id, 2.0);
+		float frame = floor(id / 2.0);
+		vec3 point = atrium_point(channel, frame, v.x);
+		vec3 next = atrium_point(channel, frame, v.x + 1.0 / 255.0);
+		vec2 s = scope_point(frame, v.x);
+		float level = abs(channel < 0.5 ? s.y : s.x);
+		vec3 tint = channel < 0.5 ? vec3(0.1, 0.8, 1.0) : vec3(1.0, 0.65, 0.12);
+		return make(ribbon(point, next, v.y * 0.035), tint, (0.025 + level * 0.75) / (1.0 + frame * 0.12) * intensity, v.y);
+	} else if (shape == 1) {
+		if (id >= 512.0) return hidden();
+		float channel = floor(id / 256.0);
+		float along = mod(id, 256.0) / 255.0;
+		vec2 s = scope_point(0.0, along);
+		float level = abs(channel < 0.5 ? s.y : s.x);
+		return make(atrium_point(channel, 0.0, along) + v * 0.025, vec3(0.9, 0.95, 1.0), level * 0.55 * intensity, 0.0);
+	}
+	return hidden();
+}
+
+vec4 phase_at(float delay) {
+	return ring_at(correlation_texture, 0.5, 1.0, 192.0, correlation_head, correlation_fraction, delay);
+}
+
+vec3 causeway_point(float delay, float offset) {
+	vec4 f = phase_at(delay);
+	return vec3(f.x * 3.2 + offset, -0.5, -3.0 - delay * 8.0);
+}
+
+Pulse correlation_causeway(vec3 v, float id, float count) {
+	if (shape == 0) {
+		if (id >= 20.0) return hidden();
+		float delay = v.x * 3.8;
+		vec4 f = phase_at(delay);
+		float offset = (id / 19.0 * 2.0 - 1.0) * 0.35;
+		vec3 point = causeway_point(delay, offset);
+		vec3 next = causeway_point(delay + 0.015, offset);
+		vec3 tint = mix(vec3(1.0, 0.12, 0.08), vec3(0.15, 1.0, 0.55), f.x * 0.5 + 0.5);
+		return make(ribbon(point, next, v.y * 0.025), tint, gate(f.y) * (0.32 + 0.2 * abs(f.x)) * (1.0 - smoothstep(3.0, 3.8, delay)) * intensity, v.y);
+	} else if (shape == 1) {
+		if (id >= 172.0) return hidden();
+		float delay = id / 171.0 * 3.8;
+		vec4 f = phase_at(delay);
+		vec3 point = causeway_point(delay, 0.0);
+		return make(point + v * 0.045, vec3(0.9, 1.0, 0.9), gate(f.y) * (1.0 - delay / 3.8) * 0.6 * intensity, 0.0);
+	} else if (shape == 2) {
+		if (id >= 9.0) return hidden();
+		float x = (mod(id, 3.0) - 1.0) * 3.2;
+		float height = floor(id / 3.0) * 0.7 - 1.2;
+		vec3 tint = x < -0.1 ? vec3(1.0, 0.2, 0.1) : (x > 0.1 ? vec3(0.1, 0.8, 0.5) : vec3(0.8, 0.55, 0.2));
+		return make(vec3(x + v.y * 0.02, height, -3.0 - v.x * 30.4), tint, 0.07 * intensity, v.y);
+	}
+	return hidden();
+}
+
+Pulse stereo_spectrogram(vec3 v, float id, float count) {
+	if (shape == 0) {
+		float channel = mod(id, 2.0);
+		float age = floor(id / 2.0) / max(1.0, floor(count / 2.0) - 1.0);
+		vec4 f = band_at(v.x, age * 3.8);
+		float level = channel < 0.5 ? f.z : f.w;
+		vec3 tint = mix(studio_channel(channel) * 0.3, vec3(1.0, 0.85, 0.3), level);
+		vec3 point = vec3((v.x * 2.0 - 1.0) * 6.0, 3.3 - channel * 3.5 - age * 3.0 + v.y * 0.035, -8.0);
+		return make(point, tint, level * level * 2.4 * intensity, v.y);
+	} else if (shape == 2) {
+		if (id >= 18.0) return hidden();
+		float channel = floor(id / 9.0);
+		float line = mod(id, 9.0);
+		vec3 point = line < 5.0 ? vec3((v.x * 2.0 - 1.0) * 6.0, 3.3 - channel * 3.5 - line * 0.75, -8.03) : vec3((line - 5.0) * 4.0 - 6.0, 3.3 - channel * 3.5 - v.x * 3.0, -8.03);
+		return make(point + vec3(v.y * 0.012, v.y * 0.012, 0.0), studio_channel(channel), 0.2 * intensity, v.y);
+	}
+	return hidden();
+}
+
+Pulse dual_waveform(vec3 v, float id, float count) {
+	if (shape == 0) {
+		if (id >= 48.0) return hidden();
+		float channel = mod(id, 2.0);
+		float frame = floor(id / 2.0);
+		float sample_value = scope_value(frame, channel, v.x);
+		float next_value = scope_value(frame, channel, v.x + 1.0 / 255.0);
+		vec3 point = vec3((v.x * 2.0 - 1.0) * 6.0, 2.0 - channel * 3.2 + sample_value * 1.25, -7.0 - frame * 0.22);
+		vec3 next = vec3(point.x + 12.0 / 255.0, 2.0 - channel * 3.2 + next_value * 1.25, point.z);
+		return make(ribbon(point, next, v.y * 0.045), studio_channel(channel), (0.5 + abs(sample_value) * 0.9) / (1.0 + frame * 0.2) * intensity, v.y);
+	} else if (shape == 2) {
+		if (id >= 6.0) return hidden();
+		float channel = floor(id / 3.0);
+		float line = mod(id, 3.0) - 1.0;
+		vec3 point = vec3((v.x * 2.0 - 1.0) * 6.0, 2.0 - channel * 3.2 + line * 1.25 + v.y * 0.015, -7.03);
+		return make(point, studio_channel(channel), (line == 0.0 ? 0.45 : 0.2) * intensity, v.y);
+	}
+	return hidden();
+}
+
+Pulse spectral_balance(vec3 v, float id, float count) {
+	if (shape == 0) {
+		float delay = id / max(1.0, count - 1.0) * 3.8;
+		vec4 f = band_at(v.x, delay);
+		float difference = clamp((f.w - f.z) * 60.0, -24.0, 24.0);
+		vec3 point = vec3((v.x * 2.0 - 1.0) * 6.0, 0.5 + difference / 24.0 * 3.0, -6.0 - delay * 6.0);
+		vec3 tint = difference < 0.0 ? studio_channel(0.0) : studio_channel(1.0);
+		return make(point + vec3(0.0, v.y * 0.03, 0.0), tint, gate(f.y) * (0.55 + abs(difference) / 24.0) * (1.0 - smoothstep(3.0, 3.8, delay)) * intensity, v.y);
+	} else if (shape == 2) {
+		if (id >= 9.0) return hidden();
+		vec3 point = vec3((v.x * 2.0 - 1.0) * 6.0, 0.5 + (id - 4.0) * 0.75 + v.y * 0.015, -6.03);
+		return make(point, id == 4.0 ? vec3(0.9, 0.85, 0.6) : vec3(0.2, 0.35, 0.5), (id == 4.0 ? 0.45 : 0.2) * intensity, v.y);
+	}
+	return hidden();
+}
+
+vec3 pan_trail_point(float band, float delay) {
+	vec4 f = band_at(band, delay);
+	vec3 point = dome(f.x * 0.62, -0.15 + band * 0.7) * (5.5 + delay * 6.0);
+	point.y -= 0.5;
+	return point;
+}
+
+Pulse pan_trails(vec3 v, float id, float count) {
+	if (shape == 0) {
+		if (id >= 48.0) return hidden();
+		float band = id / 47.0;
+		float delay = v.x * 3.8;
+		vec4 f = band_at(band, delay);
+		vec3 point = pan_trail_point(band, delay);
+		vec3 next = pan_trail_point(band, delay + 0.015);
+		return make(ribbon(point, next, v.y * 0.035), band_colour(band), gate(f.y) * (1.0 - smoothstep(2.8, 3.8, delay)) * 0.8 * intensity, v.y);
+	} else if (shape == 1) {
+		if (id >= 1536.0) return hidden();
+		float band = mod(id, 48.0) / 47.0;
+		float delay = floor(id / 48.0) / 31.0 * 3.8;
+		vec4 f = band_at(band, delay);
+		return make(pan_trail_point(band, delay) + v * (0.025 + gate(f.y) * 0.03), band_colour(band), gate(f.y) * (1.0 - delay / 3.8) * 0.65 * intensity, 0.0);
+	} else if (shape == 2) {
+		if (id >= 6.0) return hidden();
+		vec3 point = dome(mix(-0.62, 0.62, v.x), -0.15) * (5.5 + id * 3.8 + v.y * 0.025);
+		point.y -= 0.5;
+		return make(point, vec3(0.2, 0.4, 0.6), 0.055 * intensity, v.y);
+	}
+	return hidden();
+}
+
 void vertex() {
 	float id = float(INSTANCE_ID);
 	float count = max(1.0, float(instance_count));
@@ -1458,8 +1757,32 @@ void vertex() {
 		p = terrain_tunnel(VERTEX, id, count, c);
 	} else if (stereo_style == 28) {
 		p = neon_mirror(VERTEX, id, count, c);
-	} else {
+	} else if (stereo_style == 29) {
 		p = crystal_city(VERTEX, id, count, c);
+	} else if (stereo_style == 30) {
+		p = spectrum_observatory(VERTEX, id, count);
+	} else if (stereo_style == 31) {
+		p = phase_cathedral(VERTEX, id, count);
+	} else if (stereo_style == 32) {
+		p = stereo_ribbonfall(VERTEX, id, count);
+	} else if (stereo_style == 33) {
+		p = pan_meridian(VERTEX, id, count);
+	} else if (stereo_style == 34) {
+		p = transient_loom(VERTEX, id, count);
+	} else if (stereo_style == 35) {
+		p = stereo_difference(VERTEX, id, count);
+	} else if (stereo_style == 36) {
+		p = mid_side_atrium(VERTEX, id, count);
+	} else if (stereo_style == 37) {
+		p = correlation_causeway(VERTEX, id, count);
+	} else if (stereo_style == 38) {
+		p = stereo_spectrogram(VERTEX, id, count);
+	} else if (stereo_style == 39) {
+		p = pan_trails(VERTEX, id, count);
+	} else if (stereo_style == 40) {
+		p = dual_waveform(VERTEX, id, count);
+	} else {
+		p = spectral_balance(VERTEX, id, count);
 	}
 	VERTEX = p.point;
 	colour = p.colour;

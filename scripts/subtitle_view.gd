@@ -144,7 +144,7 @@ func _format_key() -> String:
 
 
 func _active_size() -> float:
-	return float(Settings.subtitle_size_by_format.get(_format_key(), Settings.subtitle_size))
+	return Settings.subtitle_size
 
 
 func _flat() -> bool:

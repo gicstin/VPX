@@ -747,6 +747,7 @@ func _parse_arguments() -> void:
 				panel.visible = false
 			"--decode":
 				if i + 1 < args.size():
+					OS.unset_environment("VPX_DECODE_SETTING")
 					match args[i + 1]:
 						"hw", "hardware":
 							OS.set_environment("VPX_DECODE", "hw")
@@ -814,6 +815,8 @@ func _on_opened(_path: String) -> void:
 
 
 func _on_ended() -> void:
+	if ui.opening_media():
+		return
 	if Settings.sleep_timer == Settings.SleepTimer.END_OF_VIDEO:
 		Settings.apply("sleep_timer", Settings.SleepTimer.OFF)
 		Log.info("sleep timer: stopped at end of video")
@@ -882,6 +885,9 @@ func _adjust(direction: int, slot: String) -> void:
 
 
 func _step_action(action: Settings.StickAction, direction: int) -> void:
+	if player._audio_only_playing() and action in FORMAT_ACTION_NAMES:
+		Settings.apply("visualizer_preset", posmod(Settings.visualizer_preset + direction, Settings.VISUALIZER_PRESETS.size()))
+		return
 	if player._audio_only_playing() and action in [Settings.StickAction.VOLUME, Settings.StickAction.PLAYBACK_SPEED, Settings.StickAction.AUDIO_TRACK, Settings.StickAction.SUBTITLE_TRACK, Settings.StickAction.CHAPTER]:
 		return
 	if action == Settings.StickAction.PICTURE_ZOOM:
@@ -915,7 +921,7 @@ func _presented_action(action: Settings.StickAction) -> Settings.StickAction:
 func action_name(action: Settings.StickAction) -> String:
 	action = _presented_action(action)
 	if action in FORMAT_ACTION_NAMES:
-		return FORMAT_ACTION_NAMES[action]
+		return "Music scene" if player._audio_only_playing() else FORMAT_ACTION_NAMES[action]
 	if action in TRACK_ACTION_NAMES:
 		return TRACK_ACTION_NAMES[action]
 	if action == Settings.StickAction.CHAPTER:
@@ -929,6 +935,8 @@ func action_name(action: Settings.StickAction) -> String:
 func action_value(action: Settings.StickAction) -> String:
 	action = _presented_action(action)
 	if action in FORMAT_ACTION_NAMES:
+		if player._audio_only_playing():
+			return "%d / %d · %s" % [Settings.visualizer_preset + 1, Settings.VISUALIZER_PRESETS.size(), Settings.VISUALIZER_PRESETS[Settings.visualizer_preset]]
 		var preset := Settings.matching_preset()
 		var name: String = Settings.FORMAT_PRESETS[preset][0] if preset >= 0 else "Custom"
 		return name + " + alpha" if Settings.alpha_mask != Settings.AlphaMask.NONE else name
@@ -959,7 +967,7 @@ func _refresh_help() -> void:
 		osd.release()
 		return
 	var status: String = ui.playlist_label(player.current_path) if not player.current_path.is_empty() else ""
-	var format := ["Format", "", action_value(Settings.StickAction.FORMAT_ALL)]
+	var format := [action_name(Settings.StickAction.FORMAT_ALL), "", action_value(Settings.StickAction.FORMAT_ALL)]
 	if gripping:
 		if grab_controller.trigger_held:
 			help_card.show_help("Grip + Trigger", [
@@ -1143,10 +1151,9 @@ func _set_blend_mode(mode: XRInterface.EnvironmentBlendMode) -> void:
 
 
 func _cycle_visualizer_preset() -> void:
-	if resonance_field == null or not resonance_field.active or panel.visible:
+	if not player._audio_only_playing() or panel.visible:
 		return
-	resonance_field.cycle_preset()
-	_show_status("%d / %d · %s" % [resonance_field.preset_index + 1, Settings.VISUALIZER_PRESETS.size(), Settings.VISUALIZER_PRESETS[resonance_field.preset_index]])
+	_key_action(Settings.StickAction.FORMAT_ALL, 1)
 
 
 func _on_recenter_progress(fraction: float) -> void:
@@ -1678,6 +1685,8 @@ func _handle_key(event: InputEventKey) -> bool:
 			if not event.echo:
 				recenter()
 		KEY_F:
+			if event.echo:
+				return true
 			_key_action(Settings.StickAction.FORMAT_ALL, -1 if event.shift_pressed else 1)
 		KEY_V:
 			_key_action(Settings.StickAction.SUBTITLE_TRACK, -1 if event.shift_pressed else 1)

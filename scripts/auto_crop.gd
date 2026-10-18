@@ -22,7 +22,7 @@ func request(path: String, stereo: int, length: float) -> void:
 		if values.size() == 4:
 			detected.emit(path, stereo, Vector4(values[0], values[1], values[2], values[3]))
 			return
-	if length <= 1.0 or not FileAccess.file_exists(path):
+	if length <= 1.0:
 		return
 	var times := PackedStringArray()
 	for point: float in SAMPLE_POINTS:

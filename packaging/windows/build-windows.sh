@@ -378,6 +378,7 @@ git -C "$EXT" apply "$ROOT/addons/ffmpeg/dsd-nexus.patch"
 git -C "$EXT" apply "$ROOT/addons/ffmpeg/archive.patch"
 git -C "$EXT" apply "$ROOT/addons/ffmpeg/post192.patch"
 git -C "$EXT" apply "$ROOT/addons/ffmpeg/resonance.patch"
+git -C "$EXT" apply "$ROOT/addons/ffmpeg/network.patch"
 mkdir -p "$BUILD/site_scons"
 cat >"$BUILD/site_scons/site_init.py" <<'PYEOF'
 import os

@@ -15,9 +15,12 @@ const ALPHA_PROBE_KEY := "alpha_detected"
 const FORMAT_NAMES := {0: "rgba", 1: "yuv420p", 2: "yuva420p", 3: "nv12", 4: "p010", 5: "yuv420p10"}
 const POSITION_SAVE_INTERVAL := 5.0
 const BOOKMARK_MERGE := 2.0
+const BOOKMARK_NAME_MAX := 64
+const BOOKMARK_HISTORY_MAX := 32
 const CHAPTER_BACK_GRACE := 3.0
 const LOOP_MIN_LENGTH := 0.5
 const SLEEP_FADE := 20.0
+const OUTPUT_BUS := "VPX media output"
 const TEXTURE_WAIT_MSEC := 6000
 const PanoramaFiles := preload("res://scripts/panorama_files.gd")
 const MediaTracks := preload("res://scripts/media_tracks.gd")
@@ -38,6 +41,8 @@ var shown_period_msec := 0.0
 var shown_last_msec := 0
 var image: VPXPanorama
 var image_info := {}
+var image_file_info := {}
+var loading_file_info := {}
 var image_loader: VPXPanorama
 var loading_path := ""
 var loading_started_msec := 0
@@ -51,8 +56,16 @@ var load_error := ""
 var image_request: HTTPRequest
 var software_retry := false
 var decode_before_retry := ""
+var decode_setting_before_retry := ""
+var playback_state := {}
 var stall_seconds := 0.0
 var observed_position := 0.0
+var observed_progress := -1
+var opening_stream: FFmpegVideoStream
+var discarded_streams: Array[FFmpegVideoStream] = []
+var retired_streams: Array[FFmpegVideoStream] = []
+var source_tasks: Array[int] = []
+var prefetch_serial := 0
 var image_path := ""
 var tracks: MediaTracks = MediaTracks.new()
 var chapters: Array = []
@@ -70,6 +83,13 @@ var auto_crop_key := ""
 
 
 func _ready() -> void:
+	var output_index := AudioServer.get_bus_index(OUTPUT_BUS)
+	if output_index < 0:
+		AudioServer.add_bus(1)
+		output_index = 1
+		AudioServer.set_bus_name(output_index, OUTPUT_BUS)
+		AudioServer.set_bus_send(output_index, "Master")
+	bus = OUTPUT_BUS
 	add_child(tracks)
 	add_child(auto_crop)
 	auto_crop.detected.connect(_on_crop_detected)
@@ -84,6 +104,13 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	for task in source_tasks.duplicate():
+		if WorkerThreadPool.is_task_completed(task):
+			WorkerThreadPool.wait_for_task_completion(task)
+			source_tasks.erase(task)
+	if not discarded_streams.is_empty():
+		discarded_streams = discarded_streams.filter(func(video: FFmpegVideoStream) -> bool: return video.get_open_status() == 1)
+	retired_streams = retired_streams.filter(func(video: FFmpegVideoStream) -> bool: return not video.get_playback().is_io_stopped())
 	if image_loader != null:
 		_poll_image()
 	elif not prefetched.is_empty():
@@ -107,6 +134,12 @@ func _process(delta: float) -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_EXIT_TREE:
 		remember_position()
+		if opening_stream != null:
+			opening_stream.cancel_open()
+		for video in discarded_streams:
+			video.cancel_open()
+		if playback != null:
+			playback.cancel_io()
 
 
 func remember_position() -> void:
@@ -145,8 +178,10 @@ func apply_audio() -> void:
 	var fade := 1.0
 	if sleep_armed > 0 and Settings.sleep_timer != Settings.SleepTimer.END_OF_VIDEO:
 		fade = clampf(sleep_left / SLEEP_FADE, 0.0, 1.0)
-	volume_db = linear_to_db(Settings.volume / 100.0 * fade) if Settings.volume > 0 and fade > 0.0 else -80.0
-	AudioServer.set_bus_mute(0, Settings.muted)
+	volume_db = 0.0
+	var output_index := AudioServer.get_bus_index(OUTPUT_BUS)
+	AudioServer.set_bus_volume_db(output_index, linear_to_db(Settings.volume / 100.0 * fade) if Settings.volume > 0 and fade > 0.0 else -80.0)
+	AudioServer.set_bus_mute(output_index, Settings.muted or Settings.volume == 0 or fade <= 0.0)
 
 
 static func tags_from_name(path: String) -> Dictionary:
@@ -259,13 +294,12 @@ func open(path: String, options := {}) -> bool:
 	load_error = ""
 	stall_seconds = 0.0
 	observed_position = 0.0
-	load_options = options.duplicate(true)
+	observed_progress = -1
+	var request_options := options.duplicate(true)
+	load_options = request_options
 	load_state = {"path": path, "status": "opening", "stage": "Opening media…", "options": load_options}
 	load_changed.emit(load_state.duplicate(true))
-	if not path.contains("://") and not FileAccess.file_exists(path):
-		_fail_load("missing", "This file is missing or its drive is disconnected.", "File not found: " + path)
-		return false
-	var ok := await _open_source(path, options, serial)
+	var ok := await _open_source(path, request_options, serial)
 	if serial != open_serial:
 		return false
 	if ok:
@@ -281,6 +315,13 @@ func open(path: String, options := {}) -> bool:
 			return false
 		_fail_load("connection" if remote else "decode", "Could not open this stream. Check that the source is online, then retry." if remote else "Could not play this file. It may be damaged or use an unsupported format.", load_error if not load_error.is_empty() else "The media decoder could not open the source.")
 	return ok
+
+
+func _retire_stream() -> void:
+	if playback == null or not stream is FFmpegVideoStream:
+		return
+	playback.cancel_io()
+	retired_streams.append(stream as FFmpegVideoStream)
 
 
 func _load_stage(stage: String) -> void:
@@ -299,15 +340,22 @@ func cancel_open() -> void:
 	if load_state.get("status") not in ["opening", "buffering"]:
 		return
 	open_serial += 1
+	var preparing := opening_stream != null
+	if opening_stream != null:
+		opening_stream.cancel_open()
+		discarded_streams.append(opening_stream)
+		opening_stream = null
 	if is_instance_valid(image_request):
 		image_request.cancel_request()
 		image_request.queue_free()
 		image_request = null
 	_discard_loader()
-	if playback != null and (music_path == load_state.get("path", "") or (current_path == load_state.get("path", "") and not PanoramaFiles.is_image(current_path))):
+	if not preparing and playback != null and (music_path == load_state.get("path", "") or (current_path == load_state.get("path", "") and not PanoramaFiles.is_image(current_path))):
+		_retire_stream()
 		stop()
 		stream = null
 		playback = null
+		playback_state.clear()
 		current_path = ""
 		music_path = ""
 		music_changed.emit()
@@ -327,6 +375,14 @@ func _open_source(path: String, options: Dictionary, serial: int) -> bool:
 		return false
 	if not load_error.is_empty():
 		return false
+	var source_info := await _inspect_source(path, serial)
+	if serial != open_serial:
+		return false
+	if load_state.get("status") == "failed":
+		return false
+	if not source_info.get("exists", true):
+		_fail_load("missing", "This file is missing or its drive is disconnected.", "File not found: " + path)
+		return false
 	remember_position()
 	if _is_audio_item(path):
 		Settings.remember_position(path, 0.0, 0.0)
@@ -345,13 +401,16 @@ func _open_source(path: String, options: Dictionary, serial: int) -> bool:
 		auto_crop.cancel()
 		auto_cropped = false
 		_load_stage("Decoding image…")
-		_open_image(path, keep_music)
+		_open_image(path, keep_music, source_info)
 		while serial == open_serial and image_loader != null:
 			await get_tree().process_frame
 		return serial == open_serial and load_error.is_empty() and image != null
 	if picture and path.get_extension().to_lower() in AUDIO_EXTENSIONS:
-		await _play_with_picture(path, options, serial)
-		return playback != null
+		return await _play_with_picture(path, options, serial, source_info)
+	_apply_decode_mode(bool(options.get("software", false)))
+	var video := _create_stream(path, options)
+	if not await _prepare_stream(video, serial):
+		return false
 	Settings.format_path = ""
 	stream_metadata = {}
 	content_rotation = Basis.IDENTITY
@@ -361,25 +420,19 @@ func _open_source(path: String, options: Dictionary, serial: int) -> bool:
 	music_path = ""
 	_close_image()
 	tracks.reset()
-	_apply_decode_mode(bool(options.get("software", false)))
 	_load_stage("Starting decoder…")
 	Log.info("open %s (decode mode %d)" % [path, Settings.decode_mode])
-	var video := FFmpegVideoStream.new()
-	video.file = str(options.get("stream", path))
-	video.audio_file = str(options.get("audio", ""))
-	video.http_headers = str(options.get("headers", ""))
-	var input_format := str(options.get("input_format", "dsf" if path.begins_with("sacd://") else ""))
-	if not input_format.is_empty() and ClassDB.class_has_method("FFmpegVideoStream", "set_input_format"):
-		video.call("set_input_format", input_format)
 	replacing_stream = true
+	_retire_stream()
 	playback = null
+	playback_state.clear()
 	frame_info = {}
 	video_fps = 0.0
 	probe_wanted = false
 	stream = video
 	replacing_stream = false
 	current_path = path
-	file_bytes = FileAccess.get_size(path) if FileAccess.file_exists(path) else 0
+	file_bytes = int(source_info.get("bytes", 0))
 	chapters = []
 	clear_loop()
 	play()
@@ -410,7 +463,7 @@ func _open_source(path: String, options: Dictionary, serial: int) -> bool:
 		_fail_load("decode", "The video did not produce a picture. Try software decoding or another file.", "No decoded video frame arrived within %d seconds." % (TEXTURE_WAIT_MSEC / 1000))
 		stop()
 		return false
-	tracks.load_for(path, playback)
+	tracks.load_for(path, playback, source_info.get("subtitles", []))
 	chapters = playback.get_chapters() if playback != null else []
 	stream_metadata = playback.get_stream_metadata() if playback != null else {}
 	_apply_content_metadata()
@@ -443,8 +496,50 @@ func _open_source(path: String, options: Dictionary, serial: int) -> bool:
 		Log.info("resumed at %.1f s" % resume)
 	if options.has("paused"):
 		paused = bool(options["paused"])
+	playback_state = {"path": path, "status": "ready", "options": options.duplicate(true)}
 	opened.emit(path)
 	return playback != null
+
+
+static func _network_path(path: String) -> bool:
+	return path.contains("://") and not path.begins_with("sacd://") and not path.begins_with("vpxzip://") and not path.begins_with("file://") and not path.begins_with("res://") and not path.begins_with("user://")
+
+
+func _create_stream(path: String, options: Dictionary) -> FFmpegVideoStream:
+	var video := FFmpegVideoStream.new()
+	video.file = str(options.get("stream", path))
+	video.audio_file = str(options.get("audio", ""))
+	video.http_headers = str(options.get("headers", ""))
+	var input_format := str(options.get("input_format", "dsf" if path.begins_with("sacd://") else ""))
+	if not input_format.is_empty() and ClassDB.class_has_method("FFmpegVideoStream", "set_input_format"):
+		video.call("set_input_format", input_format)
+	return video
+
+
+func _prepare_stream(video: FFmpegVideoStream, serial: int) -> bool:
+	_load_stage("Connecting to stream…" if _network_path(video.file) or _network_path(video.audio_file) else "Opening media file…")
+	opening_stream = video
+	if video.begin_open() != OK:
+		opening_stream = null
+		load_error = "Could not start the stream connection"
+		return false
+	var deadline := Time.get_ticks_msec() + 15000
+	while serial == open_serial and video.get_open_status() == 1:
+		if Time.get_ticks_msec() >= deadline:
+			video.cancel_open()
+			discarded_streams.append(video)
+			opening_stream = null
+			_fail_load("connection", "This source stopped responding. Check the connection, then retry.", "The media decoder could not open the source within 15 seconds.")
+			return false
+		await get_tree().process_frame
+	if serial != open_serial:
+		return false
+	opening_stream = null
+	if video.get_open_status() != 2:
+		load_error = video.get_open_error()
+		_fail_load("connection", "Could not open this stream. Check that the source is online, then retry.", load_error)
+		return false
+	return true
 
 
 func _cache_remote_image(url: String, serial: int) -> String:
@@ -554,7 +649,7 @@ func clear_auto_crop() -> void:
 
 
 func bookmarks() -> Array:
-	var path := music_path if not music_path.is_empty() else current_path
+	var path := bookmark_path()
 	if path.is_empty() or (is_image() and music_path.is_empty()):
 		return []
 	var saved: Variant = Library.get_pref(path, "bookmarks", [])
@@ -563,8 +658,70 @@ func bookmarks() -> Array:
 	return times
 
 
+func bookmark_path() -> String:
+	return music_path if not music_path.is_empty() else current_path
+
+
+func bookmark_name(time: float) -> String:
+	var names: Variant = Library.get_pref(bookmark_path(), "bookmark_names", {})
+	if not names is Dictionary:
+		return ""
+	var title: Variant = names.get("%.1f" % time, "")
+	return title if title is String else ""
+
+
+func bookmark_name_history() -> PackedStringArray:
+	var paths := Library.entries.keys()
+	paths.sort_custom(func(a: String, b: String) -> bool: return float(Library.entries[a].get("seen", 0)) > float(Library.entries[b].get("seen", 0)))
+	var result := PackedStringArray()
+	var used := {}
+	for path: String in paths:
+		var history: Variant = Library.get_pref(path, "bookmark_name_history", [])
+		if not history is Array:
+			continue
+		for title: Variant in history:
+			if not title is String or title.is_empty() or used.has(title.to_lower()):
+				continue
+			result.append(title)
+			used[title.to_lower()] = true
+			if result.size() >= BOOKMARK_HISTORY_MAX:
+				return result
+	return result
+
+
+func rename_bookmark(time: float, text: String) -> bool:
+	if time not in bookmarks():
+		return false
+	var title := text.strip_edges()
+	if title.length() > BOOKMARK_NAME_MAX:
+		return false
+	for i in title.length():
+		if title.unicode_at(i) < 32:
+			return false
+	var path := bookmark_path()
+	var saved: Variant = Library.get_pref(path, "bookmark_names", {})
+	var names: Dictionary = saved.duplicate() if saved is Dictionary else {}
+	var key := "%.1f" % time
+	if title.is_empty():
+		names.erase(key)
+	else:
+		names[key] = title
+		var history: Variant = Library.get_pref(path, "bookmark_name_history", [])
+		var recent: Array = history.filter(func(value: Variant) -> bool: return value is String and value.to_lower() != title.to_lower()) if history is Array else []
+		recent.push_front(title)
+		recent.resize(mini(recent.size(), BOOKMARK_HISTORY_MAX))
+		Library.set_pref(path, "bookmark_name_history", recent)
+	if names.is_empty():
+		Library.erase_pref(path, "bookmark_names")
+	else:
+		Library.set_pref(path, "bookmark_names", names)
+	marks_changed.emit()
+	return true
+
+
 func add_bookmark() -> float:
-	if current_path.is_empty() or is_image():
+	var path := bookmark_path()
+	if path.is_empty() or (is_image() and music_path.is_empty()):
 		return -1.0
 	var time := snappedf(stream_position, 0.1)
 	var times := bookmarks()
@@ -573,18 +730,27 @@ func add_bookmark() -> float:
 			return existing
 	times.append(time)
 	times.sort()
-	Library.set_pref(current_path, "bookmarks", times)
+	Library.set_pref(path, "bookmarks", times)
 	Log.info("bookmark at %.1f s" % time)
 	marks_changed.emit()
 	return time
 
 
 func remove_bookmark(time: float) -> void:
+	var path := bookmark_path()
+	var saved: Variant = Library.get_pref(path, "bookmark_names", {})
+	if saved is Dictionary:
+		var names: Dictionary = saved.duplicate()
+		names.erase("%.1f" % time)
+		if names.is_empty():
+			Library.erase_pref(path, "bookmark_names")
+		else:
+			Library.set_pref(path, "bookmark_names", names)
 	var times := bookmarks().filter(func(existing: float) -> bool: return not is_equal_approx(existing, time))
 	if times.is_empty():
-		Library.erase_pref(current_path, "bookmarks")
+		Library.erase_pref(path, "bookmarks")
 	else:
-		Library.set_pref(current_path, "bookmarks", times)
+		Library.set_pref(path, "bookmarks", times)
 	marks_changed.emit()
 
 
@@ -694,7 +860,26 @@ func is_music_mode() -> bool:
 
 
 func is_immersive_visualizer_active() -> bool:
-	return Settings.immersive_music_visualizer and _audio_only_playing() and (not is_image() or Settings.visualizer_over_images)
+	return Settings.immersive_music_visualizer and is_music_mode()
+
+
+func enter_immersive_music() -> void:
+	if not _audio_only_playing() or not is_image():
+		return
+	cancel_open()
+	current_path = music_path
+	music_path = ""
+	_close_image()
+	Settings.format_path = current_path
+	Settings.clear_view_adjust()
+	Settings.detecting = true
+	Settings.apply("projection", Settings.ProjectionMode.FLAT)
+	Settings.apply("stereo", Settings.Stereo.MONO)
+	Settings.apply("swap_eyes", false)
+	Settings.apply("alpha_mask", Settings.AlphaMask.NONE)
+	Settings.detecting = false
+	music_changed.emit()
+	opened.emit(current_path)
 
 
 func stop_music() -> void:
@@ -702,9 +887,12 @@ func stop_music() -> void:
 		return
 	music_path = ""
 	replacing_stream = true
+	_retire_stream()
 	stream = null
 	playback = null
+	playback_state.clear()
 	replacing_stream = false
+	tracks.reset()
 	chapters = []
 	clear_loop()
 	music_changed.emit()
@@ -720,18 +908,20 @@ func _audio_only_playing() -> bool:
 	return current_path.get_extension().to_lower() in AUDIO_EXTENSIONS
 
 
-func _play_with_picture(path: String, options: Dictionary, serial: int) -> void:
+func _play_with_picture(path: String, options: Dictionary, serial: int, source_info := {}) -> bool:
 	if serial != open_serial:
-		return
+		return false
+	_apply_decode_mode(bool(options.get("software", false)))
+	var video := _create_stream(path, options)
+	if not await _prepare_stream(video, serial):
+		return false
 	Log.info("music over picture %s" % path)
 	tracks.reset()
-	var video := FFmpegVideoStream.new()
-	video.file = str(options.get("stream", path))
-	video.audio_file = str(options.get("audio", ""))
-	video.http_headers = str(options.get("headers", ""))
 	music_path = path
 	replacing_stream = true
+	_retire_stream()
 	playback = null
+	playback_state.clear()
 	stream = video
 	replacing_stream = false
 	chapters = []
@@ -742,15 +932,16 @@ func _play_with_picture(path: String, options: Dictionary, serial: int) -> void:
 		push_warning("Cannot play %s" % path)
 		music_path = ""
 		music_changed.emit()
-		return
+		return false
 	playback = video.get_playback()
 	apply_priority()
 	apply_speed()
 	apply_audio_processing()
 	await _texture_ready(serial)
 	if serial != open_serial:
-		return
+		return false
 	if playback != null:
+		tracks.load_for(path, playback, source_info.get("subtitles", []))
 		frame_info = playback.get_frame_info()
 		stream_metadata = playback.get_stream_metadata()
 		chapters = playback.get_chapters()
@@ -763,8 +954,10 @@ func _play_with_picture(path: String, options: Dictionary, serial: int) -> void:
 		Log.info("resumed at %.1f s" % resume)
 	if options.has("paused"):
 		paused = bool(options["paused"])
+	playback_state = {"path": path, "status": "ready", "options": options.duplicate(true)}
 	marks_changed.emit()
 	music_changed.emit()
+	return playback != null
 
 
 func is_loading() -> bool:
@@ -775,22 +968,25 @@ func has_picture() -> bool:
 	return is_image() or get_video_texture() != null
 
 
-func _open_image(path: String, keep_music := false) -> void:
+func _open_image(path: String, keep_music := false, source_info := {}) -> void:
+	loading_file_info = source_info
 	if keep_music:
 		if music_path.is_empty():
 			music_path = current_path
 		Log.info("picture over music %s" % music_path.get_file())
 	else:
 		tracks.reset()
+		_retire_stream()
 		stop()
 		stream = null
 		playback = null
+		playback_state.clear()
 		music_path = ""
 		frame_info = {}
 		video_fps = 0.0
 	probe_wanted = false
 	current_path = path
-	file_bytes = FileAccess.get_size(path) if FileAccess.file_exists(path) else 0
+	file_bytes = int(source_info.get("bytes", 0))
 	_discard_loader()
 	image_source = Settings.panorama_source
 	loading_path = path
@@ -800,7 +996,7 @@ func _open_image(path: String, keep_music := false) -> void:
 		prefetched.erase(path)
 		Log.info("open image %s from prefetch" % path)
 	else:
-		image_loader = _start_loader(path)
+		image_loader = _start_loader(path, source_info)
 	if image_loader != null:
 		_poll_image()
 	else:
@@ -808,28 +1004,83 @@ func _open_image(path: String, keep_music := false) -> void:
 
 
 func prefetch_images(paths: PackedStringArray) -> void:
+	prefetch_serial += 1
 	for path: String in prefetched.keys():
 		if path not in paths:
 			_discard(prefetched[path])
 			prefetched.erase(path)
 	for path in paths:
 		if path != current_path and not prefetched.has(path) and PanoramaFiles.is_image(path):
-			var loader := _start_loader(path)
-			if loader != null:
-				prefetched[path] = loader
+			_prefetch_image(path, prefetch_serial)
 
 
-func _start_loader(path: String) -> VPXPanorama:
-	var faces := PanoramaFiles.cube_faces(path)
-	var equirect := PanoramaFiles.equirect_for(path)
+func _prefetch_image(path: String, serial: int) -> void:
+	var info := await _inspect_source(path)
+	if serial != prefetch_serial or path == current_path or prefetched.has(path) or not info.get("exists", false):
+		return
+	var loader := _start_loader(path, info)
+	if loader != null:
+		prefetched[path] = loader
+
+
+func _start_loader(path: String, info: Dictionary) -> VPXPanorama:
+	var faces: PackedStringArray = info.get("faces", PackedStringArray())
+	var equirect: String = info.get("equirect", "")
 	var use_cube := faces.size() == PanoramaFiles.CUBE_ORDER.size() and (Settings.panorama_source == Settings.PanoramaSource.CUBE or equirect.is_empty())
 	var sources := faces if use_cube else PackedStringArray([equirect if not equirect.is_empty() else path])
+	var wraps := use_cube
+	if not use_cube:
+		var saved: Variant = Library.get_pref(path, "format")
+		if saved is Dictionary:
+			wraps = int(saved.get("projection", -1)) == Settings.ProjectionMode.EQUIRECT_360 and int(saved.get("stereo", 0)) == Settings.Stereo.MONO
+		else:
+			var size: Vector2i = info.get("size", Vector2i.ZERO)
+			var format := guess_format(path, float(size.x) / float(size.y) if size.y > 0 else 0.0)
+			wraps = format["projection"] == Settings.ProjectionMode.EQUIRECT_360 and format["stereo"] == Settings.Stereo.MONO
 	var loader := VPXPanorama.new()
 	Log.info("load image %s as %s from %s" % [path, "cube" if use_cube else "single image", ", ".join(PackedStringArray(Array(sources).map(func(p: String) -> String: return p.get_file())))])
-	if loader.start(sources, VPXPanorama.LAYOUT_CUBE if use_cube else VPXPanorama.LAYOUT_TILED, use_cube or _wraps(path, sources[0])) != OK:
+	if loader.start(sources, VPXPanorama.LAYOUT_CUBE if use_cube else VPXPanorama.LAYOUT_TILED, wraps) != OK:
 		Log.warn("cannot load %s" % path)
 		return null
 	return loader
+
+
+func _inspect_source(path: String, serial := -1) -> Dictionary:
+	if path.contains("://") and not path.begins_with("res://") and not path.begins_with("user://"):
+		return {}
+	var result := {}
+	var imported: Variant = Library.get_pref(path, "subtitle_files", [])
+	var files: Array = imported.duplicate() if imported is Array else []
+	var task := WorkerThreadPool.add_task(func() -> void: result.merge(_source_info(path, files)))
+	var deadline := Time.get_ticks_msec() + 15000
+	while not WorkerThreadPool.is_task_completed(task):
+		if (serial >= 0 and serial != open_serial) or Time.get_ticks_msec() >= deadline:
+			source_tasks.append(task)
+			if serial >= 0 and serial == open_serial:
+				_fail_load("connection", "This drive stopped responding. Check the connection, then retry.", "The media file could not be inspected within 15 seconds.")
+			return {"exists": false}
+		await get_tree().process_frame
+	WorkerThreadPool.wait_for_task_completion(task)
+	return result
+
+
+static func _source_info(path: String, imported: Array) -> Dictionary:
+	var exists := FileAccess.file_exists(path)
+	var result := {"exists": exists, "bytes": FileAccess.get_size(path) if exists else 0}
+	if not exists:
+		return result
+	if PanoramaFiles.is_image(path):
+		result["faces"] = PanoramaFiles.cube_faces(path)
+		result["equirect"] = PanoramaFiles.equirect_for(path)
+		result["size"] = PanoramaFiles.probe_size(result["equirect"] if not str(result["equirect"]).is_empty() else path)
+	else:
+		var subtitles := MediaTracks.find_external(path)
+		for external_path in imported:
+			var file := str(external_path)
+			if FileAccess.file_exists(file) and not subtitles.any(func(track: Dictionary) -> bool: return track["path"] == file):
+				subtitles.append(MediaTracks._external_track(file, file.get_file()))
+		result["subtitles"] = subtitles
+	return result
 
 
 func _poll_prefetch() -> void:
@@ -837,15 +1088,6 @@ func _poll_prefetch() -> void:
 		if prefetched[path].poll() == VPXPanorama.STATUS_FAILED:
 			Log.warn("prefetch %s failed: %s" % [path, prefetched[path].get_error()])
 			prefetched.erase(path)
-
-
-func _wraps(path: String, source: String) -> bool:
-	var saved: Variant = Library.get_pref(path, "format")
-	if saved is Dictionary:
-		return int(saved.get("projection", -1)) == Settings.ProjectionMode.EQUIRECT_360 and int(saved.get("stereo", 0)) == Settings.Stereo.MONO
-	var size := PanoramaFiles.probe_size(source)
-	var format := guess_format(path, float(size.x) / float(size.y) if size.y > 0 else 0.0)
-	return format["projection"] == Settings.ProjectionMode.EQUIRECT_360 and format["stereo"] == Settings.Stereo.MONO
 
 
 func _poll_image() -> void:
@@ -865,6 +1107,7 @@ func _poll_image() -> void:
 	if path != current_path:
 		return
 	image = loader
+	image_file_info = loading_file_info
 	image_path = path
 	image_info = loader.get_info()
 	image_info["total_msec"] = Time.get_ticks_msec() - loading_started_msec
@@ -921,7 +1164,8 @@ func _on_settings_changed() -> void:
 	if image_source >= 0 and image_source != Settings.panorama_source and not current_path.is_empty() and (is_image() or is_loading()):
 		image_source = Settings.panorama_source
 		prefetch_images(PackedStringArray())
-		if PanoramaFiles.cube_faces(current_path).size() == PanoramaFiles.CUBE_ORDER.size() and not PanoramaFiles.equirect_for(current_path).is_empty():
+		var info: Dictionary = loading_file_info if image_loader != null else image_file_info
+		if info.get("faces", PackedStringArray()).size() == PanoramaFiles.CUBE_ORDER.size() and not str(info.get("equirect", "")).is_empty():
 			open(current_path)
 
 
@@ -940,24 +1184,29 @@ func apply_speed() -> void:
 
 func _apply_decode_mode(force_software := false) -> void:
 	OS.set_environment("VPX_PLAYBACK_PRIORITY", "sharp" if Settings.playback_priority == Settings.PlaybackPriority.SHARP else "smooth")
-	if force_software:
-		if not software_retry:
-			decode_before_retry = OS.get_environment("VPX_DECODE")
-		OS.set_environment("VPX_DECODE", "sw")
-		software_retry = true
-		return
 	if software_retry:
 		OS.set_environment("VPX_DECODE", decode_before_retry)
+		OS.set_environment("VPX_DECODE_SETTING", decode_setting_before_retry)
 		software_retry = false
-	if OS.get_environment("VPX_DECODE") in ["hw", "sw", "hardware", "software"]:
+	if force_software:
+		decode_before_retry = OS.get_environment("VPX_DECODE")
+		decode_setting_before_retry = OS.get_environment("VPX_DECODE_SETTING")
+		OS.set_environment("VPX_DECODE", "sw")
+		OS.set_environment("VPX_DECODE_SETTING", "sw")
+		software_retry = true
+		return
+	var mode := OS.get_environment("VPX_DECODE").to_lower()
+	if mode in ["hw", "sw", "hardware", "software"] and mode != OS.get_environment("VPX_DECODE_SETTING"):
 		return
 	match Settings.decode_mode:
 		Settings.DecodeMode.HARDWARE:
-			OS.set_environment("VPX_DECODE", "hw")
+			mode = "hw"
 		Settings.DecodeMode.SOFTWARE:
-			OS.set_environment("VPX_DECODE", "sw")
+			mode = "sw"
 		_:
-			OS.set_environment("VPX_DECODE", "auto")
+			mode = "auto"
+	OS.set_environment("VPX_DECODE", mode)
+	OS.set_environment("VPX_DECODE_SETTING", mode)
 
 
 func _texture_ready(serial := -1) -> void:
@@ -1001,6 +1250,8 @@ func seek_to(seconds: float) -> void:
 	if is_equal_approx(stream_position, target):
 		return
 	Log.note_seek(stream_position, target)
+	stall_seconds = 0.0
+	observed_progress = -1
 	if not is_playing():
 		play()
 	stream_position = target
@@ -1063,25 +1314,44 @@ func pixel_format_name() -> String:
 
 
 func _monitor_stream(delta: float) -> void:
-	if load_state.get("status") not in ["ready", "buffering"]:
+	if load_state.get("status") == "opening" or playback_state.get("status") not in ["ready", "buffering"]:
 		return
-	var path: String = load_state.get("path", "")
-	if not path.contains("://") or path.begins_with("sacd://") or is_image() or playback == null:
+	if playback == null or not stream is FFmpegVideoStream:
 		return
+	var video := stream as FFmpegVideoStream
+	if not _network_path(video.file) and not _network_path(video.audio_file):
+		return
+	var progress := playback.get_progress_state()
+	var serial := int(progress.get("serial", 0))
 	var position := stream_position
-	if paused or not is_playing() or absf(position - observed_position) > 0.03:
+	if paused or not is_playing() or serial != observed_progress:
+		observed_progress = serial
 		observed_position = position
 		stall_seconds = 0.0
-		if load_state.get("status") == "buffering":
-			load_state["status"] = "ready"
-			load_changed.emit(load_state.duplicate(true))
+		if playback_state.get("status") == "buffering":
+			playback_state["status"] = "ready"
+			if load_state.get("path") == playback_state["path"] and load_state.get("status") == "buffering":
+				load_state = playback_state.duplicate(true)
+				load_changed.emit(load_state.duplicate(true))
+		return
+	if int(progress.get("error", 0)) != 0:
+		remember_position()
+		playback_state["status"] = "failed"
+		load_state = playback_state.duplicate(true)
+		_fail_load("connection", "This stream stopped responding. Check the connection, then retry.", "The media decoder could not read more data (error %s)." % progress["error"])
+		playback.cancel_io()
+		stop()
 		return
 	stall_seconds += delta
 	if stall_seconds >= 30.0:
 		remember_position()
-		_fail_load("connection", "This stream stopped responding. Check the connection, then retry.", "The playback position did not advance for 30 seconds.")
+		playback_state["status"] = "failed"
+		load_state = playback_state.duplicate(true)
+		_fail_load("connection", "This stream stopped responding. Check the connection, then retry.", "No video frames or audio samples arrived for 30 seconds.")
+		playback.cancel_io()
 		stop()
-	elif stall_seconds >= 3.0 and load_state.get("status") != "buffering":
-		load_state["options"]["start_time"] = position
-		load_state["status"] = "buffering"
+	elif stall_seconds >= 3.0 and (playback_state.get("status") != "buffering" or load_state.get("path") != playback_state["path"] or load_state.get("status") != "buffering"):
+		playback_state["options"]["start_time"] = position
+		playback_state["status"] = "buffering"
+		load_state = playback_state.duplicate(true)
 		load_changed.emit(load_state.duplicate(true))

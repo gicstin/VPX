@@ -435,13 +435,14 @@ func _begin_audio(path: String, probe: Dictionary) -> void:
 		"fps": 0.0,
 		"duration": float(data.get("format", {}).get("duration", 0.0)),
 		"audio": true,
+		"cover_aspect_preserved": true,
 		"created": Time.get_unix_time_from_system(),
 	}
 	var thumb := "%s-%s.jpg" % [path.md5_text(), str(entry["sig"]).md5_text().substr(0, 8)]
 	var output := ProjectSettings.globalize_path(THUMB_DIR.path_join(thumb))
 	entries[path] = entry
 	_mark_dirty()
-	var job := {"stage": "thumb", "path": path, "output": output, "thumb": thumb, "script": AUDIO_THUMB_SCRIPT % NICE, "args": [path, output, "0", "scale=%d:%d:flags=bicubic" % [THUMB_WIDTH, THUMB_HEIGHT]]}
+	var job := {"stage": "thumb", "path": path, "output": output, "thumb": thumb, "script": AUDIO_THUMB_SCRIPT % NICE, "args": [path, output, "0", "scale=%d:%d:force_original_aspect_ratio=decrease:flags=bicubic,setsar=1" % [THUMB_WIDTH, THUMB_HEIGHT]]}
 	in_flight[path] = job
 	_push_work(job)
 
@@ -647,6 +648,11 @@ func _load() -> void:
 	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(INDEX_PATH))
 	if data is Dictionary and data.get("version", 0) == 2 and data.get("files") is Dictionary:
 		entries = data["files"]
+		for path in entries.keys():
+			var entry: Dictionary = entries[path]
+			if entry.get("audio", false) and not entry.get("cover_aspect_preserved", false):
+				entries.erase(path)
+				_mark_dirty()
 
 
 func _prune() -> void:

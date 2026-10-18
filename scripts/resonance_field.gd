@@ -43,6 +43,7 @@ var mids := 0.0
 var treble := 0.0
 var impulse := 0.0
 var stereo_width := 0.0
+var correlation := 1.0
 var preset := Vector3(1, 0, 0)
 var preset_index := 0
 var selected_preset := -1
@@ -226,7 +227,7 @@ func feed(data: PackedFloat32Array, features: Dictionary) -> void:
 		source_count = 1
 	elif (channels == 2 and not features.get("ambisonic", false)) or not spatial:
 		source_count = 2
-	stereo.feed(data, source_count == 1)
+	stereo.feed(data, source_count == 1, float(features.get("correlation", 1.0)))
 	for channel in 2:
 		var power := Vector3.ZERO
 		for band in BANDS:
@@ -238,6 +239,7 @@ func feed(data: PackedFloat32Array, features: Dictionary) -> void:
 	desired_presence = clampf(float(features.get("rms", 0.0)) * 5.0, 0.0, 1.0)
 	impulse = maxf(impulse, clampf(float(features.get("onset", 0.0)) * 8.0, 0.0, 1.0))
 	stereo_width = float(features.get("width", 0.0))
+	correlation = clampf(float(features.get("correlation", 1.0)), -1.0, 1.0)
 	var energy := Vector3.ZERO
 	for band in BANDS:
 		var value := maxf(data[band], data[BANDS + band])
@@ -272,6 +274,7 @@ func silence() -> void:
 		spectral_history_elapsed = 0.0
 		spectral_history_duration = 0.0
 	desired_presence = 0.0
+	correlation = 1.0
 	domain_targets = Vector3.ZERO
 	clear_waveform()
 
@@ -398,6 +401,7 @@ func _process(delta: float) -> void:
 		material.set_shader_parameter("spin", spin)
 		material.set_shader_parameter("surge", surge)
 		material.set_shader_parameter("stereo_width", stereo_width)
+		material.set_shader_parameter("correlation", correlation)
 		material.set_shader_parameter("palette", palette)
 		material.set_shader_parameter("preset", preset)
 		material.set_shader_parameter("dim", dim)

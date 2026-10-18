@@ -172,6 +172,7 @@ var playlist_index := {}
 var music_playlist_index := {}
 var pending_entry := ""
 var pending_direction := 1
+var skipped_entries := {}
 var prefetch_sets := {}
 var shuffle_on := Settings.shuffle
 var was_active := false
@@ -308,7 +309,6 @@ func _ready() -> void:
 	_build_integrations()
 	_build_appearance()
 	_build_speed_control()
-	Rows.music_visualizer(pages.get_node(MEDIA_PAGE))
 	_build_settings_backup()
 	_build_view_profiles()
 	_build_format_help()
@@ -611,14 +611,6 @@ func _save_subtitle_size_for_format() -> void:
 	var sizes: Dictionary = Settings.subtitle_size_by_format.duplicate()
 	sizes["%d:%d" % [Settings.projection, Settings.stereo]] = Settings.subtitle_size
 	Settings.apply("subtitle_size_by_format", sizes)
-	_refresh_subtitle_size()
-
-
-func _refresh_subtitle_size() -> void:
-	var sizes: Dictionary = Settings.subtitle_size_by_format
-	var key := "%d:%d" % [Settings.projection, Settings.stereo]
-	if sizes.has(key):
-		Settings.apply("subtitle_size", float(sizes[key]))
 
 
 func _section_after(page: Control, anchor: Control, title: String) -> VBoxContainer:
@@ -717,6 +709,10 @@ func _build_integrations() -> void:
 	remote = RemoteControl.new()
 	remote.player = player
 	remote.open_path = open_media
+	remote.opening_path = func() -> String:
+		if not resolving_path.is_empty():
+			return resolving_path
+		return str(player.load_state.get("path", "")) if player.load_state.get("status") == "opening" else ""
 	add_child(remote)
 	remote.clients_changed.connect(func(_count: int) -> void: _refresh_integrations())
 
@@ -740,6 +736,10 @@ func _refresh_integrations() -> void:
 func _install_web_tool() -> void:
 	web.install()
 	_refresh_integrations()
+
+
+func opening_media() -> bool:
+	return player.load_state.get("status") == "opening" or not resolving_path.is_empty() or recovery.status == "opening"
 
 
 func open_media(path: String, extra := {}) -> void:
@@ -792,6 +792,9 @@ func _build_quick_panel() -> void:
 	quick.visible = false
 	add_child(quick)
 	move_child(quick, $Sheet.get_index() + 1)
+	quick.bookmark_name_requested.connect(func(text: String) -> void:
+		keyboard_purpose = "bookmark_name"
+		keyboard.open("Bookmark name", text, "Optional name · up to 64 characters"))
 	quick.menu_requested.connect(show_main)
 	quick.recenter_requested.connect(recenter_requested.emit)
 	quick.reset_position_requested.connect(reset_position_requested.emit)
@@ -1088,6 +1091,8 @@ func _on_keyboard_submitted(text: String) -> void:
 			settings_search.field.grab_focus()
 		"search":
 			_set_query(text)
+		"bookmark_name":
+			quick.set_bookmark_name_text(text)
 		"rename_media":
 			rename_name.text = text
 			_validate_rename_name(text)
@@ -1229,7 +1234,6 @@ func _sync() -> void:
 	if speed_button != null:
 		var index := SPEEDS.find(Settings.playback_speed)
 		speed_button.select(maxi(index, 0))
-	_refresh_subtitle_size()
 	fov_row.visible = Settings.projection == Settings.ProjectionMode.FISHEYE
 	if not calibration_rows.is_empty():
 		calibration_rows["equirect_fov"].visible = Settings.projection == Settings.ProjectionMode.EQUIRECT_180
@@ -1765,35 +1769,46 @@ func _entry_for(path: String) -> String:
 
 
 func _open_entry(entry: String) -> void:
-	if not entry.ends_with("/"):
-		pending_entry = ""
-		open_media(entry)
-		return
-	var folder := entry.trim_suffix("/")
-	var cover: Dictionary = folder_covers.get(folder, {})
-	if folder_covers.has(folder) and not cover.is_empty():
-		pending_entry = ""
-		open_media(cover["cover"])
-		return
-	if folder_covers.has(folder):
-		_skip_entry(entry)
-		return
-	pending_entry = entry
-	scanner.cover(folder)
+	skipped_entries.clear()
+	_resolve_entry(entry)
+
+
+func _resolve_entry(entry: String) -> void:
+	pending_entry = ""
+	while not entry.is_empty() and not skipped_entries.has(entry):
+		if not entry.ends_with("/"):
+			skipped_entries.clear()
+			open_media(entry)
+			return
+		var folder := entry.trim_suffix("/")
+		if not folder_covers.has(folder):
+			pending_entry = entry
+			scanner.cover(folder)
+			return
+		var cover: Dictionary = folder_covers[folder]
+		if not cover.is_empty():
+			skipped_entries.clear()
+			open_media(cover["cover"])
+			return
+		skipped_entries[entry] = true
+		entry = _next_entry(entry)
+	skipped_entries.clear()
 
 
 func _skip_entry(entry: String) -> void:
-	pending_entry = ""
+	skipped_entries[entry] = true
+	_resolve_entry(_next_entry(entry))
+
+
+func _next_entry(entry: String) -> String:
 	if Settings.shuffle:
 		shuffle.visit(entry)
-	elif playlist_index.has(entry):
+	elif playlist_index.has(entry) and not playlist.is_empty():
 		var index := wrapi(int(playlist_index[entry]) + pending_direction, 0, playlist.size())
-		if playlist[index] != entry:
-			_open_entry(playlist[index])
-		return
-	var target := shuffle.next() if pending_direction > 0 else shuffle.previous()
-	if not target.is_empty() and target != entry:
-		_open_entry(target)
+		return playlist[index]
+	else:
+		return ""
+	return shuffle.next() if pending_direction > 0 else shuffle.previous()
 
 
 func _neighbor_images(path: String) -> PackedStringArray:
@@ -1840,6 +1855,13 @@ func _on_media_updated(path: String) -> void:
 
 
 func _on_music_ended() -> void:
+	if opening_media():
+		return
+	if Settings.sleep_timer == Settings.SleepTimer.END_OF_VIDEO:
+		Settings.apply("sleep_timer", Settings.SleepTimer.OFF)
+		_stop_music_under_picture()
+		Log.info("sleep timer: stopped at end of music")
+		return
 	match Settings.end_action:
 		Settings.EndAction.REPEAT:
 			player.restart()

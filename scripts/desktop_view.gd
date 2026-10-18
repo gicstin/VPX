@@ -310,7 +310,7 @@ func _video_button(button: InputEventMouseButton) -> void:
 
 
 func _reveal_osd() -> void:
-	if osd_cooldown > 0.0 or player.current_path.is_empty() or panel.visible:
+	if osd_cooldown > 0.0 or player.current_path.is_empty() or panel.visible or player.is_music_mode():
 		return
 	osd_cooldown = OSD_REFRESH_SECONDS
 	if osd.visible and osd.target_opacity > 0.0:

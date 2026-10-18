@@ -23,7 +23,7 @@ enum AudioFilter { OFF, LEVEL, NIGHT }
 enum Deband { OFF, LOW, MEDIUM, HIGH }
 
 const CONFIG_PATH := "user://settings.cfg"
-const VISUALIZER_PRESET_MAX := 51
+const VISUALIZER_PRESET_MAX := 63
 const VISUALIZER_PRESETS := [
 	"Resonance Field", "Resonant Architecture", "Particle Cosmos",
 	"Bass Strings", "Wave Architecture", "Aurora Cosmos", "Stereo Speakers",
@@ -36,7 +36,26 @@ const VISUALIZER_PRESETS := [
 	"Pan Analyzer Ring", "Source Comets", "Stereo Bloom", "Width Tunnel", "Surround Choir",
 	"Stereo Point Cloud", "Binary Stars", "Tesla Arcs", "Pendulum Wave", "Phosphor Dome",
 	"Polar Scope", "Scope Halo", "Scope Kaleidoscope", "Stereo Helix", "Terrain Canyon",
-	"Pan Ridges", "Terrain Tunnel", "Neon Mirror", "Crystal City"
+	"Pan Ridges", "Terrain Tunnel", "Neon Mirror", "Crystal City",
+	"Spectrum Observatory", "Phase Cathedral", "Stereo Ribbonfall",
+	"Pan Meridian", "Transient Loom", "Stereo Difference",
+	"Mid Side Atrium", "Correlation Causeway", "Stereo Spectrogram", "Pan Trails",
+	"Dual Waveform", "Spectral Balance"
+]
+const VISUALIZER_STUDIO_START := 52
+const VISUALIZER_STUDIO_GUIDES := [
+	"30 Hz → 18 kHz · Cyan L / Pink R · Height −60 → 0 dB · 10 dB rings",
+	"Side ↔ / Mid ↕ · Vertical = mono · Horizontal = phase opposition · Auto gain",
+	"Centre → edges: 30 Hz → 18 kHz · Cyan L / Pink R · 3.8 s history · Height −60 → 0 dB",
+	"Left ↔ Right · Bottom → top: 30 Hz → 18 kHz · Depth = 2.5 s pan history",
+	"Left → right: 30 Hz → 18 kHz · Depth = 3.8 s history · Gold = rising spectral energy",
+	"30 Hz → 18 kHz · Cyan below = L louder / Pink above = R louder · Centre = equal magnitude",
+	"Cyan lower rings = Mid (L+R) / Gold upper rings = Side (R−L) · Waveform displaces rings · Depth = 0.8 s history · Shared auto gain",
+	"Left red = −1 phase opposition / Centre amber = 0 / Right green = +1 mono compatibility · Depth = 3.8 s correlation history",
+	"Left → right: 30 Hz → 18 kHz · Upper panel L / Lower panel R · Top of each panel = now, bottom = 3.8 s ago · Dark → bright: −60 → 0 dB",
+	"Left ↔ Right = frequency pan · Low → high elevation: 30 Hz → 18 kHz · Near → far = 3.8 s history · Colour = frequency",
+	"Left → right: 256 captured samples · Cyan upper = L / Pink lower = R · Shared auto gain · Centre lines = zero · Outer rails = ±1 after gain · Depth = 0.8 s persistence",
+	"Left → right: 30 Hz → 18 kHz · Height = R minus L, −24 → +24 dB · Cyan below = L louder / Pink above = R louder · Centre = equal magnitude · 6 dB grid · Depth = 3.8 s history"
 ]
 const SCREEN_PLACEMENT_VERSION := 1
 const SCREEN_DISTANCE := 3.0
@@ -104,7 +123,6 @@ var visualizer_intensity := 0.75
 var visualizer_sensitivity := 1.75
 var visualizer_motion := 0.6
 var visualizer_sync := 0.0
-var visualizer_over_images := false
 var visualizer_auto_change := false
 var ui_size := 1.0
 var text_size := 1.0
@@ -197,6 +215,7 @@ var defaults := {}
 var profiles = preload("res://scripts/view_profiles.gd").new()
 var save_pending := false
 var save_timer := 0.0
+var subtitle_size_format := ""
 
 
 func _ready() -> void:
@@ -211,9 +230,20 @@ func _ready() -> void:
 	profiles.load_store()
 	_sync_accent()
 	changed.connect(_sync_accent)
+	changed.connect(_sync_subtitle_size)
+	_sync_subtitle_size()
 	get_tree().node_added.connect(func(node: Node) -> void:
 		if node is Control:
 			VpxTheme.scale_control.call_deferred(node))
+
+
+func _sync_subtitle_size() -> void:
+	var key := "%d:%d" % [projection, stereo]
+	if key == subtitle_size_format:
+		return
+	subtitle_size_format = key
+	if subtitle_size_by_format.has(key):
+		apply("subtitle_size", float(subtitle_size_by_format[key]))
 
 
 func _sync_accent() -> void:
@@ -234,6 +264,10 @@ func _notification(what: int) -> void:
 		flush()
 
 
+func visualizer_advance_limit() -> float:
+	return minf(0.25, floorf(maxf(0.0, AudioServer.get_output_latency()) / 0.005) * 0.005)
+
+
 func _validate_visualizer() -> void:
 	music_visualizer_mode = clampi(music_visualizer_mode, 0, 2)
 	if music_visualizer_mode == 1:
@@ -243,7 +277,7 @@ func _validate_visualizer() -> void:
 	visualizer_intensity = clampf(visualizer_intensity, 0.0, 1.5) if is_finite(visualizer_intensity) else 0.75
 	visualizer_sensitivity = clampf(visualizer_sensitivity, 0.5, 4.0) if is_finite(visualizer_sensitivity) else 1.75
 	visualizer_motion = clampf(visualizer_motion, 0.0, 1.0) if is_finite(visualizer_motion) else 0.6
-	visualizer_sync = clampf(visualizer_sync, -0.25, 0.25) if is_finite(visualizer_sync) else 0.0
+	visualizer_sync = clampf(visualizer_sync, -0.25, visualizer_advance_limit()) if is_finite(visualizer_sync) else 0.0
 
 
 func apply(property: StringName, value: Variant) -> void:
@@ -255,6 +289,8 @@ func apply(property: StringName, value: Variant) -> void:
 		if not (value is int or value is float) or not is_finite(float(value)):
 			return
 		var limits := {&"music_visualizer_mode": Vector2(0, 2), &"visualizer_preset": Vector2(0, VISUALIZER_PRESET_MAX), &"visualizer_quality": Vector2(0, 3), &"visualizer_intensity": Vector2(0, 1.5), &"visualizer_sensitivity": Vector2(0.5, 4), &"visualizer_motion": Vector2(0, 1), &"visualizer_sync": Vector2(-0.25, 0.25)}
+		if property == &"visualizer_sync":
+			limits[property].y = visualizer_advance_limit()
 		value = clampf(float(value), limits[property].x, limits[property].y)
 		if property in [&"music_visualizer_mode", &"visualizer_preset", &"visualizer_quality"]:
 			value = int(value)
@@ -516,7 +552,7 @@ func _persisted() -> PackedStringArray:
 		"stereo_depth", "stereo_vertical", "picture_zoom", "single_eye", "flat_image_repeat", "photo_pan_x", "photo_pan_y",
 		"auto_crop", "deband", "dither", "compositor_layer", "spatial_audio", "dialogue_boost", "audio_filter",
 		"remote_control", "flat_video_pan", "music_visualizer", "audio_stretch_quality", "accent_color", "ui_size", "text_size",
-		"music_visualizer_mode", "immersive_music_visualizer", "visualizer_preset", "visualizer_quality", "visualizer_intensity", "visualizer_sensitivity", "visualizer_motion", "visualizer_sync", "visualizer_over_images", "visualizer_auto_change",
+		"music_visualizer_mode", "immersive_music_visualizer", "visualizer_preset", "visualizer_quality", "visualizer_intensity", "visualizer_sensitivity", "visualizer_motion", "visualizer_sync", "visualizer_auto_change",
 	])
 
 

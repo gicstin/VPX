@@ -1,0 +1,526 @@
+--- a/ffmpeg_video_stream.cpp
++++ b/ffmpeg_video_stream.cpp
+@@ -435,6 +435,7 @@
+ #ifdef FFMPEG_MT_GPU_UPLOAD
+ 		last_frame_texture = last_frame->get_texture();
+ #endif
++		progress_serial++;
+ 		got_new_frame = true;
+ 	}
+ #ifndef FFMPEG_MT_GPU_UPLOAD
+@@ -549,6 +550,9 @@
+ 		if (written <= 0) {
+ 			break;
+ 		}
++		if (written > 0) {
++			progress_serial++;
++		}
+ 		audio_frame_offset += written;
+ 		mixed_frames += written;
+ 		if (audio_frame_offset < sample_count) {
+@@ -586,8 +590,8 @@
+ 	uploader->pump(_upload_budget(uploader->get_last_frame_bytes(), decoder->get_frame_rate(), _display_delta(p_delta)));
+ }
+ 
+-Error FFmpegVideoStreamPlayback::load(Ref<FileAccess> p_file_access, const String &p_path) {
+-	decoder = Ref<VideoDecoder>(memnew(VideoDecoder(p_file_access)));
++Error FFmpegVideoStreamPlayback::load(Ref<FileAccess> p_file_access, const String &p_path, Ref<VideoDecoder> p_prepared) {
++	decoder = p_prepared.is_valid() ? p_prepared : Ref<VideoDecoder>(memnew(VideoDecoder(p_file_access)));
+ 	if (!p_path.is_empty()) {
+ 		decoder->set_file_path(p_path);
+ 	}
+@@ -648,7 +652,10 @@
+ 	}
+ 	clear();
+ 	playback_position = 0;
+-	decoder->seek(0, true);
++	if (started || decoder->get_open_status() != 2) {
++		decoder->seek(0);
++	}
++	started = true;
+ 	just_seeked = true;
+ 	playing = true;
+ }
+@@ -754,6 +761,9 @@
+ 	ClassDB::bind_method(D_METHOD("get_frame_time_msec", "set"), &FFmpegVideoStreamPlayback::get_frame_time_msec);
+ 	ClassDB::bind_method(D_METHOD("get_frame_state"), &FFmpegVideoStreamPlayback::get_frame_state);
+ 	ClassDB::bind_method(D_METHOD("get_frame_info"), &FFmpegVideoStreamPlayback::get_frame_info);
++	ClassDB::bind_method(D_METHOD("get_progress_state"), &FFmpegVideoStreamPlayback::get_progress_state);
++	ClassDB::bind_method(D_METHOD("cancel_io"), &FFmpegVideoStreamPlayback::cancel_io);
++	ClassDB::bind_method(D_METHOD("is_io_stopped"), &FFmpegVideoStreamPlayback::is_io_stopped);
+ 	ClassDB::bind_method(D_METHOD("set_display_rate", "hz"), &FFmpegVideoStreamPlayback::set_display_rate);
+ 	ClassDB::bind_method(D_METHOD("set_smooth_decode", "smooth"), &FFmpegVideoStreamPlayback::set_smooth_decode);
+ 	ClassDB::bind_method(D_METHOD("get_display_rate"), &FFmpegVideoStreamPlayback::get_display_rate);
+@@ -781,7 +791,35 @@
+ 	ClassDB::bind_method(D_METHOD("get_stream_metadata"), &FFmpegVideoStreamPlayback::get_stream_metadata);
+ }
+ 
++Dictionary FFmpegVideoStreamPlayback::get_progress_state() const {
++	Dictionary state;
++	state["serial"] = (int64_t)progress_serial;
++	state["error"] = decoder.is_valid() ? decoder->get_io_error() : 0;
++	return state;
++}
++
++void FFmpegVideoStreamPlayback::cancel_io() {
++	if (decoder.is_valid()) {
++		decoder->cancel_io();
++	}
++}
++
++Error FFmpegVideoStream::begin_open() {
++	ERR_FAIL_COND_V(prepared_decoder.is_valid() || last_playback.is_valid(), ERR_ALREADY_IN_USE);
++	prepared_decoder = Ref<VideoDecoder>(memnew(VideoDecoder(Ref<FileAccess>())));
++	prepared_decoder->set_file_path(get_file());
++	prepared_decoder->set_external_audio(audio_file);
++	prepared_decoder->set_http_headers(http_headers);
++	prepared_decoder->set_input_format(input_format);
++	prepared_decoder->prepare_async();
++	return OK;
++}
++
+ void FFmpegVideoStream::_bind_methods() {
++	ClassDB::bind_method(D_METHOD("begin_open"), &FFmpegVideoStream::begin_open);
++	ClassDB::bind_method(D_METHOD("get_open_status"), &FFmpegVideoStream::get_open_status);
++	ClassDB::bind_method(D_METHOD("get_open_error"), &FFmpegVideoStream::get_open_error);
++	ClassDB::bind_method(D_METHOD("cancel_open"), &FFmpegVideoStream::cancel_open);
+ 	ClassDB::bind_static_method("FFmpegVideoStream", D_METHOD("get_sacd_info", "path"), &FFmpegVideoStream::get_sacd_info);
+ 	ClassDB::bind_method(D_METHOD("get_playback"), &FFmpegVideoStream::get_playback);
+ 	ClassDB::bind_method(D_METHOD("set_audio_file", "path"), &FFmpegVideoStream::set_audio_file);
+--- a/ffmpeg_video_stream.h
++++ b/ffmpeg_video_stream.h
+@@ -205,6 +205,8 @@
+ 	bool looping = false;
+ 	bool buffering = false;
+ 	int frames_processed = 0;
++	uint64_t progress_serial = 0;
++	bool started = false;
+ 	void seek_into_sync();
+ 	void _pump_upload(double p_delta);
+ 	double get_current_frame_time();
+@@ -258,7 +260,10 @@
+ 	static void _bind_methods();
+ 
+ public:
+-	Error load(Ref<FileAccess> p_file_access, const String &p_path = String());
++	Error load(Ref<FileAccess> p_file_access, const String &p_path = String(), Ref<VideoDecoder> p_prepared = Ref<VideoDecoder>());
++	Dictionary get_progress_state() const;
++	void cancel_io();
++	bool is_io_stopped() const { return decoder.is_null() || decoder->is_io_stopped(); }
+ 	Ref<Texture2D> get_plane_texture(int p_plane, int p_set) const;
+ 	int get_current_set() const;
+ 	int get_frame_serial() const;
+@@ -315,6 +320,7 @@
+ class FFmpegVideoStream : public VideoStream {
+ 	GDCLASS(FFmpegVideoStream, VideoStream);
+ 	Ref<FFmpegVideoStreamPlayback> last_playback;
++	Ref<VideoDecoder> prepared_decoder;
+ 	String audio_file;
+ 	String http_headers;
+ 	String input_format;
+@@ -323,21 +329,32 @@
+ 	static void _bind_methods();
+ 	Ref<VideoStreamPlayback> instantiate_playback_internal() {
+ 		const String path = get_file();
+-		Ref<FileAccess> fa = FileAccess::open(path, FileAccess::READ);
+-		if (!fa.is_valid() && !path.contains("://")) {
++		if (prepared_decoder.is_valid() && prepared_decoder->get_open_status() != 2) {
++			return Ref<VideoStreamPlayback>();
++		}
++		Ref<FileAccess> fa;
++		if (prepared_decoder.is_null() && !path.contains("://")) {
++			fa = FileAccess::open(path, FileAccess::READ);
++		}
++		if (prepared_decoder.is_null() && !fa.is_valid() && !path.contains("://")) {
+ 			return Ref<VideoStreamPlayback>();
+ 		}
+ 		Ref<FFmpegVideoStreamPlayback> pb;
+ 		pb.instantiate();
+ 		pb->set_source_options(audio_file, http_headers, input_format);
+-		if (pb->load(fa, path) != OK) {
++		if (pb->load(fa, path, prepared_decoder) != OK) {
+ 			return nullptr;
+ 		}
++		prepared_decoder.unref();
+ 		last_playback = pb;
+ 		return pb;
+ 	}
+ 
+ public:
++	Error begin_open();
++	int get_open_status() const { return prepared_decoder.is_valid() ? prepared_decoder->get_open_status() : 0; }
++	String get_open_error() const { return prepared_decoder.is_valid() ? prepared_decoder->get_open_error() : String(); }
++	void cancel_open() { if (prepared_decoder.is_valid()) prepared_decoder->cancel_io(); }
+ 	static Dictionary get_sacd_info(const String &p_path);
+ 	Ref<FFmpegVideoStreamPlayback> get_playback() const { return last_playback; }
+ 	void set_audio_file(const String &p_path) { audio_file = p_path; }
+--- a/video_decoder.cpp
++++ b/video_decoder.cpp
+@@ -497,8 +497,68 @@
+ }
+ 
+ static bool _path_uses_native_io(const String &p_path) {
+-	return p_path.begins_with("/") || p_path.begins_with("file:") || p_path.contains("://") ||
++	return p_path.begins_with("/") || p_path.begins_with("\\\\") || p_path.begins_with("file:") || p_path.contains("://") ||
+ 			(p_path.length() >= 3 && p_path[1] == ':' && (p_path[2] == '/' || p_path[2] == '\\'));
++}
++
++static bool vpx_network_path(const String &p_path) {
++	return p_path.contains("://") && !p_path.begins_with("file://") && !p_path.begins_with("res://") &&
++			!p_path.begins_with("user://") && !p_path.begins_with("sacd://") && !p_path.begins_with("vpxzip://");
++}
++
++bool VideoDecoder::uses_network_io() const {
++	return vpx_network_path(file_path) || vpx_network_path(audio_file_path);
++}
++
++int VideoDecoder::_interrupt_callback(void *p_opaque) {
++	VideoDecoder *decoder = static_cast<VideoDecoder *>(p_opaque);
++	if (decoder->io_cancelled.load() || decoder->thread_abort.is_set()) {
++		return 1;
++	}
++	const uint64_t deadline = decoder->io_deadline_usec.load();
++	if (deadline != 0 && vpx_ticks_usec() >= deadline) {
++		decoder->io_error.store(AVERROR(ETIMEDOUT));
++		return 1;
++	}
++	return 0;
++}
++
++void VideoDecoder::_begin_io(uint64_t p_timeout_usec) {
++	if (uses_network_io()) {
++		io_deadline_usec.store(vpx_ticks_usec() + p_timeout_usec);
++	}
++}
++
++void VideoDecoder::_end_io() {
++	io_deadline_usec.store(0);
++}
++
++void VideoDecoder::cancel_io() {
++	io_cancelled.store(true);
++	thread_abort.set_to(true);
++}
++
++void VideoDecoder::prepare_async() {
++	ERR_FAIL_COND(open_status.load() != 0);
++	open_status.store(1);
++	open_thread = std::thread([this]() {
++		if (!file_path.contains("://") || file_path.begins_with("res://") || file_path.begins_with("user://")) {
++			video_file = FileAccess::open(file_path, FileAccess::READ);
++		}
++		if (io_cancelled.load()) {
++			open_status.store(-1);
++			return;
++		}
++		_begin_io(15000000);
++		prepare_decoding();
++		const bool ready = !io_cancelled.load() && io_error.load() == 0 && open_error.is_empty() && input_opened &&
++				(video_stream != nullptr || (audio_only && audio_stream != nullptr));
++		if (!ready && open_error.is_empty()) {
++			open_error = io_cancelled.load() ? "Opening cancelled" : "The media decoder could not open the source";
++		}
++		_end_io();
++		open_status.store(ready ? 2 : -1);
++	});
+ }
+ 
+ void VideoDecoder::prepare_decoding() {
+@@ -509,6 +569,7 @@
+ 	format_context = avformat_alloc_context();
+ 	format_context->flags |= AVFMT_FLAG_GENPTS | AVFMT_FLAG_FAST_SEEK;
+ 	format_context->video_codec = forced_video_codec;
++	format_context->interrupt_callback = { &VideoDecoder::_interrupt_callback, this };
+ 
+ 	AVDictionary *opts = _input_options();
+ 	const AVInputFormat *input_format = nullptr;
+@@ -572,8 +633,6 @@
+ 			sacd_file = nullptr;
+ 		}
+ 	} else if (input_format != nullptr || _path_uses_native_io(file_path)) {
+-		avformat_free_context(format_context);
+-		format_context = nullptr;
+ 		CharString path_utf8 = file_path.utf8();
+ 		open_input_res = avformat_open_input(&format_context, path_utf8.get_data(), input_format, &opts);
+ 		if (open_input_res >= 0) {
+@@ -587,7 +646,7 @@
+ 		}
+ 	}
+ 	av_dict_free(&opts);
+-	if (open_input_res < 0 && !file_path.begins_with("sacd://") && !file_path.begins_with("vpxzip://")) {
++	if (open_input_res < 0 && video_file.is_valid() && !io_cancelled.load() && io_error.load() == 0 && !file_path.begins_with("sacd://") && !file_path.begins_with("vpxzip://")) {
+ 		if (!io_context) {
+ 			const int context_buffer_size = 1024 * 1024;
+ 			unsigned char *context_buffer = (unsigned char *)av_malloc(context_buffer_size);
+@@ -605,12 +664,18 @@
+ 		open_input_res = avformat_open_input(&format_context, "dummy", nullptr, nullptr);
+ 	}
+ 	input_opened = open_input_res >= 0;
+-	ERR_FAIL_COND_MSG(!input_opened, vformat("Error opening file or stream: %s", ffmpeg_get_error_message(open_input_res)));
++	if (!input_opened) {
++		open_error = vformat("Error opening file or stream: %s", ffmpeg_get_error_message(io_error.load() != 0 ? io_error.load() : open_input_res));
++		return;
++	}
+ 
+ 	AVCodec *codec = nullptr;
+ 
+ 	int find_stream_info_result = avformat_find_stream_info(format_context, nullptr);
+-	ERR_FAIL_COND_MSG(find_stream_info_result < 0, vformat("Error finding stream info: %s", ffmpeg_get_error_message(find_stream_info_result)));
++	if (find_stream_info_result < 0) {
++		open_error = vformat("Error finding stream info: %s", ffmpeg_get_error_message(find_stream_info_result));
++		return;
++	}
+ 
+ 	int stream_index = av_find_best_stream(format_context, AVMEDIA_TYPE_VIDEO, -1, -1, (const AVCodec **)&codec, 0);
+ 
+@@ -661,6 +726,9 @@
+ 		metadata_mutex->lock();
+ 		stream_metadata = metadata;
+ 		metadata_mutex->unlock();
++		if (!can_seek()) {
++			return;
++		}
+ 		const int64_t origin = audio_stream->start_time != AV_NOPTS_VALUE ? audio_stream->start_time : 0;
+ 		int rewind = av_seek_frame(format_context, audio_stream->index, origin, AVSEEK_FLAG_BACKWARD);
+ 		if (rewind < 0) {
+@@ -694,7 +762,7 @@
+ 	if (video_stream->duration > 0) {
+ 		duration = video_stream->duration * video_time_base_in_seconds * 1000.0;
+ 	} else {
+-		duration = format_context->duration / (double)AV_TIME_BASE * 1000.0;
++		duration = format_context->duration != AV_NOPTS_VALUE ? MAX(0.0, format_context->duration / (double)AV_TIME_BASE * 1000.0) : 0.0;
+ 	}
+ 
+ 	int audio_stream_index = av_find_best_stream(format_context, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+@@ -712,6 +780,10 @@
+ 		av_dict_set(&opts, "reconnect", "1", 0);
+ 		av_dict_set(&opts, "reconnect_streamed", "1", 0);
+ 		av_dict_set(&opts, "multiple_requests", "1", 0);
++		av_dict_set(&opts, "rw_timeout", "35000000", 0);
++		av_dict_set(&opts, "reconnect_delay_max", "2", 0);
++		av_dict_set(&opts, "reconnect_max_retries", "2", 0);
++		av_dict_set(&opts, "reconnect_delay_total_max", "4", 0);
+ 		if (!http_headers.is_empty()) {
+ 			av_dict_set(&opts, "headers", http_headers.utf8().get_data(), 0);
+ 		}
+@@ -736,25 +808,34 @@
+ 		av_dict_set(&opts, "reconnect", "1", 0);
+ 		av_dict_set(&opts, "reconnect_streamed", "1", 0);
+ 		av_dict_set(&opts, "multiple_requests", "1", 0);
++		av_dict_set(&opts, "rw_timeout", "35000000", 0);
++		av_dict_set(&opts, "reconnect_delay_max", "2", 0);
++		av_dict_set(&opts, "reconnect_max_retries", "2", 0);
++		av_dict_set(&opts, "reconnect_delay_total_max", "4", 0);
+ 		if (!http_headers.is_empty()) {
+ 			av_dict_set(&opts, "headers", http_headers.utf8().get_data(), 0);
+ 		}
+ 	}
++	audio_format_context = avformat_alloc_context();
++	audio_format_context->interrupt_callback = { &VideoDecoder::_interrupt_callback, this };
+ 	CharString path_utf8 = audio_file_path.utf8();
+ 	const int open_result = avformat_open_input(&audio_format_context, path_utf8.get_data(), nullptr, &opts);
+ 	av_dict_free(&opts);
+ 	if (open_result < 0) {
+-		print_line(vformat("Cannot open external audio: %s", ffmpeg_get_error_message(open_result)));
++		open_error = vformat("Cannot open external audio: %s", ffmpeg_get_error_message(open_result));
++		print_line(open_error);
+ 		audio_format_context = nullptr;
+ 		return;
+ 	}
+ 	if (avformat_find_stream_info(audio_format_context, nullptr) < 0) {
++		open_error = "Could not read external audio stream information";
+ 		avformat_close_input(&audio_format_context);
+ 		return;
+ 	}
+ 	const int index = av_find_best_stream(audio_format_context, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+ 	if (index < 0) {
+-		print_line("External audio has no audio stream");
++		open_error = "External audio has no audio stream";
++		print_line(open_error);
+ 		avformat_close_input(&audio_format_context);
+ 		return;
+ 	}
+@@ -1273,6 +1354,10 @@
+ }
+ 
+ void VideoDecoder::_seek_command(double p_target_timestamp) {
++	if (io_cancelled.load()) {
++		return;
++	}
++	_begin_io();
+ 	if (audio_only) {
+ 		_seek_audio_only(p_target_timestamp);
+ 		return;
+@@ -1441,7 +1526,7 @@
+ }
+ 
+ void VideoDecoder::_setup_seek_accelerator() {
+-	if (hw_active || seek_codec != nullptr || !_path_uses_native_io(file_path) || video_stream == nullptr) {
++	if (uses_network_io() || frame_format == FFmpegFrameFormat::RGBA8 || hw_active || seek_codec != nullptr || !_path_uses_native_io(file_path) || video_stream == nullptr) {
+ 		return;
+ 	}
+ 	CharString path_utf8 = file_path.utf8();
+@@ -1618,6 +1703,7 @@
+ 	String video_decoding_str = vformat("Video decoding %d", Thread::get_caller_id());
+ #endif
+ 	CharString str = video_decoding_str.utf8();
++	decoder->_setup_seek_accelerator();
+ 	while (!decoder->thread_abort.is_set()) {
+ 		const int switch_request = decoder->backend_switch_request.get();
+ 		if (switch_request != 0) {
+@@ -1650,6 +1736,7 @@
+ 					decoder->idle_window_usec += 1000;
+ 				}
+ 			} break;
++			case FAULTED:
+ 			case END_OF_STREAM: {
+ 				// While at the end of the stream, avoid attempting to read further as this comes with a non-negligible overhead.
+ 				// A Seek() operation will trigger a state change, allowing decoding to potentially start again.
+@@ -1668,6 +1755,7 @@
+ 	if (decoder->decoder_state != DecoderState::FAULTED) {
+ 		decoder->decoder_state = DecoderState::STOPPED;
+ 	}
++	decoder->decoding_active.store(false);
+ }
+ 
+ void VideoDecoder::_decode_next_frame(AVPacket *p_packet, AVFrame *p_receive_frame) {
+@@ -1679,7 +1767,9 @@
+ 		if (audio_format_context != nullptr && !audio_eof && (video_eof || last_audio_packet_msec <= last_video_packet_msec + 300.0)) {
+ 			packet_source = audio_format_context;
+ 		}
++		_begin_io();
+ 		read_frame_result = av_read_frame(packet_source, p_packet);
++		_end_io();
+ 	}
+ 	const bool from_external_audio = packet_source == audio_format_context && audio_format_context != nullptr;
+ 	if (read_frame_result >= 0) {
+@@ -1747,6 +1837,8 @@
+ 		decoder_state = DecoderState::READY;
+ 		OS::get_singleton()->delay_usec(1000);
+ 	} else {
++		io_error.store(io_error.load() != 0 ? io_error.load() : read_frame_result);
++		decoder_state = DecoderState::FAULTED;
+ 		print_line(vformat("Failed to read data into avcodec packet: %s", ffmpeg_get_error_message(read_frame_result)));
+ 		if (from_external_audio) {
+ 			audio_eof = true;
+@@ -3262,26 +3354,34 @@
+ 
+ void VideoDecoder::start_decoding() {
+ 	ERR_FAIL_COND_MSG(thread != nullptr, "Cannot start decoding once already started");
++	if (open_thread.joinable()) {
++		open_thread.join();
++	}
+ 	if (format_context == nullptr) {
++		_begin_io(15000000);
+ 		prepare_decoding();
+-		if (audio_only) {
+-			const int audio_index = audio_stream != nullptr ? audio_stream->index : -1;
+-			if (!_open_audio_stream(audio_index)) {
+-				decoder_state = DecoderState::FAULTED;
+-				return;
+-			}
+-			frame_format = FFmpegFrameFormat::RGBA8;
+-			_queue_poster(0.0);
+-		} else {
+-			Error codec_context_create_error = recreate_codec_context();
+-			if (video_stream == nullptr || codec_context_create_error != OK) {
+-				decoder_state = DecoderState::FAULTED;
+-				return;
+-			}
+-		}
+-	}
+-
+-	_setup_seek_accelerator();
++		_end_io();
++	}
++	if (io_cancelled.load() || io_error.load() != 0 || !open_error.is_empty() || !input_opened) {
++		decoder_state = DecoderState::FAULTED;
++		return;
++	}
++	if (audio_only) {
++		const int audio_index = audio_stream != nullptr ? audio_stream->index : -1;
++		if (!_open_audio_stream(audio_index)) {
++			decoder_state = DecoderState::FAULTED;
++			return;
++		}
++		frame_format = FFmpegFrameFormat::RGBA8;
++		_queue_poster(0.0);
++	} else {
++		Error codec_context_create_error = recreate_codec_context();
++		if (video_stream == nullptr || codec_context_create_error != OK) {
++			decoder_state = DecoderState::FAULTED;
++			return;
++		}
++	}
++	decoding_active.store(true);
+ 	thread = memnew(std::thread(_thread_func, this));
+ }
+ 
+@@ -3401,6 +3501,10 @@
+ }
+ 
+ VideoDecoder::~VideoDecoder() {
++	cancel_io();
++	if (open_thread.joinable()) {
++		open_thread.join();
++	}
+ 	if (thread != nullptr) {
+ 		thread_abort.set_to(true);
+ 		thread->join();
+@@ -3413,8 +3517,12 @@
+ 	kf_cache.clear();
+ 	_free_seek_accelerator();
+ 
+-	if (format_context != nullptr && input_opened) {
+-		avformat_close_input(&format_context);
++	if (format_context != nullptr) {
++		if (input_opened) {
++			avformat_close_input(&format_context);
++		} else {
++			avformat_free_context(format_context);
++		}
+ 	}
+ 	if (audio_format_context != nullptr) {
+ 		avformat_close_input(&audio_format_context);
+--- a/video_decoder.h
++++ b/video_decoder.h
+@@ -281,7 +281,7 @@
+ 	bool hw_decoding_allowed = false;
+ 	double video_time_base_in_seconds;
+ 	double audio_time_base_in_seconds;
+-	double duration;
++	double duration = 0.0;
+ 	double skip_output_until_time = -1.0;
+ 	SafeFlag skip_current_outputs;
+ 	SafeNumeric<float> last_decoded_frame_time;
+@@ -332,6 +332,16 @@
+ 	bool hw_active = false;
+ 	std::thread *thread = nullptr;
+ 	SafeFlag thread_abort;
++	std::thread open_thread;
++	std::atomic<int> open_status{ 0 };
++	std::atomic<bool> decoding_active{ false };
++	std::atomic<bool> io_cancelled{ false };
++	std::atomic<uint64_t> io_deadline_usec{ 0 };
++	std::atomic<int> io_error{ 0 };
++	String open_error;
++	static int _interrupt_callback(void *p_opaque);
++	void _begin_io(uint64_t p_timeout_usec = 35000000);
++	void _end_io();
+ 	AVCodec const *forced_video_codec = nullptr;
+ 	AVBufferRef *hw_device_ctx = nullptr;
+ 	AVHWDeviceType hw_device_type = AV_HWDEVICE_TYPE_NONE;
+@@ -441,6 +451,13 @@
+ 	};
+ 	void seek(double p_time, bool p_wait = false);
+ 	void start_decoding();
++	void prepare_async();
++	int get_open_status() const { return open_status.load(); }
++	String get_open_error() const { return open_status.load() == 1 ? String() : open_error; }
++	void cancel_io();
++	bool is_io_stopped() const { return open_status.load() != 1 && !decoding_active.load(); }
++	bool uses_network_io() const;
++	int get_io_error() const { return io_error.load(); }
+ 	void set_file_path(const String &p_path) { file_path = p_path; }
+ 	Vector<AvailableDecoderInfo> get_available_video_decoders(const AVInputFormat *p_format, AVCodecID p_codec_id, BitField<HardwareVideoDecoder> p_target_decoders);
+ 	void return_frames(Vector<Ref<DecodedFrame>> p_frames);

@@ -223,6 +223,7 @@ else
 	git -C "$EXT" apply "$ROOT/addons/ffmpeg/archive.patch"
 	git -C "$EXT" apply "$ROOT/addons/ffmpeg/post192.patch"
 	git -C "$EXT" apply "$ROOT/addons/ffmpeg/resonance.patch"
+	git -C "$EXT" apply "$ROOT/addons/ffmpeg/network.patch"
 	(cd "$EXT/gdextension_build" && scons --site-dir="$BUILD/site_scons" -j"$JOBS" platform=linux target=template_release \
 		ffmpeg_path="$FFMPEG_PREFIX" dsd_path="$DSD_PREFIX" debug_symbols=no)
 	(cd "$EXT/gdextension_build" && scons --site-dir="$BUILD/site_scons" -j"$JOBS" platform=linux target=template_debug \
