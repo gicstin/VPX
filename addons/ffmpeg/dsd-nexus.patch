@@ -1,0 +1,182 @@
+diff --git a/ffmpeg_video_stream.cpp b/ffmpeg_video_stream.cpp
+index 152616b..531bd9e 100644
+--- a/ffmpeg_video_stream.cpp
++++ b/ffmpeg_video_stream.cpp
+@@ -103,2 +103,12 @@ typedef RD::ComputeListID ComputeListID;
+ #include <cstdint>
++#include <libsacdvfs/sacd_vfs.h>
++
++static int _collect_sacd_entry(const sacd_vfs_entry_t *p_entry, void *p_userdata) {
++	if (p_entry->type != SACD_VFS_ENTRY_FILE) {
++		return 0;
++	}
++	Array *tracks = static_cast<Array *>(p_userdata);
++	tracks->push_back(String::utf8(p_entry->name));
++	return 0;
++}
+ 
+@@ -730,2 +740,3 @@ void FFmpegVideoStreamPlayback::_bind_methods() {
+ void FFmpegVideoStream::_bind_methods() {
++	ClassDB::bind_static_method("FFmpegVideoStream", D_METHOD("get_sacd_info", "path"), &FFmpegVideoStream::get_sacd_info);
+ 	ClassDB::bind_method(D_METHOD("get_playback"), &FFmpegVideoStream::get_playback);
+@@ -742,2 +753,39 @@ void FFmpegVideoStream::_bind_methods() {
+ 
++Dictionary FFmpegVideoStream::get_sacd_info(const String &p_path) {
++	Dictionary result;
++	CharString iso_path = p_path.utf8();
++	sacd_vfs_ctx_t *ctx = sacd_vfs_create();
++	if (ctx == nullptr || sacd_vfs_open(ctx, iso_path.get_data()) != SACD_VFS_OK) {
++		if (ctx != nullptr) {
++			sacd_vfs_destroy(ctx);
++		}
++		result["ok"] = false;
++		result["error"] = "Could not read SACD ISO";
++		return result;
++	}
++	char album_name[512] = {};
++	sacd_vfs_get_album_name(ctx, album_name, sizeof(album_name));
++	String album = String::utf8(album_name);
++	Array stereo;
++	Array multichannel;
++	if (sacd_vfs_has_area(ctx, SACD_VFS_AREA_STEREO)) {
++		CharString dir = ("/" + album + "/Stereo").utf8();
++		sacd_vfs_readdir(ctx, dir.get_data(), _collect_sacd_entry, &stereo);
++	}
++	if (sacd_vfs_has_area(ctx, SACD_VFS_AREA_MULTICHANNEL)) {
++		CharString dir = ("/" + album + "/Multi-channel").utf8();
++		sacd_vfs_readdir(ctx, dir.get_data(), _collect_sacd_entry, &multichannel);
++	}
++	result["stereo"] = stereo;
++	result["multichannel"] = multichannel;
++	result["album"] = album;
++	result["ok"] = !stereo.is_empty() || !multichannel.is_empty();
++	if (stereo.is_empty() && multichannel.is_empty()) {
++		result["error"] = "No readable SACD tracks found";
++	}
++	sacd_vfs_close(ctx);
++	sacd_vfs_destroy(ctx);
++	return result;
++}
++
+ double FFmpegVideoStreamPlayback::get_playback_position_internal() const {
+diff --git a/ffmpeg_video_stream.h b/ffmpeg_video_stream.h
+index 4300bc5..3a71539 100644
+--- a/ffmpeg_video_stream.h
++++ b/ffmpeg_video_stream.h
+@@ -333,2 +333,3 @@ protected:
+ public:
++	static Dictionary get_sacd_info(const String &p_path);
+ 	Ref<FFmpegVideoStreamPlayback> get_playback() const { return last_playback; }
+diff --git a/gdextension_build/SConstruct b/gdextension_build/SConstruct
+index 4cc4fd6..bb57200 100644
+--- a/gdextension_build/SConstruct
++++ b/gdextension_build/SConstruct
+@@ -60,2 +60,3 @@ opts.Add(BoolVariable("verbose", "Enable verbose output for the compilation", Fa
+ opts.Add(("ffmpeg_path", "Path to FFmpeg", ""))
++opts.Add(("dsd_path", "Path to DSD Nexus", ""))
+ 
+@@ -78,2 +79,7 @@ ffmpeg_libs = ["avcodec", "avfilter", "avformat", "avutil", "swresample", "swsca
+ env.Append(LIBS=ffmpeg_libs)
++if env["dsd_path"]:
++    env.Prepend(CPPPATH=f"{env['dsd_path']}/include")
++    env.Append(LIBPATH=[f"{env['dsd_path']}/lib"])
++    env.Append(LIBS=["dsd"])
++    env.Append(CPPDEFINES=["SACDVFS_USING_DLL"])
+ env.Append(LIBS=["jpeg"])
+diff --git a/video_decoder.cpp b/video_decoder.cpp
+index e3099dc..2a8345c 100644
+--- a/video_decoder.cpp
++++ b/video_decoder.cpp
+@@ -233,2 +233,7 @@ int VideoDecoder::_read_packet_callback(void *p_opaque, uint8_t *p_buf, int p_bu
+ 	VideoDecoder *decoder = (VideoDecoder *)p_opaque;
++	if (decoder->sacd_file != nullptr) {
++		size_t bytes_read = 0;
++		int result = sacd_vfs_file_read(decoder->sacd_file, p_buf, (size_t)p_buf_size, &bytes_read);
++		return bytes_read > 0 ? (int)bytes_read : (result == SACD_VFS_ERROR_EOF ? AVERROR_EOF : AVERROR(EIO));
++	}
+ 	if (!decoder->video_file.is_valid()) {
+@@ -242,2 +247,13 @@ int64_t VideoDecoder::_stream_seek_callback(void *p_opaque, int64_t p_offset, in
+ 	VideoDecoder *decoder = (VideoDecoder *)p_opaque;
++	if (decoder->sacd_file != nullptr) {
++		int whence = p_whence & ~AVSEEK_FORCE;
++		if (whence == AVSEEK_SIZE) {
++			return (int64_t)decoder->sacd_file_size;
++		}
++		if (sacd_vfs_file_seek(decoder->sacd_file, p_offset, whence) != SACD_VFS_OK) {
++			return AVERROR(EINVAL);
++		}
++		uint64_t position = 0;
++		return sacd_vfs_file_tell(decoder->sacd_file, &position) == SACD_VFS_OK ? (int64_t)position : AVERROR(EIO);
++	}
+ 	if (!decoder->video_file.is_valid()) {
+@@ -287,3 +303,40 @@ void VideoDecoder::prepare_decoding() {
+ 	int open_input_res = AVERROR(ENOENT);
+-	if (input_format != nullptr || _path_uses_native_io(file_path)) {
++	if (file_path.begins_with("sacd://")) {
++		PackedStringArray parts = file_path.substr(7).split("/");
++		if (parts.size() < 2) {
++			open_input_res = AVERROR(EINVAL);
++		} else {
++			PackedByteArray iso_bytes;
++			PackedByteArray virtual_bytes;
++			for (int i = 0; i + 1 < parts[0].length(); i += 2) {
++				iso_bytes.push_back((uint8_t)parts[0].substr(i, 2).hex_to_int());
++			}
++			for (int i = 0; i + 1 < parts[1].length(); i += 2) {
++				virtual_bytes.push_back((uint8_t)parts[1].substr(i, 2).hex_to_int());
++			}
++			String iso_path = String::utf8((const char *)iso_bytes.ptr(), iso_bytes.size());
++			String virtual_path = String::utf8((const char *)virtual_bytes.ptr(), virtual_bytes.size());
++			CharString iso_utf8 = iso_path.utf8();
++			CharString virtual_utf8 = virtual_path.utf8();
++			sacd_context = sacd_vfs_create();
++			if (sacd_context != nullptr && sacd_vfs_open(sacd_context, iso_utf8.get_data()) == SACD_VFS_OK &&
++					sacd_vfs_file_open(sacd_context, virtual_utf8.get_data(), &sacd_file) == SACD_VFS_OK) {
++				sacd_vfs_file_info_t info = {};
++				if (sacd_vfs_file_get_info(sacd_file, &info) == SACD_VFS_OK) {
++					sacd_file_size = info.total_size;
++					const int context_buffer_size = 1024 * 1024;
++					unsigned char *context_buffer = (unsigned char *)av_malloc(context_buffer_size);
++					io_context = avio_alloc_context(context_buffer, context_buffer_size, 0, this, &VideoDecoder::_read_packet_callback, nullptr, &VideoDecoder::_stream_seek_callback);
++					io_context->seekable = AVIO_SEEKABLE_NORMAL;
++					format_context->pb = io_context;
++					format_context->flags |= AVFMT_FLAG_CUSTOM_IO;
++					open_input_res = avformat_open_input(&format_context, "sacd-track.dsf", input_format, &opts);
++				}
++			}
++		}
++		if (open_input_res < 0 && sacd_file != nullptr) {
++			sacd_vfs_file_close(sacd_file);
++			sacd_file = nullptr;
++		}
++	} else if (input_format != nullptr || _path_uses_native_io(file_path)) {
+ 		avformat_free_context(format_context);
+@@ -303,3 +356,3 @@ void VideoDecoder::prepare_decoding() {
+ 	av_dict_free(&opts);
+-	if (open_input_res < 0) {
++	if (open_input_res < 0 && !file_path.begins_with("sacd://")) {
+ 		if (!io_context) {
+@@ -3015,2 +3068,9 @@ VideoDecoder::~VideoDecoder() {
+ 	}
++	if (sacd_file != nullptr) {
++		sacd_vfs_file_close(sacd_file);
++	}
++	if (sacd_context != nullptr) {
++		sacd_vfs_close(sacd_context);
++		sacd_vfs_destroy(sacd_context);
++	}
+ }
+diff --git a/video_decoder.h b/video_decoder.h
+index b76fb13..fd030a4 100644
+--- a/video_decoder.h
++++ b/video_decoder.h
+@@ -69,2 +69,3 @@ extern "C" {
+ }
++#include <libsacdvfs/sacd_vfs.h>
+ 
+@@ -224,2 +225,5 @@ private:
+ 	AVIOContext *io_context = nullptr;
++	sacd_vfs_ctx_t *sacd_context = nullptr;
++	sacd_vfs_file_t *sacd_file = nullptr;
++	uint64_t sacd_file_size = 0;
+ 	AVFormatContext *format_context = nullptr;

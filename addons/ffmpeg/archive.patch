@@ -1,0 +1,325 @@
+--- a/video_decoder.cpp
++++ b/video_decoder.cpp
+@@ -43,6 +43,7 @@
+ #include <limits>
+ #include <thread>
+ #include <vector>
++#include <zlib.h>
+ #ifdef __linux__
+ #include <sys/resource.h>
+ #include <sys/syscall.h>
+@@ -54,6 +55,7 @@
+ }
+ 
+ #include <cstdio>
++#include <cstring>
+ #include <iterator>
+ 
+ #ifdef GDEXTENSION
+@@ -67,6 +69,7 @@
+ #include "libavutil/hwcontext.h"
+ #include "libavutil/hwcontext_drm.h"
+ #include "libavutil/imgutils.h"
++#include "libavutil/mem.h"
+ #include "libavutil/opt.h"
+ #include "libavutil/pixdesc.h"
+ #include "libavutil/spherical.h"
+@@ -77,6 +80,204 @@
+ const int PLANE_POOL_LIMIT = 160;
+ const int64_t UPLOAD_STRIP_BYTES = 2 << 20;
+ const int DECODE_WORKER_NICE = 5;
++
++struct VpxZipStream {
++	Ref<FileAccess> archive;
++	uint64_t data_offset = 0;
++	uint64_t compressed_size = 0;
++	uint64_t uncompressed_size = 0;
++	uint64_t position = 0;
++	uint64_t compressed_position = 0;
++	uint16_t method = 0;
++	z_stream inflater = {};
++	bool inflater_ready = false;
++	uint8_t input[65536] = {};
++
++	~VpxZipStream() {
++		if (inflater_ready) {
++			inflateEnd(&inflater);
++		}
++	}
++
++	bool reset() {
++		if (inflater_ready) {
++			inflateEnd(&inflater);
++			inflater = {};
++			inflater_ready = false;
++		}
++		position = 0;
++		compressed_position = 0;
++		if (method == 0) {
++			archive->seek(data_offset);
++			return archive->get_position() == data_offset;
++		}
++		if (inflateInit2(&inflater, -MAX_WBITS) != Z_OK) {
++			return false;
++		}
++		inflater_ready = true;
++		archive->seek(data_offset);
++		return archive->get_position() == data_offset;
++	}
++
++	int read(uint8_t *buffer, int size) {
++		if (position >= uncompressed_size || size <= 0) {
++			return 0;
++		}
++		size = (int)MIN((uint64_t)size, uncompressed_size - position);
++		if (method == 0) {
++			uint64_t count = archive->get_buffer(buffer, size);
++			position += count;
++			return (int)count;
++		}
++		inflater.next_out = buffer;
++		inflater.avail_out = (uInt)size;
++		while (inflater.avail_out > 0 && position + (uint64_t)(size - inflater.avail_out) < uncompressed_size) {
++			if (inflater.avail_in == 0 && compressed_position < compressed_size) {
++				size_t count = (size_t)MIN((uint64_t)sizeof(input), compressed_size - compressed_position);
++				uint64_t read_count = archive->get_buffer(input, count);
++				if (read_count == 0) {
++					break;
++				}
++				compressed_position += read_count;
++				inflater.next_in = input;
++				inflater.avail_in = (uInt)read_count;
++			}
++			int result = inflate(&inflater, Z_NO_FLUSH);
++			if (result == Z_STREAM_END || (result != Z_OK && result != Z_BUF_ERROR)) {
++				break;
++			}
++			if (result == Z_BUF_ERROR && inflater.avail_in == 0 && compressed_position >= compressed_size) {
++				break;
++			}
++		}
++		int count = size - (int)inflater.avail_out;
++		position += count;
++		return count;
++	}
++
++	bool seek(uint64_t target) {
++		if (target > uncompressed_size) {
++			return false;
++		}
++		if (method == 0) {
++			position = target;
++			archive->seek(data_offset + target);
++			return archive->get_position() == data_offset + target;
++		}
++		if (target < position && !reset()) {
++			return false;
++		}
++		uint8_t discard[65536];
++		while (position < target) {
++			int count = read(discard, (int)MIN((uint64_t)sizeof(discard), target - position));
++			if (count <= 0) {
++				return false;
++			}
++		}
++		return true;
++	}
++};
++
++static uint16_t vpx_zip_u16(const uint8_t *p_data) {
++	return (uint16_t)p_data[0] | ((uint16_t)p_data[1] << 8);
++}
++
++static uint32_t vpx_zip_u32(const uint8_t *p_data) {
++	return (uint32_t)p_data[0] | ((uint32_t)p_data[1] << 8) | ((uint32_t)p_data[2] << 16) | ((uint32_t)p_data[3] << 24);
++}
++
++static bool vpx_zip_open(const String &p_archive_path, const String &p_member, VpxZipStream **r_stream) {
++	Ref<FileAccess> archive = FileAccess::open(p_archive_path, FileAccess::READ);
++	if (!archive.is_valid() || archive->get_length() < 22) {
++		return false;
++	}
++	uint64_t file_size = archive->get_length();
++	uint64_t tail_size = MIN(file_size, (uint64_t)65557);
++	archive->seek(file_size - tail_size);
++	PackedByteArray tail = archive->get_buffer(tail_size);
++	int64_t eocd = -1;
++	for (int64_t i = (int64_t)tail.size() - 22; i >= 0; --i) {
++		if (vpx_zip_u32(tail.ptr() + i) == 0x06054b50) {
++			eocd = i;
++			break;
++		}
++	}
++	if (eocd < 0) {
++		return false;
++	}
++	uint16_t disk = vpx_zip_u16(tail.ptr() + eocd + 4);
++	uint16_t directory_disk = vpx_zip_u16(tail.ptr() + eocd + 6);
++	uint16_t entries = vpx_zip_u16(tail.ptr() + eocd + 10);
++	uint32_t directory_size = vpx_zip_u32(tail.ptr() + eocd + 12);
++	uint32_t directory_offset = vpx_zip_u32(tail.ptr() + eocd + 16);
++	if (disk != 0 || directory_disk != 0 || entries == 0xffff || directory_size == 0xffffffff || directory_offset == 0xffffffff) {
++		return false;
++	}
++	PackedByteArray name_bytes = p_member.to_utf8_buffer();
++	archive->seek(directory_offset);
++	for (uint32_t entry = 0; entry < entries; ++entry) {
++		uint8_t header[46];
++		if (archive->get_buffer(header, sizeof(header)) != sizeof(header) || vpx_zip_u32(header) != 0x02014b50) {
++			return false;
++		}
++		uint16_t flags = vpx_zip_u16(header + 8);
++		uint16_t method = vpx_zip_u16(header + 10);
++		uint32_t compressed_size = vpx_zip_u32(header + 20);
++		uint32_t uncompressed_size = vpx_zip_u32(header + 24);
++		uint16_t name_length = vpx_zip_u16(header + 28);
++		uint16_t extra_length = vpx_zip_u16(header + 30);
++		uint16_t comment_length = vpx_zip_u16(header + 32);
++		uint32_t local_offset = vpx_zip_u32(header + 42);
++		PackedByteArray entry_name = archive->get_buffer(name_length);
++		if ((flags & 1) == 0 && (method == 0 || method == 8) && entry_name == name_bytes) {
++			if (compressed_size == 0xffffffff || uncompressed_size == 0xffffffff || local_offset == 0xffffffff) {
++				return false;
++			}
++			archive->seek(local_offset);
++			uint8_t local[30];
++			if (archive->get_buffer(local, sizeof(local)) != sizeof(local) || vpx_zip_u32(local) != 0x04034b50) {
++				return false;
++			}
++			uint16_t local_name = vpx_zip_u16(local + 26);
++			uint16_t local_extra = vpx_zip_u16(local + 28);
++			VpxZipStream *stream = memnew(VpxZipStream);
++			stream->archive = archive;
++			stream->data_offset = local_offset + 30 + local_name + local_extra;
++			stream->compressed_size = compressed_size;
++			stream->uncompressed_size = uncompressed_size;
++			stream->method = method;
++			if (!stream->reset()) {
++				memdelete(stream);
++				return false;
++			}
++			*r_stream = stream;
++			return true;
++		}
++		archive->seek(archive->get_position() + extra_length + comment_length);
++	}
++	return false;
++}
++
++static bool vpx_zip_uri(const String &p_uri, String *r_archive, String *r_member) {
++	if (!p_uri.begins_with("vpxzip://")) {
++		return false;
++	}
++	PackedStringArray parts = p_uri.substr(9).split("/");
++	if (parts.size() < 2 || (parts[0].length() & 1) != 0 || (parts[1].length() & 1) != 0) {
++		return false;
++	}
++	PackedByteArray archive_bytes;
++	PackedByteArray member_bytes;
++	for (int i = 0; i < parts[0].length(); i += 2) {
++		archive_bytes.push_back((uint8_t)parts[0].substr(i, 2).hex_to_int());
++	}
++	for (int i = 0; i < parts[1].length(); i += 2) {
++		member_bytes.push_back((uint8_t)parts[1].substr(i, 2).hex_to_int());
++	}
++	*r_archive = String::utf8((const char *)archive_bytes.ptr(), archive_bytes.size());
++	*r_member = String::utf8((const char *)member_bytes.ptr(), member_bytes.size());
++	return true;
++}
+ 
+ static void vpx_lower_thread_priority(int p_nice) {
+ #ifdef __linux__
+@@ -231,6 +432,10 @@
+ 
+ int VideoDecoder::_read_packet_callback(void *p_opaque, uint8_t *p_buf, int p_buf_size) {
+ 	VideoDecoder *decoder = (VideoDecoder *)p_opaque;
++	if (decoder->zip_stream != nullptr) {
++		int count = ((VpxZipStream *)decoder->zip_stream)->read(p_buf, p_buf_size);
++		return count > 0 ? count : AVERROR_EOF;
++	}
+ 	if (decoder->sacd_file != nullptr) {
+ 		size_t bytes_read = 0;
+ 		int result = sacd_vfs_file_read(decoder->sacd_file, p_buf, (size_t)p_buf_size, &bytes_read);
+@@ -245,6 +450,18 @@
+ 
+ int64_t VideoDecoder::_stream_seek_callback(void *p_opaque, int64_t p_offset, int p_whence) {
+ 	VideoDecoder *decoder = (VideoDecoder *)p_opaque;
++	if (decoder->zip_stream != nullptr) {
++		VpxZipStream *zip = (VpxZipStream *)decoder->zip_stream;
++		int whence = p_whence & ~AVSEEK_FORCE;
++		if (whence == AVSEEK_SIZE) {
++			return zip->uncompressed_size;
++		}
++		int64_t base = whence == SEEK_SET ? 0 : whence == SEEK_CUR ? zip->position : whence == SEEK_END ? zip->uncompressed_size : -1;
++		if (base < 0 || p_offset < -base || (uint64_t)(base + p_offset) > zip->uncompressed_size || !zip->seek((uint64_t)(base + p_offset))) {
++			return AVERROR(EINVAL);
++		}
++		return (int64_t)zip->position;
++	}
+ 	if (decoder->sacd_file != nullptr) {
+ 		int whence = p_whence & ~AVSEEK_FORCE;
+ 		if (whence == AVSEEK_SIZE) {
+@@ -301,7 +518,23 @@
+ 	}
+ 
+ 	int open_input_res = AVERROR(ENOENT);
+-	if (file_path.begins_with("sacd://")) {
++	if (file_path.begins_with("vpxzip://")) {
++		String archive_path;
++		String member_path;
++		if (vpx_zip_uri(file_path, &archive_path, &member_path)) {
++			VpxZipStream *zip = nullptr;
++			if (vpx_zip_open(archive_path, member_path, &zip)) {
++				zip_stream = zip;
++				const int context_buffer_size = 1024 * 1024;
++				unsigned char *context_buffer = (unsigned char *)av_malloc(context_buffer_size);
++				io_context = avio_alloc_context(context_buffer, context_buffer_size, 0, this, &VideoDecoder::_read_packet_callback, nullptr, &VideoDecoder::_stream_seek_callback);
++				io_context->seekable = AVIO_SEEKABLE_NORMAL;
++				format_context->pb = io_context;
++				format_context->flags |= AVFMT_FLAG_CUSTOM_IO | AVFMT_FLAG_GENPTS | AVFMT_FLAG_FAST_SEEK;
++				open_input_res = avformat_open_input(&format_context, "archive-member", input_format, &opts);
++			}
++		}
++	} else if (file_path.begins_with("sacd://")) {
+ 		PackedStringArray parts = file_path.substr(7).split("/");
+ 		if (parts.size() < 2) {
+ 			open_input_res = AVERROR(EINVAL);
+@@ -354,7 +587,7 @@
+ 		}
+ 	}
+ 	av_dict_free(&opts);
+-	if (open_input_res < 0 && !file_path.begins_with("sacd://")) {
++	if (open_input_res < 0 && !file_path.begins_with("sacd://") && !file_path.begins_with("vpxzip://")) {
+ 		if (!io_context) {
+ 			const int context_buffer_size = 1024 * 1024;
+ 			unsigned char *context_buffer = (unsigned char *)av_malloc(context_buffer_size);
+@@ -3073,6 +3308,9 @@
+ 		sacd_vfs_close(sacd_context);
+ 		sacd_vfs_destroy(sacd_context);
+ 	}
++	if (zip_stream != nullptr) {
++		memdelete((VpxZipStream *)zip_stream);
++	}
+ }
+ 
+ DecodedFrame::DecodedFrame(double p_time, Ref<ImageTexture> p_texture) {
+--- a/video_decoder.h
++++ b/video_decoder.h
+@@ -226,6 +226,7 @@
+ 	sacd_vfs_ctx_t *sacd_context = nullptr;
+ 	sacd_vfs_file_t *sacd_file = nullptr;
+ 	uint64_t sacd_file_size = 0;
++	void *zip_stream = nullptr;
+ 	AVFormatContext *format_context = nullptr;
+ 	AVFormatContext *audio_format_context = nullptr;
+ 	AVFormatContext *packet_source = nullptr;
+--- a/gdextension_build/SConstruct
++++ b/gdextension_build/SConstruct
+@@ -77,6 +77,7 @@
+ ffmpeg_libs = ["avcodec", "avfilter", "avformat", "avutil", "swresample", "swscale"]
+ 
+ env.Append(LIBS=ffmpeg_libs)
++env.Append(LIBS=["z"])
+ if env["dsd_path"]:
+     env.Prepend(CPPPATH=f"{env['dsd_path']}/include")
+     env.Append(LIBPATH=[f"{env['dsd_path']}/lib"])

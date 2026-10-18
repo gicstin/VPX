@@ -1,0 +1,448 @@
+extends FloatPanel
+
+const BUS := "VPX media analysis"
+const BANDS := 48
+const ANALYSIS_INTERVAL := 1.0 / 90.0
+const NATIVE_GAP_TIMEOUT := 0.05
+const WAVE_SAMPLES := 256
+const WAVE_RATE := 4000.0
+const WAVE_HISTORY := 4096
+const SCOPE_HISTORY := 65536
+const SCOPE_WINDOW := 0.024
+const SCOPE_SEARCH := 0.025
+const SCOPE_POINTS := 320
+const OSCILLOSCOPE := 2
+
+var player: VPXPlayer
+var camera: Camera3D
+var menu: Node3D
+var field: ResonanceField
+var analyzer: AudioEffectSpectrumAnalyzerInstance
+var bus_index := -1
+var effect: AudioEffectSpectrumAnalyzer
+var spectrum: SpectrumCanvas
+var desktop_rect: TextureRect
+var elapsed := 0.0
+var enabled := false
+var analysing := false
+var levels := PackedFloat32Array()
+var targets := PackedFloat32Array()
+var frequencies := PackedFloat32Array()
+var fallback_weights := PackedVector2Array()
+var bound_playback: FFmpegVideoStreamPlayback
+var native_analysis := false
+var last_position := -1.0
+var last_feature_time := -1.0
+var sample_age := 0.0
+var capture_effect: AudioEffectCapture
+var capturing := false
+var wave_left := PackedFloat32Array()
+var wave_right := PackedFloat32Array()
+var wave_position := 0
+var wave_phase := 0.0
+var wave_dc := Vector2.ZERO
+var wave_low := Vector2.ZERO
+var wave_filtered := Vector2.ZERO
+var wave_smooth := Vector2.ZERO
+var wave_bass := Vector2.ZERO
+var scope_left := PackedFloat32Array()
+var scope_right := PackedFloat32Array()
+var scope_low := Vector2.ZERO
+var scope_tone := Vector2.ZERO
+var mono := PackedFloat32Array()
+var mono_trigger := PackedFloat32Array()
+var mono_position := 0
+var mono_low := 0.0
+var mono_smooth := 0.0
+var scope_gain := 1.0
+
+
+func _ready() -> void:
+	panel_size = Vector2(0.6, 0.15)
+	distance = 1.4
+	drop = 0.55
+	tilt = 0.0
+	levels.resize(BANDS)
+	targets.resize(BANDS)
+	for i in BANDS + 1:
+		frequencies.append(30.0 * pow(600.0, float(i) / BANDS))
+	for cell in 48:
+		var az := float(cell % 16) * TAU / 16.0
+		var el := float(cell / 16 - 1) * PI / 4.0
+		var direction := Vector3(sin(az) * cos(el), sin(el), -cos(az) * cos(el))
+		fallback_weights.append(Vector2(pow(maxf(0.0, direction.dot(Vector3(-0.9063, 0, -0.4226))), 10.0), pow(maxf(0.0, direction.dot(Vector3(0.9063, 0, -0.4226))), 10.0)))
+	super._ready()
+	bus_index = AudioServer.get_bus_index(BUS)
+	if bus_index < 0:
+		AudioServer.add_bus()
+		bus_index = AudioServer.bus_count - 1
+		AudioServer.set_bus_name(bus_index, BUS)
+		AudioServer.set_bus_send(bus_index, "Master")
+	effect = AudioEffectSpectrumAnalyzer.new()
+	effect.buffer_length = 0.1
+	effect.fft_size = AudioEffectSpectrumAnalyzer.FFT_SIZE_2048
+	AudioServer.add_bus_effect(bus_index, effect)
+	analyzer = AudioServer.get_bus_effect_instance(bus_index, AudioServer.get_bus_effect_count(bus_index) - 1)
+	AudioServer.set_bus_effect_enabled(bus_index, _effect_index(), false)
+	capture_effect = AudioEffectCapture.new()
+	capture_effect.buffer_length = 0.15
+	AudioServer.add_bus_effect(bus_index, capture_effect)
+	AudioServer.set_bus_effect_enabled(bus_index, _effect_index(capture_effect), false)
+	wave_left.resize(WAVE_HISTORY)
+	wave_right.resize(WAVE_HISTORY)
+	scope_left.resize(WAVE_HISTORY)
+	scope_right.resize(WAVE_HISTORY)
+	mono.resize(SCOPE_HISTORY)
+	mono_trigger.resize(SCOPE_HISTORY)
+	player.bus = BUS
+	if desktop_rect != null:
+		desktop_rect.texture = viewport.get_texture()
+		spectrum.embedded = true
+
+
+func _effect_index(target_effect: AudioEffect = null) -> int:
+	if target_effect == null:
+		target_effect = effect
+	for i in AudioServer.get_bus_effect_count(bus_index):
+		if AudioServer.get_bus_effect(bus_index, i) == target_effect:
+			return i
+	return -1
+
+
+func _build() -> Control:
+	spectrum = SpectrumCanvas.new()
+	return spectrum
+
+
+func _bind() -> void:
+	if bound_playback != null and native_analysis:
+		bound_playback.set_visualizer_enabled(false)
+	bound_playback = player.playback
+	native_analysis = bound_playback != null and bound_playback.has_method("get_visualizer_state") and bound_playback.has_method("set_visualizer_enabled")
+	if native_analysis:
+		bound_playback.set_visualizer_enabled(analysing)
+	AudioServer.set_bus_effect_enabled(bus_index, _effect_index(), analysing)
+	_reset()
+
+
+func _reset() -> void:
+	levels.fill(0.0)
+	targets.fill(0.0)
+	last_feature_time = -1.0
+	last_position = -1.0
+	sample_age = 0.0
+	_reset_waveform()
+	if field != null:
+		field.reset()
+
+
+func _process(delta: float) -> void:
+	var musical := player.playback != null and (player.is_music_mode() or (player.is_image() and not player.music_path.is_empty()))
+	var immersive := player.is_immersive_visualizer_active()
+	var wanted: bool = (Settings.music_visualizer or immersive) and musical
+	if wanted != analysing:
+		analysing = wanted
+		if bound_playback != null and native_analysis:
+			bound_playback.set_visualizer_enabled(analysing)
+		AudioServer.set_bus_effect_enabled(bus_index, _effect_index(), analysing)
+		_reset()
+	if bound_playback != player.playback:
+		_bind()
+	var show_panel := Settings.music_visualizer and musical and not menu.visible
+	if show_panel != enabled:
+		enabled = show_panel
+		if enabled:
+			present(camera)
+		else:
+			dismiss()
+	if field != null:
+		field.set_active(immersive)
+	var want_capture := analysing and (immersive or (Settings.music_visualizer and Settings.music_visualizer_mode == OSCILLOSCOPE))
+	if capturing != want_capture:
+		capturing = want_capture
+		AudioServer.set_bus_effect_enabled(bus_index, _effect_index(capture_effect), capturing)
+		_reset_waveform()
+	super._process(delta)
+	if desktop_rect != null:
+		desktop_rect.modulate.a = opacity
+		quad.visible = false
+	if not analysing:
+		return
+	var position_now := player.stream_position
+	if last_position >= 0.0 and absf(position_now - last_position) > maxf(0.3, delta * Settings.playback_speed * 4.0):
+		_reset()
+	last_position = position_now
+	var silent := player.paused or Settings.muted or Settings.volume == 0 or not player.is_playing()
+	if silent:
+		_reset_waveform()
+		targets.fill(0.0)
+		if field != null:
+			field.silence()
+	else:
+		if capturing:
+			_sample_waveform()
+		elapsed += delta
+		sample_age += delta
+		if native_analysis or elapsed >= ANALYSIS_INTERVAL:
+			elapsed = fmod(elapsed, ANALYSIS_INTERVAL)
+			if native_analysis:
+				_sample_native()
+				if sample_age > NATIVE_GAP_TIMEOUT:
+					_sample_fallback(false)
+			else:
+				_sample_fallback()
+	for i in BANDS:
+		var blend := 1.0 - exp(-delta * (60.0 if targets[i] > levels[i] else 10.0))
+		levels[i] = lerpf(levels[i], targets[i], blend)
+	spectrum.levels = levels
+	spectrum.oscilloscope = Settings.music_visualizer_mode == OSCILLOSCOPE
+	spectrum.title = (player.music_path if not player.music_path.is_empty() else player.current_path).get_file().get_basename()
+	if enabled:
+		spectrum.queue_redraw()
+
+
+func _reset_waveform() -> void:
+	wave_left.fill(0.0)
+	wave_right.fill(0.0)
+	wave_position = 0
+	wave_phase = 0.0
+	wave_dc = Vector2.ZERO
+	wave_low = Vector2.ZERO
+	wave_filtered = Vector2.ZERO
+	wave_smooth = Vector2.ZERO
+	wave_bass = Vector2.ZERO
+	scope_left.fill(0.0)
+	scope_right.fill(0.0)
+	scope_low = Vector2.ZERO
+	scope_tone = Vector2.ZERO
+	mono.fill(0.0)
+	mono_trigger.fill(0.0)
+	mono_position = 0
+	mono_low = 0.0
+	mono_smooth = 0.0
+	scope_gain = 1.0
+	spectrum.wave = PackedFloat32Array()
+	if capture_effect != null:
+		capture_effect.clear_buffer()
+	if field != null:
+		field.clear_waveform()
+
+
+func _sample_waveform() -> void:
+	var available := capture_effect.get_frames_available()
+	if available == 0:
+		return
+	var frames := capture_effect.get_buffer(available)
+	var rate := AudioServer.get_mix_rate()
+	var low_blend := 1.0 - exp(-TAU * 180.0 / rate)
+	var dc_blend := 1.0 - exp(-TAU * 25.0 / rate)
+	var scope_blend := 1.0 - exp(-TAU * 1600.0 / rate)
+	var trigger_blend := 1.0 - exp(-TAU * 300.0 / rate)
+	var display_blend := 1.0 - exp(-TAU * 3000.0 / rate)
+	for frame in frames:
+		wave_dc = wave_dc.lerp(frame, dc_blend)
+		wave_low = wave_low.lerp(frame - wave_dc, low_blend)
+		wave_filtered = wave_filtered.lerp(wave_low, low_blend)
+		wave_smooth = wave_smooth.lerp(wave_filtered, low_blend)
+		wave_bass = wave_bass.lerp(wave_smooth, low_blend)
+		scope_low = scope_low.lerp(frame - wave_dc, scope_blend)
+		scope_tone = scope_tone.lerp(scope_low, scope_blend)
+		var mixed := (frame.x + frame.y - wave_dc.x - wave_dc.y) * 0.5
+		mono_low = lerpf(mono_low, mixed, trigger_blend)
+		mono_smooth = lerpf(mono_smooth, mixed, display_blend)
+		mono[mono_position] = mono_smooth
+		mono_trigger[mono_position] = mono_low
+		mono_position = (mono_position + 1) % SCOPE_HISTORY
+		wave_phase += WAVE_RATE / rate
+		if wave_phase >= 1.0:
+			wave_phase -= 1.0
+			wave_left[wave_position] = wave_bass.x
+			wave_right[wave_position] = wave_bass.y
+			scope_left[wave_position] = scope_tone.x
+			scope_right[wave_position] = scope_tone.y
+			wave_position = (wave_position + 1) % WAVE_HISTORY
+	if Settings.music_visualizer and Settings.music_visualizer_mode == OSCILLOSCOPE:
+		_update_scope(rate, frames.size() / rate)
+	if field == null or not field.active:
+		return
+	var data := PackedFloat32Array()
+	data.resize(WAVE_SAMPLES * 2)
+	var scope := PackedFloat32Array()
+	scope.resize(WAVE_SAMPLES * 2)
+	var delay_samples := int(clampf(AudioServer.get_output_latency() - Settings.visualizer_sync, 0.0, 0.5) * WAVE_RATE)
+	for i in WAVE_SAMPLES:
+		var index := posmod(wave_position - WAVE_SAMPLES - delay_samples + i, WAVE_HISTORY)
+		data[i] = wave_left[index]
+		data[WAVE_SAMPLES + i] = wave_right[index]
+		scope[i] = scope_left[index]
+		scope[WAVE_SAMPLES + i] = scope_right[index]
+	field.feed_waveform(data)
+	field.feed_scope(scope)
+
+
+func _update_scope(rate: float, delta: float) -> void:
+	var window := int(SCOPE_WINDOW * rate)
+	var delay := int(clampf(AudioServer.get_output_latency() - Settings.visualizer_sync, 0.0, 0.5) * rate)
+	var start := mono_position - delay - window
+	var trigger := start
+	for offset in int(SCOPE_SEARCH * rate):
+		var index := start - offset
+		if mono_trigger[posmod(index - 1, SCOPE_HISTORY)] < 0.0 and mono_trigger[posmod(index, SCOPE_HISTORY)] >= 0.0:
+			trigger = index
+			break
+	var peak := 0.0
+	var wave := PackedFloat32Array()
+	wave.resize(SCOPE_POINTS)
+	for point in SCOPE_POINTS:
+		var from := trigger + point * window / SCOPE_POINTS
+		var to := maxi(trigger + (point + 1) * window / SCOPE_POINTS, from + 1)
+		var total := 0.0
+		for index in range(from, to):
+			total += mono[posmod(index, SCOPE_HISTORY)]
+		wave[point] = total / (to - from)
+		peak = maxf(peak, absf(wave[point]))
+	var wanted_gain := clampf(0.8 / maxf(peak, 0.0001), 1.0, 10.0)
+	scope_gain = lerpf(scope_gain, wanted_gain, 1.0 - exp(-delta * (12.0 if wanted_gain < scope_gain else 2.0)))
+	for point in SCOPE_POINTS:
+		wave[point] = tanh(wave[point] * scope_gain * 1.2)
+	spectrum.wave = wave
+
+
+static func _mix(left: float, right: float) -> float:
+	var amplitude := (db_to_linear(left * 60.0 - 60.0) + db_to_linear(right * 60.0 - 60.0)) * 0.5
+	return clampf((linear_to_db(maxf(amplitude, 0.000001)) + 60.0) / 60.0, 0.0, 1.0)
+
+
+func _sample_native() -> void:
+	var offset := Settings.visualizer_sync * 1000.0 - AudioServer.get_output_latency() * 1000.0
+	var features: Dictionary = bound_playback.get_visualizer_state(offset)
+	if features.is_empty():
+		return
+	var time := float(features.get("time", -1.0))
+	if time == last_feature_time:
+		return
+	var data: PackedFloat32Array = features.get("spectrum", PackedFloat32Array())
+	if data.size() != BANDS * 50:
+		return
+	last_feature_time = time
+	sample_age = 0.0
+	for i in BANDS:
+		targets[i] = _mix(data[i], data[BANDS + i])
+	if field != null and field.active:
+		if int(features.get("channels", 2)) > 2:
+			features["spatial"] = bound_playback.get_audio_info().get("spatial", false)
+		field.feed(data, features)
+
+
+func _sample_fallback(reset_age := true) -> void:
+	var data := PackedFloat32Array()
+	data.resize(BANDS * 50)
+	var sum := 0.0
+	for i in BANDS:
+		var magnitude := analyzer.get_magnitude_for_frequency_range(frequencies[i], frequencies[i + 1], AudioEffectSpectrumAnalyzerInstance.MAGNITUDE_AVERAGE)
+		data[i] = clampf((linear_to_db(maxf(magnitude.x, 0.000001)) + 60.0) / 60.0, 0.0, 1.0)
+		data[BANDS + i] = clampf((linear_to_db(maxf(magnitude.y, 0.000001)) + 60.0) / 60.0, 0.0, 1.0)
+		targets[i] = clampf((linear_to_db(maxf((magnitude.x + magnitude.y) * 0.5, 0.000001)) + 60.0) / 60.0, 0.0, 1.0)
+		sum += magnitude.length()
+		for cell in 48:
+			data[(cell + 2) * BANDS + i] = clampf((linear_to_db(maxf(magnitude.dot(fallback_weights[cell]), 0.000001)) + 60.0) / 60.0, 0.0, 1.0)
+	if reset_age:
+		sample_age = 0.0
+	if field != null and field.active:
+		field.feed(data, {"rms": minf(sum, 0.3), "channels": 2})
+
+
+func _exit_tree() -> void:
+	if bound_playback != null and native_analysis:
+		bound_playback.set_visualizer_enabled(false)
+	if is_instance_valid(player) and player.bus == BUS:
+		player.bus = "Master"
+	var index := AudioServer.get_bus_index(BUS)
+	if index >= 0:
+		var capture_index := _effect_index(capture_effect)
+		if capture_index >= 0:
+			AudioServer.remove_bus_effect(index, capture_index)
+		var owned := _effect_index()
+		if owned >= 0:
+			AudioServer.remove_bus_effect(index, owned)
+
+
+class SpectrumCanvas extends Control:
+	const SMOOTH_STEPS := 4
+
+	var levels := PackedFloat32Array()
+	var wave := PackedFloat32Array()
+	var oscilloscope := false
+	var title := ""
+	var embedded := false
+	var background := VpxTheme.flat(VpxTheme.OVERLAY, 18, 12, 10)
+	var font := ThemeDB.fallback_font
+
+	func _draw() -> void:
+		if not embedded:
+			draw_style_box(background, Rect2(Vector2.ZERO, size))
+			draw_string(font, Vector2(16, 27), title, HORIZONTAL_ALIGNMENT_LEFT, size.x - 32, 20, VpxTheme.TEXT)
+		var top := 10.0 if embedded else 44.0
+		var area := Rect2(16.0, top, size.x - 32.0, size.y - top - (6.0 if embedded else 12.0))
+		if oscilloscope:
+			_draw_scope(area)
+		elif not levels.is_empty():
+			_draw_spectrum(area)
+
+	func _draw_spectrum(area: Rect2) -> void:
+		var base := area.end.y
+		var points := PackedVector2Array()
+		for i in levels.size():
+			points.append(Vector2(area.position.x + float(i) * area.size.x / (levels.size() - 1), base - clampf(levels[i], 0.0, 1.0) * area.size.y))
+		points = _smooth(points)
+		for i in points.size():
+			points[i].y = clampf(points[i].y, area.position.y, base)
+		var colors := _gradient(points, area, 1.0)
+		var fill := points.duplicate()
+		var fill_colors := _gradient(points, area, 0.45)
+		for i in range(points.size() - 1, -1, -1):
+			fill.append(Vector2(points[i].x, base + 1.0))
+			fill_colors.append(Color(fill_colors[i], 0.0))
+		draw_polygon(fill, fill_colors)
+		draw_polyline_colors(points, _gradient(points, area, 0.18), 6.0, true)
+		draw_polyline_colors(points, colors, 2.2, true)
+		draw_line(Vector2(area.position.x, base + 1.0), Vector2(area.end.x, base + 1.0), Color(VpxTheme.ACCENT, 0.25), 1.0, true)
+
+	func _draw_scope(area: Rect2) -> void:
+		var middle := area.get_center().y
+		var half := area.size.y * 0.5
+		draw_line(Vector2(area.position.x, middle), Vector2(area.end.x, middle), Color(VpxTheme.ACCENT, 0.3), 1.0, true)
+		if wave.size() < 2:
+			return
+		var points := PackedVector2Array()
+		for i in wave.size():
+			points.append(Vector2(area.position.x + float(i) * area.size.x / (wave.size() - 1), middle - wave[i] * half))
+		var colors := _gradient(points, area, 1.0)
+		for i in points.size() - 1:
+			var shade := PackedColorArray([Color(colors[i], 0.4), Color(colors[i + 1], 0.4), Color(colors[i + 1], 0.0), Color(colors[i], 0.0)])
+			draw_primitive(PackedVector2Array([points[i], points[i + 1], Vector2(points[i + 1].x, middle), Vector2(points[i].x, middle)]), shade, PackedVector2Array())
+		draw_polyline_colors(points, _gradient(points, area, 0.14), 8.0, true)
+		draw_polyline_colors(points, _gradient(points, area, 0.3), 4.0, true)
+		draw_polyline_colors(points, colors, 2.0, true)
+
+	func _gradient(points: PackedVector2Array, area: Rect2, alpha: float) -> PackedColorArray:
+		var colors := PackedColorArray()
+		for point in points:
+			colors.append(Color(VpxTheme.ACCENT.lerp(VpxTheme.SPECTRUM_END, clampf((point.x - area.position.x) / area.size.x, 0.0, 1.0)), alpha))
+		return colors
+
+	static func _smooth(points: PackedVector2Array) -> PackedVector2Array:
+		var result := PackedVector2Array()
+		var last := points.size() - 1
+		for i in last:
+			var p0 := points[maxi(i - 1, 0)]
+			var p1 := points[i]
+			var p2 := points[i + 1]
+			var p3 := points[mini(i + 2, last)]
+			for step in SMOOTH_STEPS:
+				var t := float(step) / SMOOTH_STEPS
+				var t2 := t * t
+				var t3 := t2 * t
+				result.append(0.5 * (2.0 * p1 + (p2 - p0) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3))
+		result.append(points[last])
+		return result

@@ -1,0 +1,50 @@
+[configuration]
+
+entry_symbol = "ffmpeg_init"
+compatibility_minimum = 4.1
+
+[libraries]
+windows.debug.x86_64 = "res://addons/ffmpeg/win64/libgdffmpeg.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "res://addons/ffmpeg/win64/libgdffmpeg.windows.template_release.x86_64.dll"
+linux.debug.x86_64 = "res://addons/ffmpeg/linux64/libgdffmpeg.linux.template_debug.x86_64.so"
+linux.release.x86_64 = "res://addons/ffmpeg/linux64/libgdffmpeg.linux.template_release.x86_64.so"
+android.debug.arm64 = "res://addons/ffmpeg/android/libgdffmpeg.android.template_debug.arm64.so"
+android.release.arm64 = "res://addons/ffmpeg/android/libgdffmpeg.android.template_release.arm64.so"
+macos.debug = "res://addons/ffmpeg/macos/libgdffmpeg.macos.template_debug.framework"
+macos.release = "res://addons/ffmpeg/macos/libgdffmpeg.macos.template_release.framework"
+
+[dependencies]
+
+windows.x86_64 =
+    {"res://addons/ffmpeg/win64/avcodec-63.dll": "",
+    "res://addons/ffmpeg/win64/avfilter-12.dll": "",
+    "res://addons/ffmpeg/win64/avformat-63.dll": "",
+    "res://addons/ffmpeg/win64/avutil-61.dll": "",
+    "res://addons/ffmpeg/win64/swresample-7.dll": "",
+    "res://addons/ffmpeg/win64/swscale-10.dll": "",
+    "res://addons/ffmpeg/win64/libdsd.dll": "",
+    "res://addons/ffmpeg/win64/libc++.dll": "",
+    "res://addons/ffmpeg/win64/libunwind.dll": "",
+    "res://addons/ffmpeg/win64/libwinpthread-1.dll": ""}
+
+linux.x86_64 = {}
+
+android.arm64 =
+    {
+        "res://addons/ffmpeg/android/libavcodec.so": "",
+        "res://addons/ffmpeg/android/libavfilter.so": "",
+        "res://addons/ffmpeg/android/libavformat.so": "",
+        "res://addons/ffmpeg/android/libavutil.so": "",
+        "res://addons/ffmpeg/android/libswresample.so": "",
+        "res://addons/ffmpeg/android/libswscale.so": ""
+    }
+
+macos =
+    {
+        "res://addons/ffmpeg/macos/libavcodec.dylib": "",
+        "res://addons/ffmpeg/macos/libavfilter.dylib": "",
+        "res://addons/ffmpeg/macos/libavformat.dylib": "",
+        "res://addons/ffmpeg/macos/libavutil.dylib": "",
+        "res://addons/ffmpeg/macos/libswresample.dylib": "",
+        "res://addons/ffmpeg/macos/libswscale.dylib": ""
+    }

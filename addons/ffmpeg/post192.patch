@@ -1,0 +1,257 @@
+--- a/register_types.cpp
++++ b/register_types.cpp
+@@ -42,6 +42,7 @@
+ #include "ffmpeg_video_stream.h"
+ #ifdef GDEXTENSION
+ #include "vpx_panorama.h"
++#include "vpx_file_ops.h"
+ #include "vpx_subtitles.h"
+ void vpx_panorama_release_shared();
+ #endif
+@@ -94,6 +95,7 @@
+ 	GDREGISTER_INTERNAL_CLASS(FFmpegFrame);
+ #ifdef GDEXTENSION
+ 	GDREGISTER_CLASS(VPXPanorama);
++	GDREGISTER_CLASS(VPXFileOps);
+ 	GDREGISTER_CLASS(VPXSubtitles);
+ #endif
+ 	ffmpeg_loader.instantiate();
+--- a/video_decoder.cpp
++++ b/video_decoder.cpp
+@@ -2381,6 +2381,10 @@
+ 				print_line(vformat("Failed to receive frame from avcodec: %s", ffmpeg_get_error_message(receive_frame_result)));
+ 			}
+ 
++			if (receive_frame_result == AVERROR_EOF) {
++				_drain_tempo();
++			}
++
+ 			break;
+ 		}
+ 
+@@ -2418,10 +2422,12 @@
+ 		const int channels = frame->ch_layout.nb_channels;
+ 		const double tempo = requested_tempo.load();
+ 		const int filter = requested_audio_filter.load();
+-		if (tempo != tempo_active || tempo_reset || filter != audio_filter_active) {
++		const int quality = requested_tempo_quality.load();
++		if (tempo != tempo_active || tempo_reset || filter != audio_filter_active || quality != tempo_quality_active) {
+ 			_free_tempo();
+ 			tempo_active = tempo;
+ 			audio_filter_active = filter;
++			tempo_quality_active = quality;
+ 			tempo_reset = false;
+ 			if ((Math::abs(tempo - 1.0) > 0.001 || filter != 0) && !_build_tempo(tempo, channels, filter)) {
+ 				tempo_active = 1.0;
+@@ -3019,6 +3025,22 @@
+ 	audio_buffer_mutex->unlock();
+ }
+ 
++void VideoDecoder::_drain_tempo() {
++	if (tempo_graph == nullptr || tempo_frame == nullptr) {
++		return;
++	}
++	const int result = av_buffersrc_add_frame_flags(tempo_source, nullptr, 0);
++	if (result < 0 && result != AVERROR_EOF) {
++		return;
++	}
++	while (av_buffersink_get_frame(tempo_sink, tempo_frame) >= 0) {
++		const double time = tempo_base_msec + tempo_samples_out * tempo_active * 1000.0 / output_sample_rate;
++		_push_audio_samples((const float *)tempo_frame->data[0], tempo_frame->nb_samples, output_ch_layout.nb_channels, time);
++		tempo_samples_out += tempo_frame->nb_samples;
++		av_frame_unref(tempo_frame);
++	}
++}
++
+ void VideoDecoder::_free_tempo() {
+ 	avfilter_graph_free(&tempo_graph);
+ 	tempo_source = nullptr;
+@@ -3029,16 +3051,18 @@
+ 	tempo_base_msec = -1.0;
+ 	tempo_samples_in = 0;
+ 	tempo_samples_out = 0;
+-}
+-
+-bool VideoDecoder::_build_tempo(double p_tempo, int p_channels, int p_filter) {
++	tempo_processor.store(0);
++}
++
++bool VideoDecoder::_build_tempo(double p_tempo, int p_channels, int p_filter, bool p_fast) {
+ 	tempo_graph = avfilter_graph_alloc();
+ 	char layout[64];
+ 	av_channel_layout_describe(&output_ch_layout, layout, sizeof(layout));
+ 	const String source_args = vformat("time_base=1/%d:sample_rate=%d:sample_fmt=flt:channel_layout=%s", output_sample_rate, output_sample_rate, String(layout));
+ 	PackedStringArray chain;
++	const bool high_quality = !p_fast && requested_tempo_quality.load() == 0 && avfilter_get_by_name("rubberband") != nullptr;
+ 	if (Math::abs(p_tempo - 1.0) > 0.001) {
+-		chain.push_back(vformat("atempo=%f", p_tempo));
++		chain.push_back(high_quality ? vformat("rubberband=tempo=%f:transients=mixed:detector=soft:phase=laminar:channels=together", p_tempo) : vformat("atempo=%f", p_tempo));
+ 	}
+ 	if (p_filter == 1) {
+ 		chain.push_back("acompressor=threshold=0.125:ratio=3:attack=10:release=300:makeup=2.5:knee=4");
+@@ -3073,8 +3097,9 @@
+ 	if (!ok) {
+ 		print_line(vformat("Audio filter chain '%s' unavailable for %d channels", chain_text, p_channels));
+ 		_free_tempo();
+-		return false;
+-	}
++		return high_quality ? _build_tempo(p_tempo, p_channels, p_filter, true) : false;
++	}
++	tempo_processor.store(Math::abs(p_tempo - 1.0) > 0.001 ? (high_quality ? 2 : 1) : 0);
+ 	print_line(vformat("Audio filter chain: %s", chain_text));
+ 	tempo_frame = av_frame_alloc();
+ 	return true;
+--- a/video_decoder.h
++++ b/video_decoder.h
+@@ -215,6 +215,9 @@
+ 	AVFrame *tempo_frame = nullptr;
+ 	std::atomic<double> requested_tempo{ 1.0 };
+ 	std::atomic<int> requested_audio_filter{ 0 };
++	std::atomic<int> requested_tempo_quality{ 0 };
++	std::atomic<int> tempo_processor{ 0 };
++	int tempo_quality_active = 0;
+ 	int audio_filter_active = 0;
+ 	double tempo_active = 1.0;
+ 	double tempo_base_msec = -1.0;
+@@ -408,7 +411,8 @@
+ 	void _apply_adaptive_tier(int p_tier);
+ 	void _update_drop_ratio(double p_period, uint64_t p_now);
+ 	void _free_tempo();
+-	bool _build_tempo(double p_tempo, int p_channels, int p_filter);
++	bool _build_tempo(double p_tempo, int p_channels, int p_filter, bool p_fast = false);
++	void _drain_tempo();
+ 	AVDictionary *_input_options() const;
+ 	AVFormatContext *_audio_context() const { return audio_format_context != nullptr ? audio_format_context : format_context; }
+ 	void _open_external_audio();
+@@ -460,6 +464,8 @@
+ 	void set_audio_tempo(double p_tempo) { requested_tempo.store(p_tempo); }
+ 	bool can_seek() const { return format_context != nullptr && format_context->pb != nullptr && (format_context->pb->seekable & AVIO_SEEKABLE_NORMAL) != 0 && (audio_format_context == nullptr || (audio_format_context->pb != nullptr && (audio_format_context->pb->seekable & AVIO_SEEKABLE_NORMAL) != 0)); }
+ 	void set_audio_filter(int p_filter) { requested_audio_filter.store(p_filter); }
++	void set_tempo_quality(int p_quality) { requested_tempo_quality.store(p_quality); }
++	int get_tempo_processor() const { return tempo_processor.load(); }
+ 	void set_external_audio(const String &p_path) { audio_file_path = p_path; }
+ 	void set_http_headers(const String &p_headers) { http_headers = p_headers; }
+ 	void set_input_format(const String &p_name) { input_format_name = p_name; }
+--- a/ffmpeg_video_stream.cpp
++++ b/ffmpeg_video_stream.cpp
+@@ -767,6 +767,7 @@
+ 	ClassDB::bind_method(D_METHOD("set_spatial_audio", "enabled"), &FFmpegVideoStreamPlayback::set_spatial_audio);
+ 	ClassDB::bind_method(D_METHOD("set_dialogue_boost", "amount"), &FFmpegVideoStreamPlayback::set_dialogue_boost);
+ 	ClassDB::bind_method(D_METHOD("set_audio_filter", "filter"), &FFmpegVideoStreamPlayback::set_audio_filter);
++	ClassDB::bind_method(D_METHOD("set_tempo_quality", "quality"), &FFmpegVideoStreamPlayback::set_tempo_quality);
+ 	ClassDB::bind_method(D_METHOD("get_audio_info"), &FFmpegVideoStreamPlayback::get_audio_info);
+ 	ClassDB::bind_method(D_METHOD("get_stream_metadata"), &FFmpegVideoStreamPlayback::get_stream_metadata);
+ }
+@@ -863,6 +864,12 @@
+ 	}
+ }
+ 
++void FFmpegVideoStreamPlayback::set_tempo_quality(int p_quality) {
++	if (decoder.is_valid()) {
++		decoder->set_tempo_quality(CLAMP(p_quality, 0, 1));
++	}
++}
++
+ Dictionary FFmpegVideoStreamPlayback::get_audio_info() const {
+ 	Dictionary info;
+ #ifdef GDEXTENSION
+@@ -872,6 +879,7 @@
+ 	info["spatial"] = spatial.is_spatial_active();
+ 	info["description"] = spatial.describe();
+ #endif
++	info["tempo_processor"] = decoder.is_valid() ? decoder->get_tempo_processor() : 0;
+ 	info["external"] = decoder.is_valid() && decoder->has_external_audio();
+ 	return info;
+ }
+--- a/ffmpeg_video_stream.h
++++ b/ffmpeg_video_stream.h
+@@ -289,6 +289,7 @@
+ 	void set_spatial_audio(bool p_enabled);
+ 	void set_dialogue_boost(float p_amount);
+ 	void set_audio_filter(int p_filter);
++	void set_tempo_quality(int p_quality);
+ 	Dictionary get_audio_info() const;
+ 	Dictionary get_stream_metadata() const;
+ 
+--- /dev/null
++++ b/vpx_file_ops.h
+@@ -0,0 +1,15 @@
++#ifndef VPX_FILE_OPS_H
++#define VPX_FILE_OPS_H
++#ifdef GDEXTENSION
++#include <godot_cpp/classes/ref_counted.hpp>
++#include <godot_cpp/variant/string.hpp>
++using namespace godot;
++class VPXFileOps : public RefCounted {
++	GDCLASS(VPXFileOps, RefCounted);
++protected:
++	static void _bind_methods();
++public:
++	static Error rename_no_replace(const String &p_from, const String &p_to);
++};
++#endif
++#endif
+--- /dev/null
++++ b/vpx_file_ops.cpp
+@@ -0,0 +1,61 @@
++#include "vpx_file_ops.h"
++#ifdef GDEXTENSION
++#include <godot_cpp/core/class_db.hpp>
++#ifdef _WIN32
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++#else
++#include <cerrno>
++#include <fcntl.h>
++#include <sys/stat.h>
++#include <sys/syscall.h>
++#include <unistd.h>
++#endif
++
++Error VPXFileOps::rename_no_replace(const String &p_from, const String &p_to) {
++	if (p_from.is_empty() || p_to.is_empty()) {
++		return ERR_INVALID_PARAMETER;
++	}
++	for (const String *path : { &p_from, &p_to }) {
++		for (int i = 0; i < path->length(); i++) {
++			if ((*path)[i] == 0) {
++				return ERR_INVALID_PARAMETER;
++			}
++		}
++	}
++#ifdef _WIN32
++	const Char16String from = p_from.utf16();
++	const Char16String to = p_to.utf16();
++	if (from.length() >= 3 && from[1] == u':') {
++		wchar_t root[4] = { (wchar_t)from[0], L':', L'\\', 0 };
++		if (GetDriveTypeW(root) == DRIVE_REMOTE) {
++			return ERR_UNAVAILABLE;
++		}
++	}
++	const DWORD attrs = GetFileAttributesW((const wchar_t *)from.get_data());
++	if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) {
++		return ERR_FILE_BAD_PATH;
++	}
++	if (MoveFileExW((const wchar_t *)from.get_data(), (const wchar_t *)to.get_data(), MOVEFILE_WRITE_THROUGH)) {
++		return OK;
++	}
++	const DWORD error = GetLastError();
++	return error == ERROR_FILE_EXISTS || error == ERROR_ALREADY_EXISTS ? ERR_ALREADY_EXISTS : ERR_FILE_CANT_WRITE;
++#elif defined(__linux__) && defined(SYS_renameat2)
++	struct stat info;
++	if (lstat(p_from.utf8().get_data(), &info) != 0 || !S_ISREG(info.st_mode)) {
++		return ERR_FILE_BAD_PATH;
++	}
++	if (syscall(SYS_renameat2, AT_FDCWD, p_from.utf8().get_data(), AT_FDCWD, p_to.utf8().get_data(), 1) == 0) {
++		return OK;
++	}
++	return errno == EEXIST ? ERR_ALREADY_EXISTS : ERR_FILE_CANT_WRITE;
++#else
++	return ERR_UNAVAILABLE;
++#endif
++}
++
++void VPXFileOps::_bind_methods() {
++	ClassDB::bind_static_method("VPXFileOps", D_METHOD("rename_no_replace", "from", "to"), &VPXFileOps::rename_no_replace);
++}
++#endif

@@ -1,0 +1,570 @@
+--- a/ffmpeg_video_stream.h
++++ b/ffmpeg_video_stream.h
+@@ -235,6 +235,7 @@
+ 	PackedFloat32Array spatial_buffer;
+ 	AVChannelLayout spatial_layout = {};
+ 	bool spatial_configured = false;
++	std::deque<Ref<DecodedAudioFrame>> resonance_history;
+ #endif
+ 	double _display_delta(double p_delta) const;
+ 
+@@ -291,6 +292,8 @@
+ 	void set_audio_filter(int p_filter);
+ 	void set_tempo_quality(int p_quality);
+ 	Dictionary get_audio_info() const;
++	void set_visualizer_enabled(bool p_enabled);
++	Dictionary get_visualizer_state(double p_offset_msec);
+ 	Dictionary get_stream_metadata() const;
+ 
+ 	STREAM_FUNC_REDIRECT_0_CONST(bool, is_paused);
+--- a/ffmpeg_video_stream.cpp
++++ b/ffmpeg_video_stream.cpp
+@@ -555,6 +555,10 @@
+ 			break;
+ 		}
+ 		audio_frame_offset = 0;
++#ifdef GDEXTENSION
++		resonance_history.push_back(audio_frame);
++		while (resonance_history.size() > 64 || (resonance_history.size() > 2 && audio_frame->get_time() - resonance_history.front()->get_time() > 500.0)) resonance_history.pop_front();
++#endif
+ 		if (just_seeked && decoder.is_valid() && decoder->is_audio_only()) {
+ 			just_seeked = false;
+ 		}
+@@ -660,6 +664,9 @@
+ }
+ 
+ void FFmpegVideoStreamPlayback::seek_internal(double p_time) {
++#ifdef GDEXTENSION
++	resonance_history.clear();
++#endif
+ 	seek_from_msec = last_frame.is_valid() ? last_frame->get_time() : playback_position;
+ 	playback_position = p_time * 1000.0f;
+ 	seek_resync_grace = SEEK_RESYNC_GRACE_UPDATES;
+@@ -768,6 +775,8 @@
+ 	ClassDB::bind_method(D_METHOD("set_dialogue_boost", "amount"), &FFmpegVideoStreamPlayback::set_dialogue_boost);
+ 	ClassDB::bind_method(D_METHOD("set_audio_filter", "filter"), &FFmpegVideoStreamPlayback::set_audio_filter);
+ 	ClassDB::bind_method(D_METHOD("set_tempo_quality", "quality"), &FFmpegVideoStreamPlayback::set_tempo_quality);
++	ClassDB::bind_method(D_METHOD("set_visualizer_enabled", "enabled"), &FFmpegVideoStreamPlayback::set_visualizer_enabled);
++	ClassDB::bind_method(D_METHOD("get_visualizer_state", "offset_msec"), &FFmpegVideoStreamPlayback::get_visualizer_state);
+ 	ClassDB::bind_method(D_METHOD("get_audio_info"), &FFmpegVideoStreamPlayback::get_audio_info);
+ 	ClassDB::bind_method(D_METHOD("get_stream_metadata"), &FFmpegVideoStreamPlayback::get_stream_metadata);
+ }
+@@ -870,6 +879,26 @@
+ 	}
+ }
+ 
++void FFmpegVideoStreamPlayback::set_visualizer_enabled(bool p_enabled) {
++#ifdef GDEXTENSION
++	if (decoder.is_valid()) {
++		Vector<Ref<DecodedAudioFrame>> pending;
++		if (p_enabled) {
++			for (const auto &frame : resonance_history) pending.push_back(frame);
++			for (const auto &frame : available_audio_frames) pending.push_back(frame);
++		}
++		decoder->set_visualizer_enabled(p_enabled, pending);
++	}
++#endif
++}
++
++Dictionary FFmpegVideoStreamPlayback::get_visualizer_state(double p_offset_msec) {
++#ifdef GDEXTENSION
++	if (decoder.is_valid()) return decoder->get_visualizer_state(playback_position - audio_delay_msec + p_offset_msec * speed, !spatial.is_spatial_active());
++#endif
++	return Dictionary();
++}
++
+ Dictionary FFmpegVideoStreamPlayback::get_audio_info() const {
+ 	Dictionary info;
+ #ifdef GDEXTENSION
+@@ -898,6 +927,9 @@
+ }
+ 
+ void FFmpegVideoStreamPlayback::clear() {
++#ifdef GDEXTENSION
++	resonance_history.clear();
++#endif
+ 	last_frame.unref();
+ 	last_frame_texture.unref();
+ 	available_frames.clear();
+--- a/video_decoder.h
++++ b/video_decoder.h
+@@ -38,6 +38,7 @@
+ 
+ // Headers for building as GDExtension plug-in.
+ #include "gdextension_build/command_queue_mt.h"
++#include "vpx_resonance.h"
+ #include <godot_cpp/classes/file_access.hpp>
+ #include <godot_cpp/classes/image_texture.hpp>
+ #include <godot_cpp/classes/mutex.hpp>
+@@ -204,6 +205,13 @@
+ private:
+ 	FFmpegFrameFormat frame_format;
+ 	Vector<Ref<DecodedAudioFrame>> decoded_audio_frames;
++#ifdef GDEXTENSION
++	VpxResonance resonance;
++	std::atomic<bool> resonance_enabled{ false };
++	std::deque<VpxResonance::Frame> resonance_frames;
++	bool resonance_was_enabled = false;
++	void _prime_visualizer(Vector<Ref<DecodedAudioFrame>> p_pending);
++#endif
+ 
+ 	Ref<core_bind::Mutex> audio_buffer_mutex;
+ 
+@@ -475,6 +483,8 @@
+ 	const AVChannelLayout &get_output_layout() const { return output_ch_layout; }
+ 	bool is_multiview() const { return multiview; }
+ #ifdef GDEXTENSION
++	void set_visualizer_enabled(bool p_enabled, const Vector<Ref<DecodedAudioFrame>> &p_pending);
++	Dictionary get_visualizer_state(double p_time, bool p_stereo);
+ 	void set_pinned_pool(const std::shared_ptr<VpxPinnedPool> &p_pool) { pinned_pool = p_pool; }
+ 	std::shared_ptr<VpxPinnedPool> get_pinned_pool() const { return pinned_pool; }
+ #endif
+--- a/video_decoder.cpp
++++ b/video_decoder.cpp
+@@ -3015,8 +3015,23 @@
+ 	Ref<DecodedAudioFrame> audio_frame = memnew(DecodedAudioFrame(p_time, output_ch_layout));
+ 	audio_frame->sample_data.resize(p_sample_count * p_channels);
+ 	memcpy(audio_frame->sample_data.ptrw(), p_samples, sizeof(float) * p_sample_count * p_channels);
++#ifdef GDEXTENSION
++	std::vector<VpxResonance::Frame> features;
++	const bool analyse = resonance_enabled.load();
++	if (analyse) {
++		if (!resonance_was_enabled) resonance.reset();
++		resonance.process(p_samples, p_sample_count, output_ch_layout, output_sample_rate, p_time, tempo_active, features);
++	}
++	resonance_was_enabled = analyse;
++#endif
+ 	audio_buffer_mutex->lock();
+ 	if (!skip_current_outputs.is_set()) {
++#ifdef GDEXTENSION
++		if (resonance_enabled.load()) {
++			for (const auto &feature : features) resonance_frames.push_back(feature);
++			while (resonance_frames.size() > 1536) resonance_frames.pop_front();
++		}
++#endif
+ 		decoded_audio_frames.push_back(audio_frame);
+ 		if (audio_only) {
+ 			last_decoded_frame_time.set(p_time);
+@@ -3173,12 +3188,64 @@
+ 	return String();
+ }
+ 
++#ifdef GDEXTENSION
++void VideoDecoder::set_visualizer_enabled(bool p_enabled, const Vector<Ref<DecodedAudioFrame>> &p_pending) {
++	const bool previous = resonance_enabled.exchange(p_enabled);
++	if (p_enabled && !previous) decoder_commands.push(this, &VideoDecoder::_prime_visualizer, p_pending);
++	if (!p_enabled) {
++		audio_buffer_mutex->lock();
++		resonance_frames.clear();
++		audio_buffer_mutex->unlock();
++	}
++}
++
++void VideoDecoder::_prime_visualizer(Vector<Ref<DecodedAudioFrame>> p_pending) {
++	if (!resonance_enabled.load() || skip_current_outputs.is_set()) return;
++	audio_buffer_mutex->lock();
++	for (const auto &frame : decoded_audio_frames) p_pending.push_back(frame);
++	resonance_frames.clear();
++	audio_buffer_mutex->unlock();
++	resonance.reset();
++	std::vector<VpxResonance::Frame> features;
++	for (const auto &frame : p_pending) {
++		if (!resonance_enabled.load() || skip_current_outputs.is_set()) return;
++		const int channels = frame->get_layout().nb_channels;
++		if (channels <= 0) continue;
++		const auto samples = frame->get_sample_data();
++		resonance.process(samples.ptr(), samples.size() / channels, frame->get_layout(), output_sample_rate, frame->get_time(), tempo_active, features);
++	}
++	resonance_was_enabled = true;
++	audio_buffer_mutex->lock();
++	if (resonance_enabled.load() && !skip_current_outputs.is_set()) {
++		for (const auto &feature : features) resonance_frames.push_back(feature);
++		while (resonance_frames.size() > 1536) resonance_frames.pop_front();
++	}
++	audio_buffer_mutex->unlock();
++}
++
++Dictionary VideoDecoder::get_visualizer_state(double p_time, bool p_stereo) {
++	VpxResonance::Frame selected;
++	audio_buffer_mutex->lock();
++	for (auto it = resonance_frames.rbegin(); it != resonance_frames.rend(); ++it) {
++		if ((*it)->time <= p_time) {
++			if (p_time - (*it)->time <= 150.0) selected = *it;
++			break;
++		}
++	}
++	audio_buffer_mutex->unlock();
++	return selected ? selected->dictionary(p_stereo) : Dictionary();
++}
++#endif
++
+ void VideoDecoder::seek(double p_time, bool p_wait) {
+ 	decoded_frames_mutex->lock();
+ 	audio_buffer_mutex->lock();
+ 
+ 	decoded_frames.clear();
+ 	decoded_audio_frames.clear();
++#ifdef GDEXTENSION
++	resonance_frames.clear();
++#endif
+ 
+ 	seek_from_msec.set(skip_current_outputs.is_set() ? seek_from_msec.get() : last_decoded_frame_time.get());
+ 	latest_seek_msec.set(p_time);
+--- a/vpx_spatial_audio.h
++++ b/vpx_spatial_audio.h
+@@ -108,6 +108,7 @@
+ 	void _process_ambisonic_stereo(const float *p_in, int p_frames, float *p_out);
+ 
+ public:
++	static bool analysis_channel_direction(AVChannel p_channel, float &r_azimuth, float &r_elevation, bool &r_lfe) { return _channel_direction(p_channel, r_azimuth, r_elevation, r_lfe); }
+ 	void configure(const AVChannelLayout &p_layout, int p_sample_rate);
+ 	void set_spatial(bool p_spatial);
+ 	void set_dialogue_boost(float p_amount) { dialogue = p_amount; }
+--- /dev/null
++++ b/vpx_resonance.h
+@@ -0,0 +1,94 @@
++#ifndef VPX_RESONANCE_H
++#define VPX_RESONANCE_H
++
++#ifdef GDEXTENSION
++
++#include <godot_cpp/variant/dictionary.hpp>
++#include <godot_cpp/variant/vector3.hpp>
++#include <array>
++#include <deque>
++#include <memory>
++#include <vector>
++
++extern "C" {
++#include <libavutil/channel_layout.h>
++#include <libavutil/tx.h>
++}
++
++class VpxResonance {
++public:
++	static constexpr int BANDS = 48;
++	static constexpr int AZIMUTHS = 16;
++	static constexpr int ELEVATIONS = 3;
++	static constexpr int CELLS = AZIMUTHS * ELEVATIONS;
++	static constexpr int HOP = 256;
++	static constexpr int SHORT_FFT = 1024;
++	static constexpr int LONG_FFT = 4096;
++	struct Snapshot {
++		double time = 0.0;
++		float rms = 0.0f;
++		float onset = 0.0f;
++		float correlation = 1.0f;
++		float width = 0.0f;
++		float lfe = 0.0f;
++		int channels = 0;
++		bool ambisonic = false;
++		std::array<float, BANDS * (CELLS + 2)> spectrum{};
++		godot::Dictionary dictionary(bool p_stereo) const;
++	};
++	using Frame = std::shared_ptr<const Snapshot>;
++
++private:
++	struct Source {
++		int channel = -1;
++		godot::Vector3 direction;
++		bool lfe = false;
++		std::array<float, LONG_FFT> ring{};
++		std::array<float, BANDS> bands{};
++		std::array<float, BANDS> real{};
++		std::array<float, BANDS> imaginary{};
++		std::array<float, CELLS> weights{};
++	};
++	std::vector<Source> sources;
++	AVChannelLayout layout{};
++	AVTXContext *short_context = nullptr;
++	AVTXContext *long_context = nullptr;
++	av_tx_fn short_transform = nullptr;
++	av_tx_fn long_transform = nullptr;
++	std::array<float, LONG_FFT> input{};
++	std::array<AVComplexFloat, LONG_FFT / 2 + 1> output{};
++	std::array<float, SHORT_FFT> short_window{};
++	std::array<float, LONG_FFT> long_window{};
++	std::array<int, BANDS + 1> short_bins{};
++	std::array<int, BANDS + 1> long_bins{};
++	int rate = 0;
++	int channels = 0;
++	int position = 0;
++	uint64_t samples = 0;
++	int hop = 0;
++	int w = -1;
++	int x = -1;
++	int y = -1;
++	int z = -1;
++	double expected_time = -1.0;
++	double energy = 0.0;
++	double left_energy = 0.0;
++	double right_energy = 0.0;
++	double cross_energy = 0.0;
++	double lfe_energy = 0.0;
++	float envelope = 0.0f;
++	float onset = 0.0f;
++	std::shared_ptr<Snapshot> spectral;
++	void configure(const AVChannelLayout &p_layout, int p_rate);
++	void analyse(Source &p_source, bool p_long);
++	std::shared_ptr<Snapshot> snapshot(double p_time);
++
++public:
++	VpxResonance();
++	~VpxResonance();
++	void reset();
++	void process(const float *p_samples, int p_count, const AVChannelLayout &p_layout, int p_rate, double p_time, double p_speed, std::vector<Frame> &r_frames);
++};
++
++#endif
++#endif
+--- /dev/null
++++ b/vpx_resonance.cpp
+@@ -0,0 +1,248 @@
++#include "vpx_resonance.h"
++
++#ifdef GDEXTENSION
++#include "vpx_spatial_audio.h"
++#include <godot_cpp/variant/packed_float32_array.hpp>
++#include <godot_cpp/variant/variant.hpp>
++#include <algorithm>
++#include <cmath>
++#include <cstring>
++
++using namespace godot;
++
++Dictionary VpxResonance::Snapshot::dictionary(bool p_stereo) const {
++	PackedFloat32Array data;
++	data.resize(spectrum.size());
++	float *values = data.ptrw();
++	for (size_t i = 0; i < spectrum.size(); i++) values[i] = std::clamp((20.0f * std::log10(std::max(spectrum[i], 0.000001f)) + 60.0f) / 60.0f, 0.0f, 1.0f);
++	if (p_stereo && channels > 2) {
++		for (int b = 0; b < BANDS; b++) {
++			const float left = spectrum[b];
++			const float right = spectrum[BANDS + b];
++			const float pan = (right * right - left * left) / std::max(1e-12f, left * left + right * right);
++			const Vector3 direction(pan, 0.0f, -std::sqrt(std::max(0.0f, 1.0f - pan * pan)));
++			for (int cell = 0; cell < CELLS; cell++) {
++				const float az = (cell % AZIMUTHS) * 6.28318530718f / AZIMUTHS;
++				const float el = (cell / AZIMUTHS - 1) * 0.78539816339f;
++				const Vector3 axis(std::sin(az) * std::cos(el), std::sin(el), -std::cos(az) * std::cos(el));
++				const float dot = std::max(0.0f, (float)axis.dot(direction));
++				const float square = dot * dot;
++				const float magnitude = std::max(left, right) * square * square * square * square * square;
++				values[(cell + 2) * BANDS + b] = std::clamp((20.0f * std::log10(std::max(magnitude, 0.000001f)) + 60.0f) / 60.0f, 0.0f, 1.0f);
++			}
++		}
++	}
++	Dictionary result;
++	result["time"] = time / 1000.0;
++	result["rms"] = rms;
++	result["onset"] = onset;
++	result["correlation"] = correlation;
++	result["width"] = width;
++	result["lfe"] = lfe;
++	result["channels"] = channels;
++	result["ambisonic"] = ambisonic;
++	result["spectrum"] = data;
++	return result;
++}
++
++VpxResonance::VpxResonance() {
++	const float scale = 1.0f;
++	av_tx_init(&short_context, &short_transform, AV_TX_FLOAT_RDFT, 0, SHORT_FFT, &scale, AV_TX_UNALIGNED);
++	av_tx_init(&long_context, &long_transform, AV_TX_FLOAT_RDFT, 0, LONG_FFT, &scale, AV_TX_UNALIGNED);
++	for (int i = 0; i < SHORT_FFT; i++) {
++		short_window[i] = 0.5f - 0.5f * std::cos(6.28318530718f * i / (SHORT_FFT - 1));
++	}
++	for (int i = 0; i < LONG_FFT; i++) {
++		long_window[i] = 0.5f - 0.5f * std::cos(6.28318530718f * i / (LONG_FFT - 1));
++	}
++}
++
++VpxResonance::~VpxResonance() {
++	av_tx_uninit(&short_context);
++	av_tx_uninit(&long_context);
++	av_channel_layout_uninit(&layout);
++}
++
++void VpxResonance::reset() {
++	position = samples = hop = 0;
++	energy = left_energy = right_energy = cross_energy = lfe_energy = 0.0;
++	envelope = onset = 0.0f;
++	expected_time = -1.0;
++	spectral.reset();
++	for (Source &source : sources) {
++		source.ring.fill(0.0f);
++		source.bands.fill(0.0f);
++		source.real.fill(0.0f);
++		source.imaginary.fill(0.0f);
++	}
++}
++
++void VpxResonance::configure(const AVChannelLayout &p_layout, int p_rate) {
++	av_channel_layout_uninit(&layout);
++	av_channel_layout_copy(&layout, &p_layout);
++	rate = p_rate;
++	channels = p_layout.nb_channels;
++	sources.clear();
++	w = x = y = z = -1;
++	for (int i = 0; i < channels; i++) {
++		const AVChannel channel = av_channel_layout_channel_from_index(&layout, i);
++		if (channel == AV_CHAN_AMBISONIC_BASE) w = i;
++		if (channel == AV_CHAN_AMBISONIC_BASE + 1) y = i;
++		if (channel == AV_CHAN_AMBISONIC_BASE + 2) z = i;
++		if (channel == AV_CHAN_AMBISONIC_BASE + 3) x = i;
++	}
++	const bool ambisonic = w >= 0 && x >= 0 && y >= 0 && z >= 0;
++	if (ambisonic) {
++		for (int i = 0; i < 8; i++) {
++			Source source;
++			source.direction = Vector3((i & 1) ? 1 : -1, (i & 2) ? 1 : -1, (i & 4) ? 1 : -1).normalized();
++			sources.push_back(source);
++		}
++	}
++	for (int i = 0; i < channels && sources.size() < 32; i++) {
++		const AVChannel channel = av_channel_layout_channel_from_index(&layout, i);
++		if (ambisonic && channel >= AV_CHAN_AMBISONIC_BASE && channel <= AV_CHAN_AMBISONIC_END) continue;
++		Source source;
++		source.channel = i;
++		float azimuth = 0.0f;
++		float elevation = 0.0f;
++		VpxSpatialAudio::analysis_channel_direction(channel, azimuth, elevation, source.lfe);
++		if (!ambisonic && channels == 2) azimuth = i == 0 ? 65.0f : -65.0f;
++		const float az = azimuth * 0.01745329252f;
++		const float el = elevation * 0.01745329252f;
++		source.direction = Vector3(-std::sin(az) * std::cos(el), std::sin(el), -std::cos(az) * std::cos(el));
++		sources.push_back(source);
++	}
++	for (Source &source : sources) {
++		for (int cell = 0; cell < CELLS; cell++) {
++			const float az = (cell % AZIMUTHS) * 6.28318530718f / AZIMUTHS;
++			const float el = (cell / AZIMUTHS - 1) * 0.78539816339f;
++			const Vector3 axis(std::sin(az) * std::cos(el), std::sin(el), -std::cos(az) * std::cos(el));
++			source.weights[cell] = source.lfe ? 0.0f : std::pow(std::max(0.0f, (float)axis.dot(source.direction)), 10.0f);
++		}
++	}
++	for (int b = 0; b <= BANDS; b++) {
++		const float frequency = 30.0f * std::pow(600.0f, (float)b / BANDS);
++		short_bins[b] = std::clamp((int)std::round(frequency * SHORT_FFT / rate), 1, SHORT_FFT / 2);
++		long_bins[b] = std::clamp((int)std::round(frequency * LONG_FFT / rate), 1, LONG_FFT / 2);
++	}
++	reset();
++}
++
++void VpxResonance::analyse(Source &p_source, bool p_long) {
++	const int size = p_long ? LONG_FFT : SHORT_FFT;
++	AVTXContext *context = p_long ? long_context : short_context;
++	av_tx_fn transform = p_long ? long_transform : short_transform;
++	if (!context || !transform) return;
++	for (int i = 0; i < size; i++) {
++		input[i] = p_source.ring[(position - size + i + LONG_FFT) % LONG_FFT] * (p_long ? long_window[i] : short_window[i]);
++	}
++	transform(context, output.data(), input.data(), sizeof(float));
++	const auto &bins = p_long ? long_bins : short_bins;
++	const float scale = 4.0f / size;
++	for (int b = 0; b < BANDS; b++) {
++		const bool low = 30.0f * std::pow(600.0f, (float)(b + 1) / BANDS) < 220.0f;
++		if (low != p_long && (samples >= LONG_FFT || p_long)) continue;
++		float power = 0.0f;
++		float real = 0.0f;
++		float imaginary = 0.0f;
++		const int end = std::min(size / 2 + 1, std::max(bins[b] + 1, bins[b + 1]));
++		for (int k = bins[b]; k < end; k++) {
++			real += output[k].re;
++			imaginary += output[k].im;
++			power += output[k].re * output[k].re + output[k].im * output[k].im;
++		}
++		p_source.bands[b] = std::sqrt(power) * scale;
++		p_source.real[b] = real;
++		p_source.imaginary[b] = imaginary;
++	}
++}
++
++std::shared_ptr<VpxResonance::Snapshot> VpxResonance::snapshot(double p_time) {
++	if (!spectral || samples % (HOP * 2) == 0) {
++		spectral = std::make_shared<Snapshot>();
++		for (Source &source : sources) {
++			if (samples >= SHORT_FFT) analyse(source, false);
++			if (samples >= LONG_FFT && samples % (HOP * 4) == 0) analyse(source, true);
++			const float left = std::sqrt(std::clamp((1.0f - (float)source.direction.x) * 0.5f, 0.0f, 1.0f));
++			const float right = std::sqrt(std::clamp((1.0f + (float)source.direction.x) * 0.5f, 0.0f, 1.0f));
++			for (int b = 0; b < BANDS; b++) {
++				const float magnitude = source.bands[b];
++				if (source.lfe) continue;
++				const bool stereo = channels == 2 && w < 0;
++				spectral->spectrum[b] += magnitude * (stereo ? (source.channel == 0 ? 1.0f : 0.0f) : left);
++				spectral->spectrum[BANDS + b] += magnitude * (stereo ? (source.channel == 1 ? 1.0f : 0.0f) : right);
++				for (int cell = 0; cell < CELLS; cell++) spectral->spectrum[(cell + 2) * BANDS + b] += magnitude * source.weights[cell];
++			}
++		}
++		if (channels == 2 && w < 0 && sources.size() == 2) {
++			for (int b = 0; b < BANDS; b++) {
++				const float left = sources[0].bands[b];
++				const float right = sources[1].bands[b];
++				const float pan = (right * right - left * left) / std::max(1e-12f, right * right + left * left);
++				const Vector3 direction(pan, 0.0f, -std::sqrt(std::max(0.0f, 1.0f - pan * pan)));
++				const float lr = sources[0].real[b] * sources[1].real[b] + sources[0].imaginary[b] * sources[1].imaginary[b];
++				const float norm = std::sqrt((sources[0].real[b] * sources[0].real[b] + sources[0].imaginary[b] * sources[0].imaginary[b]) * (sources[1].real[b] * sources[1].real[b] + sources[1].imaginary[b] * sources[1].imaginary[b]));
++				const float correlation = norm > 1e-12f ? std::clamp(lr / norm, -1.0f, 1.0f) : 1.0f;
++				const float diffuse = (1.0f - correlation) * 0.35f;
++				for (int cell = 0; cell < CELLS; cell++) {
++					const float az = (cell % AZIMUTHS) * 6.28318530718f / AZIMUTHS;
++					const float el = (cell / AZIMUTHS - 1) * 0.78539816339f;
++					const Vector3 axis(std::sin(az) * std::cos(el), std::sin(el), -std::cos(az) * std::cos(el));
++					const float dot = std::max(0.0f, (float)axis.dot(direction));
++					const float square = dot * dot;
++					const float weight = square * square * square * square * square * (1.0f - diffuse) + square * diffuse;
++					spectral->spectrum[(cell + 2) * BANDS + b] = std::max(left, right) * weight;
++				}
++			}
++		}
++	}
++	auto result = std::make_shared<Snapshot>(*spectral);
++	result->time = p_time;
++	result->channels = channels;
++	result->ambisonic = w >= 0;
++	result->rms = std::sqrt(energy / HOP);
++	result->lfe = std::sqrt(lfe_energy / HOP);
++	result->correlation = left_energy * right_energy > 1e-12 ? std::clamp((float)(cross_energy / std::sqrt(left_energy * right_energy)), -1.0f, 1.0f) : 1.0f;
++	result->width = std::sqrt(std::clamp((float)((left_energy + right_energy - 2.0 * cross_energy) / std::max(1e-12, 2.0 * (left_energy + right_energy))), 0.0f, 1.0f));
++	const float novelty = std::max(0.0f, result->rms - envelope * 1.15f);
++	onset = std::max(novelty, onset * 0.88f);
++	result->onset = onset;
++	envelope += (result->rms - envelope) * (result->rms > envelope ? 0.2f : 0.025f);
++	energy = left_energy = right_energy = cross_energy = lfe_energy = 0.0;
++	return result;
++}
++
++void VpxResonance::process(const float *p_samples, int p_count, const AVChannelLayout &p_layout, int p_rate, double p_time, double p_speed, std::vector<Frame> &r_frames) {
++	if (p_count <= 0 || p_rate <= 0 || p_layout.nb_channels < 1) return;
++	if (rate != p_rate || av_channel_layout_compare(&layout, &p_layout) != 0) configure(p_layout, p_rate);
++	if (expected_time >= 0.0 && std::fabs(p_time - expected_time) > 30.0) reset();
++	const double step = 1000.0 * p_speed / rate;
++	for (int i = 0; i < p_count; i++) {
++		const float *frame = p_samples + (int64_t)i * channels;
++		float total = 0.0f;
++		float lfe_total = 0.0f;
++		for (Source &source : sources) {
++			float value = source.channel >= 0 ? frame[source.channel] : (frame[w] + 1.5f * (float)source.direction.dot(Vector3(-frame[y], frame[z], -frame[x]))) * 0.25f;
++			if (!std::isfinite(value)) value = 0.0f;
++			source.ring[position] = value;
++			if (source.lfe) lfe_total += value * value;
++			else total += value * value;
++		}
++		energy += total / std::max(1, (int)sources.size());
++		lfe_energy += lfe_total;
++		const float left = std::isfinite(frame[0]) ? frame[0] : 0.0f;
++		const float right = channels > 1 && std::isfinite(frame[1]) ? frame[1] : left;
++		left_energy += left * left;
++		right_energy += right * right;
++		cross_energy += left * right;
++		position = (position + 1) % LONG_FFT;
++		samples++;
++		if (++hop == HOP) {
++			hop = 0;
++			r_frames.push_back(snapshot(p_time + (i + 1) * step));
++		}
++	}
++	expected_time = p_time + p_count * step;
++}
++#endif

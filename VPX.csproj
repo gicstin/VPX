@@ -1,0 +1,15 @@
+<Project Sdk="Godot.NET.Sdk/4.7.2">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <RootNamespace>VPX</RootNamespace>
+    <DefaultItemExcludes>$(DefaultItemExcludes);build/**;dist/**;EIRTeam.FFmpeg/**;ffmpeg-sys/**;packaging/**</DefaultItemExcludes>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="scripts/**/*.gd" />
+    <None Include="shaders/**/*.gdshader" />
+    <None Include="scenes/**/*.tscn" />
+    <None Include="project.godot" />
+    <None Include="README.md" />
+  </ItemGroup>
+</Project>

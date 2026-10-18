@@ -1,0 +1,1237 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/stepper.gd" id="2"]
+[ext_resource type="Script" path="res://scripts/choice.gd" id="3"]
+[ext_resource type="Script" path="res://scripts/switch.gd" id="4"]
+[ext_resource type="Script" path="res://scripts/reticle.gd" id="5"]
+[ext_resource type="Script" path="res://scripts/dropdown.gd" id="6"]
+[ext_resource type="Script" path="res://scripts/zoom_control.gd" id="7"]
+
+[node name="UI" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("1")
+
+[node name="Sheet" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme_type_variation = &"Sheet"
+
+[node name="Margin" type="MarginContainer" parent="Sheet"]
+layout_mode = 2
+theme_override_constants/margin_left = 22
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 22
+theme_override_constants/margin_bottom = 18
+
+[node name="Layout" type="VBoxContainer" parent="Sheet/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Body" type="HBoxContainer" parent="Sheet/Margin/Layout"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 20
+
+[node name="Rail" type="VBoxContainer" parent="Sheet/Margin/Layout/Body"]
+layout_mode = 2
+custom_minimum_size = Vector2(228, 0)
+theme_override_constants/separation = 12
+
+[node name="Brand" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/Rail"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 52)
+theme_override_constants/separation = 12
+alignment = 1
+
+[node name="Logo" type="TextureRect" parent="Sheet/Margin/Layout/Body/Rail/Brand"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(46, 46)
+size_flags_vertical = 4
+expand_mode = 1
+stretch_mode = 5
+
+[node name="BrandName" type="Label" parent="Sheet/Margin/Layout/Body/Rail/Brand"]
+layout_mode = 2
+theme_type_variation = &"Title"
+text = "VPX"
+
+[node name="Nav" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/Rail"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="RailSpacer" type="Control" parent="Sheet/Margin/Layout/Body/Rail"]
+layout_mode = 2
+size_flags_vertical = 3
+mouse_filter = 2
+
+[node name="ModeButton" type="Button" parent="Sheet/Margin/Layout/Body/Rail"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(0, 50)
+focus_mode = 0
+theme_type_variation = &"NavItem"
+text = "Enter VR"
+alignment = 0
+
+[node name="CloseButton" type="Button" parent="Sheet/Margin/Layout/Body/Rail"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(0, 50)
+focus_mode = 0
+theme_type_variation = &"NavItem"
+text = "Close menu"
+alignment = 0
+
+[node name="QuitButton" type="Button" parent="Sheet/Margin/Layout/Body/Rail"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(0, 50)
+focus_mode = 0
+theme_type_variation = &"NavItem"
+text = "Quit"
+alignment = 0
+
+[node name="PageScroll" type="ScrollContainer" parent="Sheet/Margin/Layout/Body"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 4
+
+[node name="PageStack" type="MarginContainer" parent="Sheet/Margin/Layout/Body/PageScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/margin_right = 16
+
+[node name="Library" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="LibraryBar" type="HFlowContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library"]
+layout_mode = 2
+theme_override_constants/h_separation = 10
+theme_override_constants/v_separation = 8
+
+[node name="Sources" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar"]
+layout_mode = 2
+theme_type_variation = &"Segment"
+
+[node name="SourceRow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar/Sources"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="BarSpacer" type="Control" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="SortButton" type="OptionButton" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(200, 56)
+theme_type_variation = &"CompactOption"
+focus_mode = 0
+fit_to_longest_item = false
+
+[node name="Views" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar"]
+layout_mode = 2
+theme_type_variation = &"Segment"
+
+[node name="ViewRow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar/Views"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="GridButton" type="Button" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar/Views/ViewRow"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(60, 48)
+focus_mode = 0
+theme_type_variation = &"Chip"
+toggle_mode = true
+icon_alignment = 1
+
+[node name="ListButton" type="Button" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar/Views/ViewRow"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(60, 48)
+focus_mode = 0
+theme_type_variation = &"Chip"
+toggle_mode = true
+icon_alignment = 1
+
+[node name="PathBar" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="UpButton" type="Button" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/PathBar"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(56, 50)
+focus_mode = 0
+theme_type_variation = &"IconButton"
+icon_alignment = 1
+
+[node name="CrumbScroll" type="ScrollContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/PathBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 0
+
+[node name="Crumbs" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/PathBar/CrumbScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 0
+
+[node name="CountLabel" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/PathBar"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Caption"
+horizontal_alignment = 2
+
+[node name="ClockLabel" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/PathBar"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Caption"
+custom_minimum_size = Vector2(64, 0)
+horizontal_alignment = 2
+
+[node name="FileScroll" type="ScrollContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 4
+
+[node name="FileList" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/FileScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 14
+
+[node name="Format" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="PresetsTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format"]
+layout_mode = 2
+theme_type_variation = &"SectionTitle"
+text = "QUICK PRESETS"
+
+[node name="PresetGrid" type="GridContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
+columns = 5
+
+[node name="LayoutTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format"]
+layout_mode = 2
+theme_type_variation = &"SectionTitle"
+text = "LAYOUT"
+
+[node name="LayoutGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format"]
+layout_mode = 2
+theme_type_variation = &"Group"
+
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/LayoutGroup"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="AutoDetect" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/LayoutGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Auto-detect format"
+setting = &"auto_detect"
+
+[node name="Projection" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/LayoutGroup/Rows"]
+layout_mode = 2
+script = ExtResource("3")
+title = "Projection"
+setting = &"projection"
+options = PackedStringArray("Flat", "360°", "180°", "Fisheye", "EAC", "Cube")
+
+[node name="Stereo" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/LayoutGroup/Rows"]
+layout_mode = 2
+script = ExtResource("3")
+title = "Stereo"
+setting = &"stereo"
+options = PackedStringArray("Mono", "Side by side", "Over under")
+
+[node name="SwapEyes" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/LayoutGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Swap eyes"
+setting = &"swap_eyes"
+
+[node name="Fov" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/LayoutGroup/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+script = ExtResource("2")
+title = "Fisheye field of view"
+setting = &"fisheye_fov"
+min_value = 120.0
+max_value = 250.0
+step = 5.0
+suffix = "°"
+
+[node name="AlphaMask" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/LayoutGroup/Rows"]
+layout_mode = 2
+script = ExtResource("3")
+title = "Alpha mask"
+setting = &"alpha_mask"
+options = PackedStringArray("None", "DeoVR corners", "Below picture")
+
+[node name="PhotoTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format"]
+layout_mode = 2
+theme_type_variation = &"SectionTitle"
+text = "360° PHOTOS"
+
+[node name="PhotoGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format"]
+layout_mode = 2
+theme_type_variation = &"Group"
+
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/PhotoGroup"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="PanoramaSource" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/PhotoGroup/Rows"]
+layout_mode = 2
+script = ExtResource("3")
+title = "Load from"
+setting = &"panorama_source"
+options = PackedStringArray("Single 360 image", "Cube faces")
+
+[node name="FormatHint" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Hint"
+text = "Auto-detect reads the format from the filename and the alpha mask from the picture. A format you pick by hand is remembered for that video. Load from switches a 360° photo only when the folder has both one image and six cube faces."
+autowrap_mode = 3
+
+[node name="Picture" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="ScreenSection" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="ScreenTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ScreenSection"]
+layout_mode = 2
+theme_type_variation = &"SectionTitle"
+text = "FLAT SCREEN"
+
+[node name="ScreenGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ScreenSection"]
+layout_mode = 2
+theme_type_variation = &"Group"
+
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ScreenSection/ScreenGroup"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Size" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ScreenSection/ScreenGroup/Rows"]
+layout_mode = 2
+script = ExtResource("7")
+title = "Size"
+setting = &"screen_size"
+min_value = 20.0
+max_value = 140.0
+step = 5.0
+suffix = "°"
+
+[node name="Curve" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ScreenSection/ScreenGroup/Rows"]
+layout_mode = 2
+script = ExtResource("2")
+title = "Curve"
+setting = &"screen_curve"
+min_value = 0.0
+max_value = 1.0
+step = 0.05
+fast_step = 0.25
+display_scale = 100.0
+suffix = "%"
+
+[node name="ColourTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture"]
+layout_mode = 2
+theme_type_variation = &"SectionTitle"
+text = "COLOUR"
+
+[node name="ColourGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture"]
+layout_mode = 2
+theme_type_variation = &"Group"
+
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ColourGroup"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Brightness" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ColourGroup/Rows"]
+layout_mode = 2
+script = ExtResource("2")
+title = "Brightness"
+setting = &"brightness"
+min_value = 0.2
+max_value = 2.0
+step = 0.05
+display_scale = 100.0
+suffix = "%"
+
+[node name="Gamma" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ColourGroup/Rows"]
+layout_mode = 2
+script = ExtResource("2")
+title = "Gamma (higher = brighter)"
+setting = &"gamma"
+min_value = 0.4
+max_value = 2.2
+step = 0.1
+decimals = 1
+
+[node name="Saturation" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ColourGroup/Rows"]
+layout_mode = 2
+script = ExtResource("2")
+title = "Saturation"
+setting = &"saturation"
+min_value = 0.0
+max_value = 2.0
+step = 0.05
+display_scale = 100.0
+suffix = "%"
+
+[node name="Sharpness" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ColourGroup/Rows"]
+layout_mode = 2
+script = ExtResource("3")
+title = "Sharpness"
+setting = &"sharpness_level"
+options = PackedStringArray("Off", "Low", "Med", "High", "Extra", "Max")
+
+[node name="QualityTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture"]
+layout_mode = 2
+theme_type_variation = &"SectionTitle"
+text = "EDGES & PHOTOS"
+
+[node name="QualityGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture"]
+layout_mode = 2
+theme_type_variation = &"Group"
+
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/QualityGroup"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="EdgeFade" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/QualityGroup/Rows"]
+layout_mode = 2
+script = ExtResource("2")
+title = "Edge fade"
+setting = &"edge_fade"
+min_value = 0.0
+max_value = 0.4
+step = 0.01
+fast_step = 0.05
+display_scale = 100.0
+suffix = "%"
+
+[node name="PhotoSupersampling" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/QualityGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Photo supersampling"
+setting = &"photo_supersampling"
+
+[node name="PictureFooter" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="PictureHint" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/PictureFooter"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"Hint"
+text = "Size is the angle the flat screen fills, so it looks the same at any distance. Curve bends it around you like a cinema screen."
+autowrap_mode = 3
+
+[node name="ResetPicture" type="Button" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/PictureFooter"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(0, 58)
+size_flags_vertical = 0
+focus_mode = 0
+text = "Reset"
+
+[node name="Angles" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="OrientationTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles"]
+layout_mode = 2
+theme_type_variation = &"SectionTitle"
+text = "ORIENTATION"
+
+[node name="OrientationGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles"]
+layout_mode = 2
+theme_type_variation = &"Group"
+
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/OrientationGroup"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Yaw" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
+layout_mode = 2
+script = ExtResource("2")
+title = "Yaw (left / right)"
+setting = &"angle_yaw"
+resettable = true
+min_value = -180.0
+max_value = 180.0
+step = 1.0
+fast_step = 5.0
+suffix = "°"
+
+[node name="Pitch" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
+layout_mode = 2
+script = ExtResource("2")
+title = "Pitch (up / down)"
+setting = &"angle_pitch"
+resettable = true
+min_value = -90.0
+max_value = 90.0
+step = 1.0
+fast_step = 5.0
+suffix = "°"
+
+[node name="Roll" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
+layout_mode = 2
+script = ExtResource("2")
+title = "Roll (tilt)"
+setting = &"angle_roll"
+resettable = true
+min_value = -180.0
+max_value = 180.0
+step = 1.0
+fast_step = 5.0
+suffix = "°"
+
+[node name="LockHorizon" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Lock horizon (no roll, even with grip + trigger)"
+setting = &"lock_horizon"
+
+[node name="FollowPosture" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Lying down: recenter to where you look"
+setting = &"follow_posture"
+
+[node name="LookGain" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
+layout_mode = 2
+script = ExtResource("2")
+title = "Look-around boost (180 / 360)"
+setting = &"look_gain"
+resettable = true
+min_value = 1.0
+max_value = 2.5
+step = 0.25
+decimals = 2
+suffix = "×"
+
+[node name="AnglesFooter" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="AnglesHint" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/AnglesFooter"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"Hint"
+text = "Grip and move to drag the picture with the horizon locked. Add the trigger, then twist your wrist to tilt the horizon. Set Roll (tilt) here too. Near-level angles snap flat on release. Grip while pointing at this menu moves the menu. In bed, hold B / Y while looking where you want the picture."
+autowrap_mode = 3
+
+[node name="ResetAngles" type="Button" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/AnglesFooter"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(0, 58)
+size_flags_vertical = 0
+focus_mode = 0
+text = "Reset"
+
+[node name="Passthrough" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="BackgroundTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough"]
+layout_mode = 2
+theme_type_variation = &"SectionTitle"
+text = "BACKGROUND"
+
+[node name="BackgroundGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough"]
+layout_mode = 2
+theme_type_variation = &"Group"
+
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Background" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows"]
+layout_mode = 2
+script = ExtResource("3")
+title = "Behind the video"
+setting = &"background"
+options = PackedStringArray("Chroma key", "Passthrough", "Black", "Cinema")
+
+[node name="KeyRow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(0, 60)
+theme_override_constants/separation = 12
+
+[node name="KeyLabel" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows/KeyRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Key colour"
+
+[node name="ColorSwatch" type="Panel" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows/KeyRow"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(96, 56)
+size_flags_vertical = 4
+
+[node name="PickButton" type="Button" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows/KeyRow"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(0, 56)
+focus_mode = 0
+text = "Pick from video"
+
+[node name="TuneRow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="KeyHue" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows/TuneRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("2")
+title = "Hue"
+compact = true
+min_value = 0.0
+max_value = 359.0
+step = 1.0
+fast_step = 10.0
+suffix = "°"
+
+[node name="KeyShade" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows/TuneRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("2")
+title = "Shade"
+compact = true
+min_value = 0.0
+max_value = 100.0
+step = 1.0
+fast_step = 5.0
+suffix = "%"
+
+[node name="CutTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"SectionTitle"
+text = "CUT OUT A COLOUR"
+
+[node name="CutGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Group"
+
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/CutGroup"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Cut" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/CutGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Cut key colour out of the video"
+setting = &"cut_enabled"
+
+[node name="CutInvert" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/CutGroup/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+script = ExtResource("4")
+title = "Invert cut"
+setting = &"cut_invert"
+
+[node name="CutSimilarity" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/CutGroup/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+script = ExtResource("2")
+title = "Tolerance"
+setting = &"cut_similarity"
+min_value = 0.0
+max_value = 1.0
+step = 0.01
+fast_step = 0.05
+display_scale = 100.0
+suffix = "%"
+
+[node name="CutFeather" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/CutGroup/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+script = ExtResource("2")
+title = "Feather"
+setting = &"cut_feather"
+min_value = 0.0
+max_value = 0.5
+step = 0.01
+fast_step = 0.05
+display_scale = 100.0
+suffix = "%"
+
+[node name="MaskSection" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="MaskTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/MaskSection"]
+layout_mode = 2
+theme_type_variation = &"SectionTitle"
+text = "ALPHA MASK"
+
+[node name="MaskGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/MaskSection"]
+layout_mode = 2
+theme_type_variation = &"Group"
+
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/MaskSection/MaskGroup"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="MaskThreshold" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/MaskSection/MaskGroup/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+script = ExtResource("2")
+title = "Threshold"
+setting = &"mask_threshold"
+min_value = 0.2
+max_value = 0.9
+step = 0.05
+display_scale = 100.0
+suffix = "%"
+
+[node name="MaskDarken" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/MaskSection/MaskGroup/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+script = ExtResource("2")
+title = "Edge darkening (0 = off)"
+setting = &"mask_darken"
+min_value = 0.0
+max_value = 4.0
+step = 0.25
+decimals = 2
+
+[node name="MaskTrim" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/MaskSection/MaskGroup/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+script = ExtResource("2")
+title = "Edge trim"
+setting = &"mask_trim"
+min_value = 0.0
+max_value = 4.0
+step = 0.5
+decimals = 1
+suffix = " px"
+
+[node name="System" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="PlaybackTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System"]
+layout_mode = 2
+theme_type_variation = &"SectionTitle"
+text = "PLAYBACK"
+
+[node name="PlaybackGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System"]
+layout_mode = 2
+theme_type_variation = &"Group"
+
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Decode" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+layout_mode = 2
+script = ExtResource("3")
+title = "Decoder"
+setting = &"decode_mode"
+options = PackedStringArray("Auto", "Hardware", "Software")
+
+[node name="PlaybackPriority" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+layout_mode = 2
+script = ExtResource("3")
+title = "Priority"
+setting = &"playback_priority"
+options = PackedStringArray("Smooth (may block)", "Sharp (may stutter)")
+
+[node name="EndAction" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+layout_mode = 2
+script = ExtResource("3")
+title = "When a video ends"
+setting = &"end_action"
+options = PackedStringArray("Stop", "Repeat", "Next file")
+
+[node name="Resume" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Resume where you left off"
+setting = &"resume_playback"
+
+[node name="SeekPreviews" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Show frames while seeking"
+setting = &"seek_previews"
+
+[node name="Shuffle" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Shuffle (next picks an unseen file)"
+setting = &"shuffle"
+
+[node name="MatchRefresh" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Match headset refresh rate to video"
+setting = &"match_refresh_rate"
+
+[node name="MenuTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System"]
+layout_mode = 2
+theme_type_variation = &"SectionTitle"
+text = "MENU"
+
+[node name="MenuGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System"]
+layout_mode = 2
+theme_type_variation = &"Group"
+
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="HideMenu" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Hide menu when a video starts"
+setting = &"hide_menu_on_play"
+
+[node name="MenuTranslucent" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "See-through menu"
+setting = &"menu_translucent"
+
+[node name="DimBehindMenu" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Dim the video while the menu is open"
+setting = &"dim_behind_menu"
+
+[node name="MenuFollow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Menu glides back when you look away"
+setting = &"menu_follow"
+
+[node name="VideoFollow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Screen recenters when you look away"
+setting = &"video_follow"
+
+[node name="HoverHaptics" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Buzz when pointing at a button"
+setting = &"hover_haptics"
+
+[node name="ShowClock" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Show clock on library page"
+setting = &"show_clock"
+
+[node name="HoverHapticsHint" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Hint"
+text = "Vibration only works on controllers that support it."
+autowrap_mode = 3
+
+[node name="FaceOnOpen" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Recenter when opening media"
+setting = &"face_on_open"
+
+[node name="PauseWhenRemoved" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+layout_mode = 2
+script = ExtResource("4")
+title = "Pause when headset presence is reported"
+setting = &"pause_when_removed"
+
+[node name="PauseWhenRemovedHint" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+layout_mode = 2
+theme_type_variation = &"Hint"
+text = "Stops the video and the sound when the headset says it was taken off. A black picture while the sound keeps playing is not this switch."
+autowrap_mode = 3
+
+[node name="InfoTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System"]
+layout_mode = 2
+theme_type_variation = &"SectionTitle"
+text = "DIAGNOSTICS"
+
+[node name="InfoGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System"]
+layout_mode = 2
+theme_type_variation = &"Group"
+
+[node name="InfoLabel" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/InfoGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Caption"
+autowrap_mode = 3
+
+[node name="Controls" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="HandsTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls"]
+layout_mode = 2
+theme_type_variation = &"SectionTitle"
+text = "CONTROLLER"
+
+[node name="HandsGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls"]
+layout_mode = 2
+theme_type_variation = &"Group"
+
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls/HandsGroup"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="DragSensitivity" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls/HandsGroup/Rows"]
+layout_mode = 2
+script = ExtResource("2")
+title = "Drag speed (1.0× follows your hand)"
+setting = &"drag_speed"
+min_value = 0.25
+max_value = 2.0
+step = 0.25
+decimals = 2
+suffix = "×"
+resettable = true
+
+[node name="GripAction" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls/HandsGroup/Rows"]
+layout_mode = 2
+script = ExtResource("6")
+title = "Grip + stick ▲ ▼"
+setting = &"grip_action"
+options = PackedStringArray("Screen size", "Brightness", "Gamma", "Saturation", "Sharpness", "Volume", "Cycle 2D formats", "Cycle 3D formats", "Cycle all formats", "Subtitle track", "Audio track", "Screen curve", "3D depth", "Zoom", "Playback speed", "Chapter / bookmark")
+
+[node name="TriggerAction" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls/HandsGroup/Rows"]
+layout_mode = 2
+script = ExtResource("6")
+title = "Trigger + stick ▲ ▼"
+setting = &"trigger_action"
+options = PackedStringArray("Screen size", "Brightness", "Gamma", "Saturation", "Sharpness", "Volume", "Cycle 2D formats", "Cycle 3D formats", "Cycle all formats", "Subtitle track", "Audio track", "Screen curve", "3D depth", "Zoom", "Playback speed", "Chapter / bookmark")
+
+[node name="ChordAction" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls/HandsGroup/Rows"]
+layout_mode = 2
+script = ExtResource("6")
+title = "Grip + trigger + stick ▲ ▼"
+setting = &"chord_action"
+options = PackedStringArray("Screen size", "Brightness", "Gamma", "Saturation", "Sharpness", "Volume", "Cycle 2D formats", "Cycle 3D formats", "Cycle all formats", "Subtitle track", "Audio track", "Screen curve", "3D depth", "Zoom", "Playback speed", "Chapter / bookmark")
+
+[node name="CheatTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls"]
+layout_mode = 2
+theme_type_variation = &"SectionTitle"
+text = "CHEAT SHEET"
+
+[node name="CheatGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls"]
+layout_mode = 2
+theme_type_variation = &"Group"
+
+[node name="CheatSheet" type="GridContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls/CheatGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/h_separation = 20
+theme_override_constants/v_separation = 10
+columns = 2
+
+[node name="PlayerBar" type="PanelContainer" parent="Sheet/Margin/Layout"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"PlayerBar"
+
+[node name="BarRows" type="VBoxContainer" parent="Sheet/Margin/Layout/PlayerBar"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="NowRow" type="HBoxContainer" parent="Sheet/Margin/Layout/PlayerBar/BarRows"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="NowThumb" type="TextureRect" parent="Sheet/Margin/Layout/PlayerBar/BarRows/NowRow"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(96, 54)
+expand_mode = 1
+
+[node name="NowText" type="VBoxContainer" parent="Sheet/Margin/Layout/PlayerBar/BarRows/NowRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 0
+alignment = 1
+
+[node name="NowTitle" type="Label" parent="Sheet/Margin/Layout/PlayerBar/BarRows/NowRow/NowText"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Nothing playing"
+clip_text = true
+text_overrun_behavior = 3
+
+[node name="StatsLabel" type="Label" parent="Sheet/Margin/Layout/PlayerBar/BarRows/NowRow/NowText"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Caption"
+theme_override_font_sizes/font_size = 18
+clip_text = true
+text_overrun_behavior = 3
+
+[node name="FormatBadge" type="PanelContainer" parent="Sheet/Margin/Layout/PlayerBar/BarRows/NowRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 4
+theme_type_variation = &"AccentBadge"
+
+[node name="FormatLabel" type="Label" parent="Sheet/Margin/Layout/PlayerBar/BarRows/NowRow/FormatBadge"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"AccentBadgeLabel"
+theme_override_font_sizes/font_size = 20
+
+[node name="SeekRow" type="HBoxContainer" parent="Sheet/Margin/Layout/PlayerBar/BarRows"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="ElapsedLabel" type="Label" parent="Sheet/Margin/Layout/PlayerBar/BarRows/SeekRow"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(104, 0)
+theme_override_font_sizes/font_size = 22
+text = "0:00"
+horizontal_alignment = 2
+
+[node name="SeekSlider" type="HSlider" parent="Sheet/Margin/Layout/PlayerBar/BarRows/SeekRow"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(0, 40)
+size_flags_horizontal = 3
+size_flags_vertical = 4
+focus_mode = 0
+step = 0.1
+scrollable = false
+
+[node name="TotalLabel" type="Label" parent="Sheet/Margin/Layout/PlayerBar/BarRows/SeekRow"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(104, 0)
+theme_type_variation = &"Caption"
+theme_override_font_sizes/font_size = 22
+text = "0:00"
+
+[node name="EndTimeLabel" type="Label" parent="Sheet/Margin/Layout/PlayerBar/BarRows/SeekRow"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(132, 0)
+theme_type_variation = &"Caption"
+theme_override_font_sizes/font_size = 22
+text = "end 22:32"
+horizontal_alignment = 2
+visible = false
+
+[node name="ControlRow" type="HBoxContainer" parent="Sheet/Margin/Layout/PlayerBar/BarRows"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="LeftGroup" type="HBoxContainer" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="FavoriteGroup" type="HBoxContainer" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/LeftGroup"]
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="FavoriteButton" type="Button" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/LeftGroup/FavoriteGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(60, 60)
+size_flags_vertical = 4
+focus_mode = 0
+theme_type_variation = &"FlatIcon"
+toggle_mode = true
+icon_alignment = 1
+
+[node name="ShuffleButton" type="Button" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/LeftGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(60, 60)
+size_flags_vertical = 4
+focus_mode = 0
+theme_type_variation = &"FlatIcon"
+toggle_mode = true
+icon_alignment = 1
+
+[node name="EndButton" type="Button" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/LeftGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(60, 60)
+size_flags_vertical = 4
+focus_mode = 0
+theme_type_variation = &"FlatIcon"
+toggle_mode = true
+icon_alignment = 1
+
+[node name="EndLabel" type="Label" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/LeftGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Caption"
+
+[node name="CenterGroup" type="HBoxContainer" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="PrevButton" type="Button" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/CenterGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(64, 60)
+size_flags_vertical = 4
+focus_mode = 0
+theme_type_variation = &"IconButton"
+icon_alignment = 1
+
+[node name="BackButton" type="Button" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/CenterGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(64, 60)
+size_flags_vertical = 4
+focus_mode = 0
+theme_type_variation = &"IconButton"
+icon_alignment = 1
+
+[node name="PlayButton" type="Button" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/CenterGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(76, 76)
+focus_mode = 0
+theme_type_variation = &"PlayButton"
+icon_alignment = 1
+
+[node name="ForwardButton" type="Button" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/CenterGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(64, 60)
+size_flags_vertical = 4
+focus_mode = 0
+theme_type_variation = &"IconButton"
+icon_alignment = 1
+
+[node name="NextButton" type="Button" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/CenterGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(64, 60)
+size_flags_vertical = 4
+focus_mode = 0
+theme_type_variation = &"IconButton"
+icon_alignment = 1
+
+[node name="RightGroup" type="HBoxContainer" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 10
+alignment = 2
+
+[node name="TuneButton" type="Button" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/RightGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(60, 60)
+size_flags_vertical = 4
+focus_mode = 0
+theme_type_variation = &"FlatIcon"
+icon_alignment = 1
+
+[node name="SubtitleButton" type="Button" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/RightGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(60, 60)
+size_flags_vertical = 4
+focus_mode = 0
+theme_type_variation = &"FlatIcon"
+icon_alignment = 1
+
+[node name="MuteButton" type="Button" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/RightGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(60, 60)
+size_flags_vertical = 4
+focus_mode = 0
+theme_type_variation = &"FlatIcon"
+toggle_mode = true
+icon_alignment = 1
+
+[node name="VolumeSlider" type="HSlider" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/RightGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(170, 40)
+size_flags_vertical = 4
+focus_mode = 0
+step = 5.0
+value = 100.0
+scrollable = false
+
+[node name="VolumeLabel" type="Label" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/RightGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(66, 0)
+theme_type_variation = &"Caption"
+text = "100%"
+
+[node name="SeekBubble" type="PanelContainer" parent="."]
+unique_name_in_owner = true
+top_level = true
+visible = false
+layout_mode = 0
+mouse_filter = 2
+theme_type_variation = &"Bubble"
+
+[node name="BubbleLabel" type="Label" parent="SeekBubble"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+horizontal_alignment = 1
+
+[node name="Reticle" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+script = ExtResource("5")

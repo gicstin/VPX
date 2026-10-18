@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=VPX
+GenericName=VR Video Player
+Comment=Video Player XR
+Exec=vpx
+Icon=vpx
+Terminal=false
+Categories=AudioVideo;Video;Player;
