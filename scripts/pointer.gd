@@ -65,7 +65,11 @@ var ax_clicking := false
 var stick_clicked := false
 var stick_click_time := 0.0
 var stick_tap_allowed := false
-var active := true
+var active := true:
+	set(value):
+		if active and not value:
+			_cancel_click()
+		active = value
 var hovered: Control
 var aim := Quaternion.IDENTITY
 var aim_raw := Quaternion.IDENTITY
@@ -79,6 +83,8 @@ var seek_bar: VRSeekBar
 var extra_panels: Array[FloatPanel] = []
 var hit_panel: Node3D
 var target_viewport: SubViewport
+var pressed_viewport: SubViewport
+var pressed_panel: Node3D
 
 
 func _ready() -> void:
@@ -149,6 +155,8 @@ func _lock_click() -> void:
 
 
 func _process(delta: float) -> void:
+	if is_instance_valid(pressed_viewport) and (not active or not get_is_active() or (is_instance_valid(pressed_panel) and not pressed_panel.visible)):
+		_cancel_click()
 	_update_aim()
 	_update_stick(delta)
 	_update_recenter_hold(delta)
@@ -205,6 +213,8 @@ func pointing_at_panel() -> bool:
 
 
 func _panel_hit() -> Dictionary:
+	if is_instance_valid(pressed_viewport) and is_instance_valid(pressed_panel):
+		return _surface_hit(pressed_panel, pressed_viewport, true)
 	var best := _surface_hit(panel, viewport) if panel.visible and ray.is_colliding() else _miss()
 	for extra in extra_panels:
 		if not extra.interactive():
@@ -215,7 +225,7 @@ func _panel_hit() -> Dictionary:
 	return best
 
 
-func _surface_hit(surface: Node3D, surface_viewport: SubViewport) -> Dictionary:
+func _surface_hit(surface: Node3D, surface_viewport: SubViewport, captured := false) -> Dictionary:
 	var origin := surface.to_local(ray.global_transform.origin)
 	var tip := surface.to_local(ray.to_global(ray.target_position))
 	var direction := tip - origin
@@ -227,7 +237,7 @@ func _surface_hit(surface: Node3D, surface_viewport: SubViewport) -> Dictionary:
 	var local := origin + direction * t
 	var size: Vector2 = surface.panel_size
 	var uv := Vector2((local.x + size.x * 0.5) / size.x, (size.y * 0.5 - local.y) / size.y)
-	if uv.x < 0.0 or uv.x > 1.0 or uv.y < 0.0 or uv.y > 1.0:
+	if not captured and (uv.x < 0.0 or uv.x > 1.0 or uv.y < 0.0 or uv.y > 1.0):
 		return _miss()
 	var point := surface.to_global(local)
 	return {"uv": uv, "point": point, "panel": surface, "viewport": surface_viewport, "distance": global_position.distance_to(point)}
@@ -238,7 +248,7 @@ func _miss() -> Dictionary:
 
 
 func _retarget(hit: Dictionary) -> void:
-	var next: SubViewport = hit.viewport if hit.viewport != null else viewport
+	var next: SubViewport = pressed_viewport if is_instance_valid(pressed_viewport) else (hit.viewport if hit.viewport != null else viewport)
 	hit_panel = hit.panel
 	if next == target_viewport:
 		return
@@ -268,17 +278,43 @@ func _push_motion(uv: Vector2) -> void:
 
 
 func _push_button(uv: Vector2, is_pressed: bool) -> void:
-	if uv == Vector2(-1, -1):
+	if is_pressed and (uv == Vector2(-1, -1) or is_instance_valid(pressed_viewport)):
 		return
+	if not is_pressed and not is_instance_valid(pressed_viewport):
+		return
+	if not is_pressed and (trigger_held or ax_clicking):
+		return
+	var destination := target_viewport if is_pressed else pressed_viewport
 	var event := InputEventMouseButton.new()
-	event.position = _mouse_pos(uv)
+	var canvas := destination.size_2d_override if destination.size_2d_override != Vector2i.ZERO else destination.size
+	event.position = Vector2(-1, -1) if uv == Vector2(-1, -1) else uv * Vector2(canvas)
 	event.global_position = event.position
 	event.button_index = MOUSE_BUTTON_LEFT
 	event.pressed = is_pressed
 	event.button_mask = MOUSE_BUTTON_MASK_LEFT if is_pressed else 0
-	if PopupDismiss.outside_press(target_viewport, event):
+	if PopupDismiss.outside_press(destination, event):
 		return
-	target_viewport.push_input(event, true)
+	if is_pressed:
+		pressed_viewport = destination
+		pressed_panel = hit_panel
+	else:
+		pressed_viewport = null
+		pressed_panel = null
+	destination.push_input(event, true)
+
+
+func _cancel_click() -> void:
+	var was_trigger_held := trigger_held
+	trigger_held = false
+	ax_clicking = false
+	_push_button(Vector2(-1, -1), false)
+	_release_click()
+	if was_trigger_held:
+		trigger_held_changed.emit(false)
+
+
+func _exit_tree() -> void:
+	_cancel_click()
 
 
 func _push_scroll(up: bool, factor: float = 3.0) -> void:

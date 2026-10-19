@@ -53,7 +53,7 @@ float spread_for(int style) {
 }
 
 bool starry(int style) {
-	return style == 3 || style == 5 || style == 6 || style == 7 || style == 12 || style == 17;
+	return style == 3 || style == 5 || style == 6 || style == 7 || style == 12 || style == 17 || style == 42 || style == 45;
 }
 
 void vertex() {
@@ -99,6 +99,26 @@ void fragment() {
 	} else if (stereo_style == 18) {
 		float flash = exp(-beat_age * 7.0);
 		sky += vec3(0.25, 0.3, 0.6) * flash * 0.06 * smoothstep(-0.2, 0.6, d.y);
+	}
+	if (stereo_style >= 42 && stereo_style <= 45) {
+		vec4 f = field_now(sin(az) * 0.5 + 0.5);
+		float e = 1.0 - exp(-f.x * sensitivity * 0.45);
+		float haze = exp(-abs(d.y - 0.12) * 4.0);
+		if (stereo_style == 42) {
+			float cloud = pow(0.5 + 0.5 * sin(az * 3.0 + d.y * 11.0 + sin(az * 7.0) + clock * 0.025), 3.0);
+			sky += mix(vec3(0.045, 0.015, 0.11), vec3(0.01, 0.08, 0.14), d.y * 0.5 + 0.5) * haze * cloud * (0.2 + e);
+		} else if (stereo_style == 43) {
+			float shafts = pow(0.5 + 0.5 * sin(az * 19.0 + sin(az * 7.0) + clock * 0.035), 12.0);
+			sky += vec3(0.008, 0.065, 0.085) * smoothstep(-0.6, 0.9, d.y) * (0.3 + shafts * 0.7) * (0.3 + mids);
+			sky += vec3(0.015, 0.09, 0.065) * exp(-abs(d.y + 0.35) * 7.0) * e * 0.4;
+		} else if (stereo_style == 44) {
+			float rays = pow(0.5 + 0.5 * cos(atan(d.y - 0.08, d.x) * 8.0), 10.0);
+			sky += mix(vec3(0.025, 0.035, 0.11), vec3(0.09, 0.025, 0.065), d.x * 0.5 + 0.5) * pow(max(0.0, -d.z), 3.0) * (0.2 + rays * 0.5) * (0.3 + mids);
+		} else {
+			float halo = exp(-length(vec2(az, d.y - 0.06)) * 3.0);
+			sky += vec3(0.16, 0.025, 0.008) * halo * (0.18 + bass * 0.5);
+			sky += vec3(0.07, 0.01, 0.045) * haze * e * 0.4;
+		}
 	}
 	sky += vec3(0.03, 0.01, 0.04) * exp(-abs(d.y + 0.05) * 6.0) * bass * 0.5;
 	ALBEDO = (base + sky * intensity) * dim;

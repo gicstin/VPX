@@ -40,7 +40,8 @@ func mark_played(path: String) -> void:
 
 
 func mark_folder_visited(path: String) -> void:
-	if DirAccess.dir_exists_absolute(path):
+	if not path.is_empty():
+		set_pref(path, "is_directory", true)
 		set_pref(path, "folder_visited", Time.get_unix_time_from_system())
 
 
@@ -59,8 +60,7 @@ func recent_paths(limit: int) -> PackedStringArray:
 	for entry in played:
 		if paths.size() >= limit:
 			break
-		if FileAccess.file_exists(entry[1]) or entry[1].contains("://"):
-			paths.append(entry[1])
+		paths.append(entry[1])
 	return paths
 
 
@@ -68,7 +68,7 @@ func recent_folders(limit: int) -> PackedStringArray:
 	var visited: Array = []
 	for path: String in entries:
 		var stamp: Variant = entries[path].get("folder_visited")
-		if stamp != null and DirAccess.dir_exists_absolute(path):
+		if stamp != null:
 			visited.append([float(stamp), path])
 	visited.sort_custom(func(a: Array, b: Array) -> bool: return a[0] > b[0])
 	var paths := PackedStringArray()

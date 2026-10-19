@@ -195,7 +195,7 @@ func refresh() -> void:
 
 func _cycle_style(direction: int) -> void:
 	if player.is_immersive_visualizer_active():
-		Settings.apply("visualizer_preset", posmod(Settings.visualizer_preset + direction, Settings.VISUALIZER_PRESETS.size()))
+		Settings.cycle_visualizer_preset(direction)
 		refresh()
 
 

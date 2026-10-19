@@ -6,6 +6,9 @@ var field: Node
 var captures := "/tmp/vpx-studio-captures"
 
 func _initialize() -> void:
+	if not preload("res://packaging/checks/isolated_data.gd").verify():
+		quit(2)
+		return
 	run.call_deferred()
 
 func check(ok: bool, label: String) -> void:
@@ -56,8 +59,12 @@ func run() -> void:
 	settings.set_process(false)
 	settings.visualizer_auto_change = false
 	settings.visualizer_quality = 2
+	settings.visualizer_motion = 0.6
+	settings.visualizer_intensity = 0.75
 	check(settings.VISUALIZER_PRESET_MAX == settings.VISUALIZER_PRESETS.size() - 1, "preset bounds match catalog")
 	check(settings.VISUALIZER_PRESETS.size() - settings.VISUALIZER_STUDIO_START == settings.VISUALIZER_STUDIO_GUIDES.size(), "each studio scene has an axis guide")
+	var previews := load("res://assets/visualizer_previews.png") as Texture2D
+	check(previews.get_width() == 1280 and previews.get_height() == ceili(settings.VISUALIZER_PRESETS.size() / 8.0) * 90, "picker atlas covers every scene")
 	var camera := Camera3D.new()
 	camera.fov = 85
 	root.add_child(camera)
@@ -75,7 +82,13 @@ func run() -> void:
 		for quality in 3:
 			field.quality = quality
 			field._apply_quality()
-			check(field.layers[0].multimesh.visible_instance_count >= 96, title + " retains all frequency bands at quality " + str(quality))
+			if index < field.PSYCHE_START:
+				check(field.layers[0].multimesh.visible_instance_count >= 96, title + " retains all frequency bands at quality " + str(quality))
+			else:
+				var valid := true
+				for layer in field.layers:
+					valid = valid and layer.multimesh.visible_instance_count >= 0 and layer.multimesh.visible_instance_count <= layer.multimesh.instance_count
+				check(valid and field.layers[0].multimesh.visible_instance_count > 0, title + " retains valid geometry at quality " + str(quality))
 		field.reset()
 		field._process(1.0)
 		var silent := await capture()
@@ -94,6 +107,35 @@ func run() -> void:
 			var ring = field.stereo.correlation_ring
 			check(ring.head >= 0 and ring.image.get_pixel(0, ring.head).r < -0.95, "correlation history preserves negative phase")
 			check(field.materials[0].get_shader_parameter("correlation_texture") == ring.texture, "correlation history reaches causeway shader")
+		if index >= 64:
+			for quality in 3:
+				field.quality = quality
+				field._apply_quality()
+				var quality_frame := await capture()
+				check(difference(quality_frame, silent) > 0.003, title + " renders reactive geometry at quality " + str(quality))
+			settings.visualizer_motion = 0.0
+			field._process(0.0)
+			for material in field.materials:
+				material.set_shader_parameter("palette", 0.0)
+			var frozen := await capture()
+			field.clock += 10.0
+			field._process(0.0)
+			for material in field.materials:
+				material.set_shader_parameter("palette", 0.0)
+			var later := await capture()
+			check(difference(frozen, later) < 0.0001, title + " freezes ambient movement at zero motion")
+			settings.visualizer_motion = 0.6
+			settings.visualizer_intensity = 0.0
+			field._process(0.0)
+			var dark := await capture()
+			check(difference(second, dark) > 0.003, title + " respects intensity control")
+			settings.visualizer_intensity = 0.75
+			field._process(0.0)
+			for turn in 3:
+				camera.rotation.y = (turn + 1) * PI * 0.5
+				var side := await capture()
+				side.save_png(captures.path_join("%02d-view-%d.png" % [index, turn + 1]))
+			camera.rotation.y = 0.0
 		if previous != null:
 			check(difference(first, previous) > 0.01, title + " has distinct geometry")
 		previous = first

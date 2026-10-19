@@ -5,6 +5,8 @@ signal cover_found(path: String, cover: Dictionary)
 
 enum Sort { NAME, DATE, SIZE }
 
+const BackgroundTask := preload("res://scripts/background_task.gd")
+const SCAN_TIMEOUT := 15.0
 const PanoramaFiles := preload("res://scripts/panorama_files.gd")
 const Shuffle := preload("res://scripts/shuffle.gd")
 const RESOLVE_SETS_LIMIT := 400
@@ -16,17 +18,12 @@ const EMIT_SORT_FACTOR := 3
 const COVER_BACKLOG := 256
 
 var extensions: Array = []
-var list_thread := Thread.new()
-var aux_thread := Thread.new()
 var mutex := Mutex.new()
-var list_semaphore := Semaphore.new()
-var aux_semaphore := Semaphore.new()
-var listing_request := {}
-var playlist_request := {}
 var cover_requests: Array[String] = []
 var results: Array[Dictionary] = []
-var latest := {"listing": 0, "playlist": 0}
-var quitting := false
+var latest := {"listing": 0, "playlist": 0, "cover": 0}
+var jobs := {}
+var token: RefCounted
 var scanning := false
 
 
@@ -34,20 +31,9 @@ func _init(p_extensions: Array = []) -> void:
 	extensions = p_extensions
 
 
-func _ready() -> void:
-	list_thread.start(_list_loop)
-	aux_thread.start(_aux_loop)
-
-
 func _exit_tree() -> void:
-	mutex.lock()
-	quitting = true
-	mutex.unlock()
-	list_semaphore.post()
-	aux_semaphore.post()
-	for thread in [list_thread, aux_thread]:
-		if thread.is_started():
-			thread.wait_to_finish()
+	for lane: String in jobs.keys():
+		_cancel_lane(lane)
 
 
 func folder(path: String, sort: int, fallbacks: PackedStringArray, filter := {}, recursive := false, words := PackedStringArray()) -> int:
@@ -68,15 +54,7 @@ func prepare(files: PackedStringArray, current: String) -> int:
 
 
 func _submit_playlist(request: Dictionary) -> int:
-	mutex.lock()
-	latest["playlist"] += 1
-	request["serial"] = latest["playlist"]
-	request["lane"] = "playlist"
-	playlist_request = request
-	var serial: int = latest["playlist"]
-	mutex.unlock()
-	aux_semaphore.post()
-	return serial
+	return _submit(request, "playlist")
 
 
 static func index_of(files: PackedStringArray) -> Dictionary:
@@ -87,116 +65,116 @@ static func index_of(files: PackedStringArray) -> Dictionary:
 
 
 func cover(path: String) -> void:
-	mutex.lock()
 	cover_requests.erase(path)
 	cover_requests.append(path)
 	if cover_requests.size() > COVER_BACKLOG:
 		cover_requests.remove_at(0)
-	mutex.unlock()
-	aux_semaphore.post()
 
 
 func clear_covers() -> void:
-	mutex.lock()
 	cover_requests.clear()
-	mutex.unlock()
+	_cancel_lane("cover")
 
 
 func cancel() -> void:
-	mutex.lock()
-	latest["listing"] += 1
-	listing_request = {}
-	mutex.unlock()
+	_cancel_lane("listing")
+	scanning = false
+
+
+func _cancel_lane(lane: String) -> void:
+	latest[lane] += 1
+	var job: Node = jobs.get(lane)
+	if is_instance_valid(job):
+		job.cancel()
+	jobs.erase(lane)
 
 
 func _submit_listing(request: Dictionary) -> int:
-	mutex.lock()
-	latest["listing"] += 1
-	request["serial"] = latest["listing"]
-	request["lane"] = "listing"
-	listing_request = request
-	mutex.unlock()
-	list_semaphore.post()
-	return request["serial"]
+	scanning = true
+	return _submit(request, "listing")
+
+
+func _submit(request: Dictionary, lane: String) -> int:
+	_cancel_lane(lane)
+	request["serial"] = latest[lane]
+	request["lane"] = lane
+	var serial: int = latest[lane]
+	var job := _start_job(request)
+	jobs[lane] = job
+	job.completed.connect(func(result: Dictionary) -> void:
+		if serial != latest[lane]:
+			return
+		jobs.erase(lane)
+		if lane == "listing":
+			scanning = false
+			if not result.get("ok", false) and not result.get("cancelled", false):
+				finished.emit({"kind": request["kind"], "path": request["path"], "done": true, "error": true, "message": result.get("error", "This folder cannot be opened")})
+		elif lane == "cover" and not result.get("ok", false):
+			cover_found.emit(request["path"], {}))
+	return serial
+
+
+func _start_job(request: Dictionary) -> Node:
+	return BackgroundTask.start(_run_job.bind(request, extensions.duplicate(), mutex, results), SCAN_TIMEOUT)
+
+
+static func _run_job(p_token: RefCounted, request: Dictionary, p_extensions: Array, p_mutex: Mutex, p_results: Array[Dictionary]) -> Dictionary:
+	var worker = load("res://scripts/library_scanner.gd").new(p_extensions)
+	worker.token = p_token
+	worker.mutex = p_mutex
+	worker.results = p_results
+	worker.latest[request["lane"]] = request["serial"]
+	match request["lane"]:
+		"listing":
+			if request["kind"] == "folder":
+				worker._scan_folder(request)
+			else:
+				worker._scan_search(request)
+		"playlist":
+			var files: PackedStringArray = request["files"] if request["kind"] == "prepare" else worker._ordered_playlist(worker._scan_playlist(request), request)
+			if not p_token.is_cancelled():
+				var shuffle := Shuffle.new()
+				shuffle.sync(files, "")
+				worker._post({"serial": request["serial"], "lane": "playlist", "kind": "playlist", "path": request["path"], "files": files, "index": index_of(files), "shuffle": shuffle, "audio_only": request.get("audio_only", false)})
+		"cover":
+			worker._post({"serial": request["serial"], "lane": "cover", "path": request["path"], "cover": worker.folder_cover(request["path"])})
+	worker.free()
+	return {"ok": true}
 
 
 func _process(_delta: float) -> void:
 	mutex.lock()
 	var ready := results.duplicate()
 	results.clear()
-	var current := latest.duplicate()
 	mutex.unlock()
 	for result in ready:
+		if int(result["serial"]) != int(latest[result["lane"]]):
+			continue
 		if result["lane"] == "cover":
 			cover_found.emit(result["path"], result["cover"])
-		elif int(result["serial"]) == int(current[result["lane"]]):
+		else:
+			var job: Node = jobs.get(result["lane"])
+			if is_instance_valid(job) and result["lane"] == "listing":
+				job.deadline = Time.get_ticks_msec() + int(SCAN_TIMEOUT * 1000.0)
 			finished.emit(result)
+	if not jobs.has("cover") and not cover_requests.is_empty():
+		_submit({"kind": "cover", "path": cover_requests.pop_back()}, "cover")
 
 
 func _post(result: Dictionary) -> void:
+	if token != null and token.is_cancelled():
+		return
 	mutex.lock()
 	results.append(result)
 	mutex.unlock()
 
 
-func _list_loop() -> void:
-	while true:
-		list_semaphore.wait()
-		mutex.lock()
-		if quitting:
-			mutex.unlock()
-			return
-		var request := listing_request
-		listing_request = {}
-		scanning = not request.is_empty()
-		mutex.unlock()
-		if request.is_empty():
-			continue
-		if request["kind"] == "folder":
-			_scan_folder(request)
-		else:
-			_scan_search(request)
-		mutex.lock()
-		scanning = false
-		mutex.unlock()
-
-
-func _aux_loop() -> void:
-	while true:
-		aux_semaphore.wait()
-		mutex.lock()
-		if quitting:
-			mutex.unlock()
-			return
-		var request := playlist_request
-		playlist_request = {}
-		var cover_path: String = "" if not request.is_empty() or cover_requests.is_empty() else cover_requests.pop_back()
-		mutex.unlock()
-		if not request.is_empty():
-			var files: PackedStringArray = request["files"] if request["kind"] == "prepare" else _scan_playlist(request)
-			if request["kind"] != "prepare":
-				files = _ordered_playlist(files, request)
-			if _playlist_stale(request["serial"]):
-				continue
-			var shuffle := Shuffle.new()
-			shuffle.sync(files, "")
-			_post({"serial": request["serial"], "lane": "playlist", "kind": "playlist", "path": request["path"], "files": files, "index": index_of(files), "shuffle": shuffle, "audio_only": request.get("audio_only", false)})
-		elif not cover_path.is_empty():
-			_post({"lane": "cover", "path": cover_path, "cover": folder_cover(cover_path)})
-
-
 func _playlist_stale(serial: int) -> bool:
-	mutex.lock()
-	var stale: bool = quitting or serial != int(latest["playlist"])
-	mutex.unlock()
-	return stale
+	return (token != null and token.is_cancelled()) or serial != int(latest["playlist"])
 
 
 func _cancelled(serial: int) -> bool:
-	mutex.lock()
-	var stale: bool = quitting or serial != int(latest["listing"])
-	mutex.unlock()
-	return stale
+	return (token != null and token.is_cancelled()) or serial != int(latest["listing"])
 
 
 func is_media(name: String) -> bool:

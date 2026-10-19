@@ -229,19 +229,28 @@ static func _buttons(theme: Theme) -> void:
 	theme.set_font_size("font_size", "CompactOption", 23)
 
 
+static func _nav_style(color: Color) -> StyleBoxFlat:
+	var box := flat(color, 12, 17, 8)
+	box.content_margin_right = 7
+	box.expand_margin_left = -6
+	box.expand_margin_right = -6
+	return box
+
+
 static func _nav(theme: Theme) -> void:
 	theme.set_type_variation("NavItem", "Button")
-	theme.set_stylebox("normal", "NavItem", flat(TRANSPARENT, RADIUS, 18, 8))
-	theme.set_stylebox("hover", "NavItem", hover(RAISED, RADIUS, 18, 8))
-	var selected := flat(ACCENT_SOFT, RADIUS, 18, 8)
-	selected.border_color = ACCENT
-	selected.border_width_left = 3
-	theme.set_stylebox("pressed", "NavItem", selected)
-	theme.set_stylebox("hover_pressed", "NavItem", hover(ACCENT_SOFT, RADIUS, 18, 8))
+	theme.set_stylebox("normal", "NavItem", _nav_style(TRANSPARENT))
+	theme.set_stylebox("hover", "NavItem", _nav_style(RAISED))
+	theme.set_stylebox("pressed", "NavItem", _nav_style(ACCENT_SOFT))
+	var selected_hover := _nav_style(ACCENT_SOFT)
+	selected_hover.border_color = ACCENT_HOVER
+	selected_hover.set_border_width_all(1)
+	theme.set_stylebox("hover_pressed", "NavItem", selected_hover)
+	theme.set_stylebox("disabled", "NavItem", _nav_style(TRANSPARENT))
 	_button_colors(theme, "NavItem", MUTED, ACCENT_HOVER)
 	theme.set_color("font_hover_color", "NavItem", TEXT)
 	theme.set_color("icon_hover_color", "NavItem", TEXT)
-	theme.set_constant("h_separation", "NavItem", 16)
+	theme.set_constant("h_separation", "NavItem", 10)
 	theme.set_type_variation("Crumb", "Button")
 	theme.set_stylebox("normal", "Crumb", flat(TRANSPARENT, 10, 10, 6))
 	theme.set_stylebox("hover", "Crumb", hover(RAISED, 10, 10, 6))

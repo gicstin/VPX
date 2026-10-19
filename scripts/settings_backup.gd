@@ -4,7 +4,7 @@ const VERSION := 2
 const MAX_BYTES := 16777216
 const LIMITS := {
 	"ui_size": [0.8, 1.25], "text_size": [1, 1.5],
-	"music_visualizer_mode": [0, 2], "visualizer_preset": [0, Settings.VISUALIZER_PRESET_MAX], "visualizer_quality": [0, 3],
+	"music_visualizer_mode": [0, 2], "visualizer_preset": [0, Settings.VISUALIZER_PRESET_MAX], "visualizer_quality": [0, 3], "visualizer_grab_mode": [0, 2],
 	"visualizer_intensity": [0, 1.5], "visualizer_sensitivity": [0.5, 4], "visualizer_motion": [0, 1], "visualizer_sync": [-0.25, 0.25],
 	"projection": [0, 5], "stereo": [0, 2], "alpha_mask": [0, 2], "background": [0, 3],
 	"decode_mode": [0, 2], "end_action": [0, 2], "playback_priority": [0, 1], "panorama_source": [0, 1],
@@ -189,7 +189,7 @@ static func _valid_value(value: Variant, depth := 0) -> bool:
 			return value.length() <= 32768
 		TYPE_COLOR:
 			return is_finite(value.r) and is_finite(value.g) and is_finite(value.b) and is_finite(value.a)
-		TYPE_ARRAY:
+		TYPE_ARRAY, TYPE_PACKED_STRING_ARRAY:
 			if value.size() > 10000:
 				return false
 			for item: Variant in value:

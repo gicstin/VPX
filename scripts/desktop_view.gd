@@ -248,8 +248,11 @@ func _video_input(mouse: InputEventMouse) -> bool:
 			Settings.pan_photo(Vector2(-motion.relative.x / maxf(window.x, 1.0), -motion.relative.y / maxf(window.y, 1.0)))
 		elif dragged and not _is_flat():
 			var speed := LOOK_SPEED / maxf(screen.displayed_zoom, 1.0)
+			var previous := camera.global_basis.orthonormalized()
 			camera.rotate_y(-motion.relative.x * speed)
 			camera.rotate_object_local(Vector3.RIGHT, -motion.relative.y * speed)
+			if main.resonance_field != null and main.resonance_field.active and not main.music_grab_moves_scene():
+				main.resonance_field.rotate_scene(camera.global_basis.orthonormalized() * previous.inverse())
 		return true
 	_reveal_osd()
 	_update_seek_preview(mouse.position)

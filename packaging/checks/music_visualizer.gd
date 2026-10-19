@@ -7,6 +7,9 @@ class TestUI extends Control:
 		return false
 
 func _initialize() -> void:
+	if not preload("res://packaging/checks/isolated_data.gd").verify():
+		quit(2)
+		return
 	run.call_deferred()
 
 func check(ok: bool, label: String) -> void:
@@ -17,8 +20,11 @@ func check(ok: bool, label: String) -> void:
 		print("PASS: ", label)
 
 func run() -> void:
+	root.size = Vector2i(1280, 1000)
 	var settings := root.get_node("Settings")
 	settings.set_process(false)
+	settings.visualizer_starred_only = false
+	settings.visualizer_favorites = PackedStringArray()
 	var main = load("res://scripts/main.gd").new()
 	var player = load("res://scripts/player.gd").new()
 	main.player = player
@@ -102,7 +108,7 @@ func run() -> void:
 	check(mini_preview.size.y > 100 and absf(mini_preview.size.x / mini_preview.size.y - 16.0 / 9.0) < 0.01, "mini player previews grow to full card width without cropping")
 	check(desktop.root.scene_picker.gallery.size.y >= 180 and desktop.root.scene_picker.tuning.visible, "scene dropdown leaves preview space beneath pinned controls")
 
-	check(is_equal_approx(desktop.root.scene_picker.disabled_button.size.x, desktop.root.rows.size.x), "disable action fills mini player content width")
+	check(is_equal_approx(desktop.root.scene_picker.disabled_button.get_parent().size.x, desktop.root.rows.size.x), "scene actions fill mini player content width")
 	desktop.root.hide()
 
 	desktop.root.scene_picker.disabled_button.pressed.emit()
@@ -133,11 +139,11 @@ func run() -> void:
 
 	var regions_valid := true
 	for i in settings.VISUALIZER_PRESETS.size():
-		regions_valid = regions_valid and picker.thumbnail(i).region == Rect2((i % 8) * 256, (i / 8) * 144, 256, 144)
+		regions_valid = regions_valid and picker.thumbnail(i).region == Rect2((i % 8) * 160, (i / 8) * 90, 160, 90)
 	check(regions_valid, "all thumbnails map to their scene")
 	var last_preview: AtlasTexture = picker.thumbnail(settings.VISUALIZER_PRESET_MAX)
 	check(last_preview.region.end.y <= last_preview.atlas.get_height(), "preview atlas includes final studio row")
-	check("3.8 s" in picker.tiles[settings.VISUALIZER_PRESET_MAX].tooltip_text, "studio thumbnail explains its analysis mapping")
+	check(settings.VISUALIZER_STUDIO_GUIDES[-1] in picker.tiles[settings.VISUALIZER_PRESET_MAX].tooltip_text, "final thumbnail explains its audio response")
 	var guides_valid := true
 	for index in range(settings.VISUALIZER_STUDIO_START, settings.VISUALIZER_PRESETS.size()):
 		var tile: Button = picker.tiles[index]
@@ -177,16 +183,89 @@ func run() -> void:
 	picker.tuning.get_child(3).pressed.emit()
 
 	picker.tiles[47].pressed.emit()
-	check(settings.visualizer_preset == 47 and picker.selected.text == "Terrain Canyon ▾" and not picker.gallery.visible, "thumbnail selects scene and closes gallery")
+	check(settings.visualizer_preset == 47 and picker.selected.text == "Terrain Canyon ▾" and picker.gallery.visible, "thumbnail selects scene and keeps gallery open")
 	settings.apply("visualizer_preset", 4)
 	check(picker.selected.text == "Wave Architecture ▾" and picker.tiles[4].button_pressed and not picker.tiles[47].button_pressed, "picker tracks shortcut changes")
+	picker.close()
 	picker.selected.pressed.emit()
 	await process_frame
 	await process_frame
 	await process_frame
 	var chosen: Button = picker.tiles[4]
-	check(picker.disabled_button.get_parent() == picker.menu and picker.menu.get_child(0) == picker.disabled_button, "Disabled stays above scrollable scene previews")
+	check(picker.disabled_button.get_parent() == picker.starred_filter.get_parent() and picker.menu.get_child(0) == picker.disabled_button.get_parent(), "disable and compact starred filter share pinned action row")
+	check(is_equal_approx(picker.disabled_button.position.y, picker.starred_filter.position.y) and picker.starred_filter.size.x <= 60.0, "starred filter uses one compact button beside disable")
 	check(chosen.global_position.y >= picker.gallery.global_position.y and chosen.global_position.y + chosen.size.y <= picker.gallery.global_position.y + picker.gallery.size.y, "gallery opens with selected scene fully visible")
+	var scene_selections := [0]
+	picker.scene_selected.connect(func() -> void: scene_selections[0] += 1)
+	var star: Button = picker.favorite_buttons[4]
+	check(chosen.get_global_rect().encloses(star.get_global_rect()), "star button fits inside preset card")
+	var click := InputEventMouseButton.new()
+	click.position = star.global_position + star.size * 0.5
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	root.push_input(click, true)
+	await process_frame
+	click = click.duplicate()
+	click.pressed = false
+	root.push_input(click, true)
+	await process_frame
+	check(star.button_pressed and scene_selections[0] == 0, "star receives pointer click without selecting scene")
+	picker.favorite_buttons[18].pressed.emit()
+	check(settings.visualizer_favorites == PackedStringArray([settings.VISUALIZER_PRESETS[4], settings.VISUALIZER_PRESETS[18]]), "stars remember preset names")
+	check(settings.visualizer_preset == 4 and picker.gallery.visible, "starring preserves selection and open gallery")
+	check(desktop.root.scene_picker.favorite_buttons[4].button_pressed and vr.view.scene_picker.favorite_buttons[18].button_pressed, "stars synchronize desktop and VR")
+	picker.starred_filter.button_pressed = true
+	check(settings.visualizer_starred_only and desktop.root.scene_picker.starred_filter.button_pressed and vr.view.scene_picker.starred_filter.button_pressed, "starred filter is global")
+	var visible_count := 0
+	for tile: Button in picker.tiles:
+		visible_count += int(tile.visible)
+	check(visible_count == 2 and picker.tiles[4].visible and picker.tiles[18].visible, "starred filter hides other presets")
+	if "--preview" in OS.get_cmdline_user_args():
+		await process_frame
+		await process_frame
+		RenderingServer.force_draw()
+		root.get_texture().get_image().save_png("/tmp/vpx_starred_picker.png")
+	player.current_path = "test.flac"
+	desktop.root.next_style_button.pressed.emit()
+	check(settings.visualizer_preset == 18, "desktop next button skips unstarred presets")
+	vr.view.previous_style_button.pressed.emit()
+	check(settings.visualizer_preset == 4, "VR previous button skips unstarred presets")
+	main._step_action(settings.StickAction.FORMAT_ALL, 1)
+	check(settings.visualizer_preset == 18, "forward shortcut skips unstarred presets")
+	main._step_action(settings.StickAction.FORMAT_ALL, 1)
+	check(settings.visualizer_preset == 4, "forward shortcut wraps starred presets")
+	main._step_action(settings.StickAction.FORMAT_ALL, -1)
+	check(settings.visualizer_preset == 18, "backward shortcut wraps starred presets")
+	var field = load("res://scripts/resonance_field.gd").new()
+	field.preset_elapsed = 95.0
+	field.cycle_preset()
+	check(settings.visualizer_preset == 4 and field.preset_elapsed == 0.0, "automatic scene cycling follows starred filter")
+	field.free()
+	settings.apply("visualizer_preset", 10)
+	settings.cycle_visualizer_preset(-1)
+	check(settings.visualizer_preset == 4, "cycling from unstarred preset finds nearest favorite")
+	check(settings.flush() == OK, "favorite settings save successfully")
+	settings.visualizer_favorites = PackedStringArray()
+	settings.visualizer_starred_only = false
+	settings.load_config()
+	settings.changed.emit()
+	check(settings.visualizer_starred_only and settings.visualizer_favorites.size() == 2 and picker.favorite_buttons[4].button_pressed, "favorites and filter restore from disk")
+	var backup_path := "user://visualizer_favorites_backup.cfg"
+	var backup = load("res://scripts/settings_backup.gd")
+	check(backup.export_settings(backup_path).ok and backup.import_settings(backup_path).ok, "favorites survive settings backup round trip")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(backup_path))
+	picker.favorite_buttons[4].pressed.emit()
+	check(settings.visualizer_preset == 18 and not picker.tiles[4].visible, "unstarring current preset selects remaining favorite")
+	settings.cycle_visualizer_preset(-1)
+	check(settings.visualizer_preset == 18, "single favorite stays selected")
+	picker.favorite_buttons[18].pressed.emit()
+	settings.cycle_visualizer_preset(1)
+	settings.cycle_visualizer_preset(-1)
+	check(settings.visualizer_preset == 18 and picker.empty_favorites.visible, "empty favorites show guidance and stop cycling")
+	picker.starred_filter.button_pressed = false
+	check(picker.tiles[0].visible and not picker.empty_favorites.visible, "turning filter off restores all presets")
+	settings.cycle_visualizer_preset(1)
+	check(settings.visualizer_preset == 19, "unfiltered cycling restores full preset order")
 	if "--preview" in OS.get_cmdline_user_args():
 		RenderingServer.force_draw()
 		root.get_texture().get_image().save_png("/tmp/vpx_picker.png")

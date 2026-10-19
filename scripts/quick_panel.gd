@@ -480,10 +480,8 @@ func _open_subtitle_picker(filters: PackedStringArray) -> void:
 		return
 	var video_path := player.current_path
 	var initial_directory := video_path.get_base_dir() if not video_path.is_empty() and not video_path.contains("://") else OS.get_system_dir(OS.SYSTEM_DIR_MOVIES)
-	if not DirAccess.dir_exists_absolute(initial_directory):
-		initial_directory = OS.get_system_dir(OS.SYSTEM_DIR_DOCUMENTS)
-	if not DirAccess.dir_exists_absolute(initial_directory):
-		initial_directory = PlatformPaths.home() if DirAccess.dir_exists_absolute(PlatformPaths.home()) else "/"
+	if initial_directory.is_empty():
+		initial_directory = PlatformPaths.home()
 	picker = SubtitleFilePicker.new()
 	get_parent().add_child(picker)
 	picker.configure(initial_directory, filters)
@@ -515,6 +513,7 @@ class SubtitleFilePicker extends Control:
 	signal file_selected(file_path: String)
 	signal canceled
 
+	const BackgroundTask := preload("res://scripts/background_task.gd")
 	const PICKER_SIZE := Vector2(1040, 680)
 	var current_directory := ""
 	var filters := PackedStringArray()
@@ -530,8 +529,13 @@ class SubtitleFilePicker extends Control:
 	var pending_selection := ""
 	var focused_directory := ""
 	var scan_generation := 0
-	var scan_thread: Thread
-	var queued_scan_path := ""
+	var scan_job: Node
+	var path_job: Node
+	var path_generation := 0
+	var checking_directory := false
+	var queued_accept := false
+	var folder_parent: TreeItem
+	var previous_focus: WeakRef
 	var drives: Array[Dictionary] = []
 	var folders: Array[Dictionary] = []
 	var save_mode := false
@@ -549,8 +553,11 @@ class SubtitleFilePicker extends Control:
 		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		z_index = 100
+		var focus := get_viewport().gui_get_focus_owner() if is_inside_tree() else null
+		previous_focus = weakref(focus) if focus != null else null
 		_register_drives()
 		_build_picker()
+		path_field.grab_focus.call_deferred()
 
 	func _build_picker() -> void:
 		var backdrop := ColorRect.new()
@@ -599,6 +606,7 @@ class SubtitleFilePicker extends Control:
 		path_field = LineEdit.new()
 		path_field.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		path_field.placeholder_text = "Folder path"
+		path_field.text_changed.connect(func(_text: String) -> void: _cancel_path())
 		path_field.text_submitted.connect(_open_path)
 		toolbar.add_child(path_field)
 		var go := _button("Go", "forward")
@@ -638,6 +646,10 @@ class SubtitleFilePicker extends Control:
 		filename_field = LineEdit.new()
 		filename_field.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		filename_field.placeholder_text = "Selected file"
+		filename_field.text_changed.connect(func(_text: String) -> void:
+			overwrite_path = ""
+			if not checking_directory:
+				_cancel_path())
 		filename_field.text_submitted.connect(func(_text: String) -> void: _accept_selection())
 		footer.add_child(filename_field)
 		status_label = Label.new()
@@ -664,21 +676,17 @@ class SubtitleFilePicker extends Control:
 		for i in DirAccess.get_drive_count():
 			var drive := DirAccess.get_drive_name(i)
 			drives.append({"name": drive, "path": drive})
-		if drives.is_empty() and OS.has_feature("windows"):
-			for code in range(67, 91):
-				var letter := "%s:/" % char(code)
-				if DirAccess.dir_exists_absolute(letter):
-					drives.append({"name": letter.trim_suffix("/"), "path": letter})
 
 	func _refresh() -> void:
+		overwrite_path = ""
+		_cancel_path()
 		var absolute := _absolute_path(current_directory)
-		if not DirAccess.dir_exists_absolute(absolute):
-			status_label.text = "Folder unavailable"
-			return
-		current_directory = absolute.trim_suffix("/") if absolute != "/" else "/"
+		current_directory = absolute.trim_suffix("/") if absolute != "/" and not absolute.ends_with(":/") else absolute
 		path_field.text = current_directory
 		filter_field.text = ""
 		status_label.text = "Loading…"
+		listed_folders.clear()
+		listed_files.clear()
 		file_list.clear()
 		folder_tree.clear()
 		var root := folder_tree.create_item()
@@ -694,8 +702,8 @@ class SubtitleFilePicker extends Control:
 			var item := folder_tree.create_item(place)
 			item.set_text(0, "Home")
 			item.set_metadata(0, home)
-		_build_folder_tree(current_directory)
 		focused_directory = current_directory
+		_build_folder_tree(current_directory)
 		pending_directory = current_directory
 		pending_selection = ""
 		_scan_directory(current_directory)
@@ -704,60 +712,51 @@ class SubtitleFilePicker extends Control:
 		folders.clear()
 		var components := start_path.split("/", false)
 		var root_path := "//" if start_path.begins_with("//") else "/" if start_path.begins_with("/") else ""
-		var parent := folder_tree.get_root().get_child(0)
+		folder_parent = folder_tree.get_root().get_child(0)
 		for component in components:
 			root_path = root_path.path_join(component) if not root_path.is_empty() else component
-			var item := folder_tree.create_item(parent)
+			if root_path.ends_with(":"):
+				root_path += "/"
+			var item := folder_tree.create_item(folder_parent)
 			item.set_text(0, component)
 			item.set_metadata(0, root_path)
 			folders.append({"path": root_path, "item": item})
-			parent = item
+			folder_parent = item
 			if root_path == start_path:
 				item.select(0)
-		var directory := DirAccess.open(start_path)
-		if directory != null:
-			directory.list_dir_begin()
-			var child_name := directory.get_next()
-			while not child_name.is_empty():
-				if directory.current_is_dir() and not child_name.begins_with("."):
-					var child := folder_tree.create_item(parent)
-					child.set_text(0, child_name)
-					child.set_metadata(0, start_path.path_join(child_name))
-				child_name = directory.get_next()
-			directory.list_dir_end()
 
 	func _scan_directory(scan_path: String) -> void:
 		scan_generation += 1
-		if scan_thread != null:
-			queued_scan_path = scan_path
-			return
-		_start_scan(scan_path, scan_generation)
+		if is_instance_valid(scan_job):
+			scan_job.cancel()
+		var generation := scan_generation
+		scan_job = BackgroundTask.start(_scan_worker.bind(scan_path, filters))
+		scan_job.completed.connect(func(result: Dictionary) -> void:
+			if generation != scan_generation or not is_inside_tree() or not visible:
+				return
+			scan_job = null
+			_apply_scan(result))
 
-	func _start_scan(scan_path: String, generation: int) -> void:
-		scan_thread = Thread.new()
-		var error := scan_thread.start(_scan_worker.bind(scan_path, filters, generation))
-		if error != OK:
-			scan_thread = null
-			status_label.text = "Could not read folder"
-
-	func _scan_worker(scan_path: String, file_filters: PackedStringArray, generation: int) -> void:
+	static func _scan_worker(token: RefCounted, scan_path: String, file_filters: PackedStringArray) -> Dictionary:
 		var folders_found := PackedStringArray()
 		var files_found := PackedStringArray()
+		if token.is_cancelled():
+			return {"ok": false}
 		var directory := DirAccess.open(scan_path)
-		if directory != null:
-			directory.list_dir_begin()
-			var entry := directory.get_next()
-			while not entry.is_empty():
-				if not entry.begins_with("."):
-					if directory.current_is_dir():
-						folders_found.append(entry)
-					elif _matches_filters(entry, file_filters):
-						files_found.append(entry)
-				entry = directory.get_next()
-			directory.list_dir_end()
+		if directory == null or directory.list_dir_begin() != OK:
+			return {"ok": false, "error": "Folder unavailable"}
+		var entry := directory.get_next()
+		while not entry.is_empty() and not token.is_cancelled():
+			if not entry.begins_with("."):
+				if directory.current_is_dir():
+					folders_found.append(entry)
+				elif _matches_filters(entry, file_filters):
+					files_found.append(entry)
+			entry = directory.get_next()
+		directory.list_dir_end()
 		folders_found.sort()
 		files_found.sort()
-		call_deferred("_apply_scan", generation, folders_found, files_found)
+		return {"ok": true, "folders": folders_found, "files": files_found}
 
 	static func _matches_filters(file_name: String, file_filters: PackedStringArray) -> bool:
 		if file_filters.is_empty():
@@ -771,19 +770,16 @@ class SubtitleFilePicker extends Control:
 					return true
 		return false
 
-	func _apply_scan(generation: int, found_folders: PackedStringArray, found_files: PackedStringArray) -> void:
-		if scan_thread != null:
-			scan_thread.wait_to_finish()
-			scan_thread = null
-		if not queued_scan_path.is_empty():
-			var next_path := queued_scan_path
-			queued_scan_path = ""
-			_start_scan(next_path, scan_generation)
+	func _apply_scan(result: Dictionary) -> void:
+		if not result.get("ok", false):
+			status_label.text = result.get("error", "Could not read folder")
 			return
-		if generation != scan_generation or not is_inside_tree():
-			return
-		listed_folders = found_folders
-		listed_files = found_files
+		listed_folders = result["folders"]
+		listed_files = result["files"]
+		for child_name in listed_folders:
+			var child := folder_tree.create_item(folder_parent)
+			child.set_text(0, child_name)
+			child.set_metadata(0, current_directory.path_join(child_name))
 		_fill_file_list(filter_field.text)
 		if not pending_selection.is_empty():
 			for i in file_list.item_count:
@@ -821,15 +817,12 @@ class SubtitleFilePicker extends Control:
 		var selected_path := str(item.get_metadata(0))
 		if selected_path.is_empty() or selected_path == focused_directory:
 			return
-		focused_directory = selected_path
-		if DirAccess.dir_exists_absolute(selected_path):
-			current_directory = selected_path
-			pending_selection = ""
-			path_field.text = current_directory
-			file_list.clear()
-			_scan_directory(current_directory)
+		current_directory = selected_path
+		_refresh()
 
 	func _on_file_selected(index: int) -> void:
+		overwrite_path = ""
+		_cancel_path()
 		if file_list.get_item_metadata(index) == "dir":
 			var selected_directory := current_directory.path_join(file_list.get_item_text(index))
 			current_directory = selected_directory
@@ -845,8 +838,8 @@ class SubtitleFilePicker extends Control:
 			_accept_selection()
 
 	func cancel() -> void:
+		_close()
 		canceled.emit()
-		hide()
 
 	func _go_parent() -> void:
 		var parent_path := current_directory.get_base_dir()
@@ -856,42 +849,109 @@ class SubtitleFilePicker extends Control:
 		_refresh()
 
 	func _open_path(value: String) -> void:
-		var target_path := _absolute_path(value)
-		if DirAccess.dir_exists_absolute(target_path):
-			current_directory = target_path
-			_refresh()
-		elif FileAccess.file_exists(target_path):
-			if save_mode:
-				filename_field.text = target_path
-				_accept_selection()
-			else:
-				_emit_selected(target_path)
-		else:
-			status_label.text = "Path not found"
+		_resolve_path(_absolute_path(value), false)
 
 	func _accept_selection() -> void:
+		if checking_directory and is_instance_valid(path_job):
+			queued_accept = true
+			return
 		var name := filename_field.text.strip_edges()
 		if name.is_empty():
 			status_label.text = "Choose a filename"
 			return
-		var selected_path := _absolute_path(name)
-		if save_mode:
-			if not DirAccess.dir_exists_absolute(selected_path.get_base_dir()) or DirAccess.dir_exists_absolute(selected_path):
-				status_label.text = "Choose a writable folder"
+		_resolve_path(_absolute_path(name), true)
+
+	func _resolve_path(selected_path: String, accepting: bool) -> void:
+		_cancel_path()
+		var generation := path_generation
+		checking_directory = not accepting
+		status_label.text = "Checking path…"
+		path_job = BackgroundTask.start(_check_path.bind(selected_path, accepting, save_mode, filters))
+		path_job.completed.connect(func(result: Dictionary) -> void:
+			if generation != path_generation or not is_inside_tree() or not visible:
 				return
-			if FileAccess.file_exists(selected_path) and overwrite_path != selected_path:
+			path_job = null
+			checking_directory = false
+			if not result.get("ok", false):
+				status_label.text = result.get("error", "Path not found")
+				return
+			if result["directory"]:
+				var accepting_after_navigation := queued_accept
+				current_directory = selected_path
+				_refresh()
+				if accepting_after_navigation:
+					_accept_selection()
+				return
+			if save_mode and result["exists"] and overwrite_path != selected_path:
 				overwrite_path = selected_path
+				filename_field.text = selected_path
 				status_label.text = "Exists · press Save again to replace"
 				return
-			_emit_selected(selected_path)
-		elif FileAccess.file_exists(selected_path):
-			_emit_selected(selected_path)
-		else:
-			status_label.text = "Select a matching file"
+			_emit_selected(selected_path))
+
+	static func _check_path(token: RefCounted, selected_path: String, accepting: bool, saving: bool, file_filters: PackedStringArray) -> Dictionary:
+		if token.is_cancelled():
+			return {"ok": false}
+		if DirAccess.dir_exists_absolute(selected_path):
+			return {"ok": true, "directory": true}
+		if token.is_cancelled():
+			return {"ok": false}
+		var exists := FileAccess.file_exists(selected_path)
+		if token.is_cancelled():
+			return {"ok": false}
+		if saving and accepting:
+			if not DirAccess.dir_exists_absolute(selected_path.get_base_dir()):
+				return {"ok": false, "error": "Choose a writable folder"}
+		elif not exists:
+			return {"ok": false, "error": "Path not found"}
+		if not _matches_filters(selected_path, file_filters):
+			return {"ok": false, "error": "Select a matching file"}
+		return {"ok": true, "directory": false, "exists": exists}
 
 	func _emit_selected(selected_path: String) -> void:
+		_close()
 		file_selected.emit(selected_path)
+
+	func _cancel_path() -> void:
+		path_generation += 1
+		checking_directory = false
+		queued_accept = false
+		if is_instance_valid(path_job):
+			path_job.cancel()
+		path_job = null
+
+	func _cancel_jobs() -> void:
+		scan_generation += 1
+		if is_instance_valid(scan_job):
+			scan_job.cancel()
+		scan_job = null
+		_cancel_path()
+
+	func _close() -> void:
+		_cancel_jobs()
 		hide()
+		var focus := previous_focus.get_ref() as Control if previous_focus != null else null
+		if is_instance_valid(focus) and focus.is_visible_in_tree():
+			focus.grab_focus()
+
+	func contain_focus() -> void:
+		var controls: Array[Control] = []
+		_collect_focus(self, controls)
+		if controls.is_empty():
+			return
+		for i in controls.size():
+			controls[i].focus_previous = controls[i].get_path_to(controls[wrapi(i - 1, 0, controls.size())])
+			controls[i].focus_next = controls[i].get_path_to(controls[(i + 1) % controls.size()])
+		var focus := get_viewport().gui_get_focus_owner()
+		if focus == null or not is_ancestor_of(focus):
+			path_field.grab_focus()
+
+	func _collect_focus(node: Node, controls: Array[Control]) -> void:
+		for child in node.get_children():
+			if child is Control and child.is_visible_in_tree():
+				if child.focus_mode == Control.FOCUS_ALL and not (child is BaseButton and child.disabled):
+					controls.append(child)
+				_collect_focus(child, controls)
 
 	func _absolute_path(value: String) -> String:
 		var absolute := value
@@ -900,8 +960,7 @@ class SubtitleFilePicker extends Control:
 		return absolute.simplify_path()
 
 	func _exit_tree() -> void:
-		if scan_thread != null:
-			scan_thread.wait_to_finish()
+		_cancel_jobs()
 
 
 func _scroll_to(target: Control) -> void:

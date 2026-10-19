@@ -283,7 +283,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 	recenter()
 	var restored := await _restore_mode_session()
-	if not restored and player.current_path.is_empty() and (FileAccess.file_exists(Settings.last_file) or Settings.last_file.contains("://")):
+	if not restored and player.current_path.is_empty() and not Settings.last_file.is_empty():
 		ui.open_media(Settings.last_file, {"paused": true})
 
 
@@ -787,6 +787,10 @@ func _process(delta: float) -> void:
 		get_tree().quit()
 
 
+func music_grab_moves_scene() -> bool:
+	return desktop_mode if Settings.visualizer_grab_mode == Settings.VisualizerGrab.DEFAULT else Settings.visualizer_grab_mode == Settings.VisualizerGrab.SCENE_AND_AUDIO
+
+
 func _update_listener() -> void:
 	if player.playback == null:
 		return
@@ -886,7 +890,7 @@ func _adjust(direction: int, slot: String) -> void:
 
 func _step_action(action: Settings.StickAction, direction: int) -> void:
 	if player._audio_only_playing() and action in FORMAT_ACTION_NAMES:
-		Settings.apply("visualizer_preset", posmod(Settings.visualizer_preset + direction, Settings.VISUALIZER_PRESETS.size()))
+		Settings.cycle_visualizer_preset(direction)
 		return
 	if player._audio_only_playing() and action in [Settings.StickAction.VOLUME, Settings.StickAction.PLAYBACK_SPEED, Settings.StickAction.AUDIO_TRACK, Settings.StickAction.SUBTITLE_TRACK, Settings.StickAction.CHAPTER]:
 		return
@@ -967,7 +971,8 @@ func _refresh_help() -> void:
 		osd.release()
 		return
 	var status: String = ui.playlist_label(player.current_path) if not player.current_path.is_empty() else ""
-	var format := [action_name(Settings.StickAction.FORMAT_ALL), "", action_value(Settings.StickAction.FORMAT_ALL)]
+	var action: Settings.StickAction = Settings.chord_action if gripping and grab_controller.trigger_held else Settings.grip_action if gripping else Settings.trigger_action
+	var format_entries := [] if player._audio_only_playing() and action in FORMAT_ACTION_NAMES else [[action_name(Settings.StickAction.FORMAT_ALL), "", action_value(Settings.StickAction.FORMAT_ALL)]]
 	if gripping:
 		if grab_controller.trigger_held:
 			help_card.show_help("Grip + Trigger", [
@@ -976,22 +981,21 @@ func _refresh_help() -> void:
 				["A / X", "Level", ""],
 				["◀ ▶", "Prev / next video", ""],
 				["▲ ▼", action_name(Settings.chord_action), action_value(Settings.chord_action)],
-				format,
-			], camera, status)
+			] + format_entries, camera, status)
 		else:
 			help_card.show_help("Grip", [
 				["Move", "Turn, stays level" if Settings.projection != Settings.ProjectionMode.FLAT else "Move screen, level", ""],
 				["A / X", "Favourite", "★ on" if Library.is_favorite(player.current_path) else "off"],
 				["◀ ▶", "±5 min", ""],
 				["▲ ▼", action_name(Settings.grip_action), action_value(Settings.grip_action)],
-				format,
+			] + format_entries + [
 				["+ Trigger", "Free rotate, prev / next", ""],
 			], camera, status)
 	else:
 		help_card.show_help("Trigger", [
 			["◀ ▶", "±1 min", ""],
 			["▲ ▼", action_name(Settings.trigger_action), action_value(Settings.trigger_action)],
-			format,
+		] + format_entries + [
 			["+ Grip", "Free rotate, prev / next", ""],
 		], camera, status)
 	osd.release()
@@ -999,7 +1003,7 @@ func _refresh_help() -> void:
 
 
 func _toggle_favorite() -> void:
-	if player.current_path.is_empty() or player.is_music_mode():
+	if player.current_path.is_empty():
 		return
 	var on := not Library.is_favorite(player.current_path)
 	ui.set_favorite(player.current_path, on)
@@ -1396,7 +1400,7 @@ func _on_grab_ended(controller: XRController3D) -> void:
 		Settings.angle_roll = 0.0
 	if absf(Settings.angle_pitch) < RELEASE_PITCH_SNAP:
 		Settings.angle_pitch = 0.0
-	screen.apply_angles()
+	_apply_grab_angles()
 	controller.pulse(0.15)
 	Settings.commit()
 
@@ -1524,7 +1528,14 @@ func _update_grab(delta: float) -> void:
 	Settings.angle_yaw = wrapf(angles.x, -180.0, 180.0)
 	Settings.angle_pitch = angles.y
 	Settings.angle_roll = wrapf(angles.z, -180.0, 180.0)
+	_apply_grab_angles()
+
+
+func _apply_grab_angles() -> void:
+	var previous := screen.global_basis.orthonormalized()
 	screen.apply_angles()
+	if resonance_field != null and resonance_field.active and music_grab_moves_scene():
+		resonance_field.rotate_scene(screen.global_basis.orthonormalized() * previous.inverse())
 
 
 func _level_view(controller: XRController3D) -> void:

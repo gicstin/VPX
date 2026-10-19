@@ -5,6 +5,7 @@ signal zoom_changed(snap: bool)
 signal screen_size_changed
 
 enum ProjectionMode { FLAT, EQUIRECT_360, EQUIRECT_180, FISHEYE, EAC, CUBEMAP }
+enum VisualizerGrab { DEFAULT, SCENE_AND_AUDIO, AUDIO_ONLY }
 enum Stereo { MONO, SIDE_BY_SIDE, OVER_UNDER }
 enum AlphaMask { NONE, PACKED_CORNERS, STACKED_BELOW }
 enum Background { CHROMA_KEY, PASSTHROUGH, BLACK, CINEMA }
@@ -23,7 +24,7 @@ enum AudioFilter { OFF, LEVEL, NIGHT }
 enum Deband { OFF, LOW, MEDIUM, HIGH }
 
 const CONFIG_PATH := "user://settings.cfg"
-const VISUALIZER_PRESET_MAX := 63
+const VISUALIZER_PRESET_MAX := 75
 const VISUALIZER_PRESETS := [
 	"Resonance Field", "Resonant Architecture", "Particle Cosmos",
 	"Bass Strings", "Wave Architecture", "Aurora Cosmos", "Stereo Speakers",
@@ -40,7 +41,10 @@ const VISUALIZER_PRESETS := [
 	"Spectrum Observatory", "Phase Cathedral", "Stereo Ribbonfall",
 	"Pan Meridian", "Transient Loom", "Stereo Difference",
 	"Mid Side Atrium", "Correlation Causeway", "Stereo Spectrogram", "Pan Trails",
-	"Dual Waveform", "Spectral Balance"
+	"Dual Waveform", "Spectral Balance",
+	"Celestial Orrery", "Abyssal Garden", "Prism Sanctuary", "Solar Crucible",
+	"Awe Horizon", "Fractal Canopy", "Phyllotaxis Bloom", "Heartbeat Tide",
+	"Frisson Aurora", "Synesthesia", "Groove Lattice", "Tension Vortex"
 ]
 const VISUALIZER_STUDIO_START := 52
 const VISUALIZER_STUDIO_GUIDES := [
@@ -55,7 +59,19 @@ const VISUALIZER_STUDIO_GUIDES := [
 	"Left → right: 30 Hz → 18 kHz · Upper panel L / Lower panel R · Top of each panel = now, bottom = 3.8 s ago · Dark → bright: −60 → 0 dB",
 	"Left ↔ Right = frequency pan · Low → high elevation: 30 Hz → 18 kHz · Near → far = 3.8 s history · Colour = frequency",
 	"Left → right: 256 captured samples · Cyan upper = L / Pink lower = R · Shared auto gain · Centre lines = zero · Outer rails = ±1 after gain · Depth = 0.8 s persistence",
-	"Left → right: 30 Hz → 18 kHz · Height = R minus L, −24 → +24 dB · Cyan below = L louder / Pink above = R louder · Centre = equal magnitude · 6 dB grid · Depth = 3.8 s history"
+	"Left → right: 30 Hz → 18 kHz · Height = R minus L, −24 → +24 dB · Cyan below = L louder / Pink above = R louder · Centre = equal magnitude · 6 dB grid · Depth = 3.8 s history",
+	"Layered orbital filaments and star swarms · Cyan L / Gold R · Frequency shapes orbit radius · Bass expands the armillary crown",
+	"Bioluminescent fronds and drifting plankton · Cyan L / Violet R · Spectral history bends each frond · Bass ripples the seabed",
+	"Nested crystal vaults and suspended spectral dust · Cyan L / Rose R · Frequency lights each facet · Stereo width opens the crown",
+	"Spiralling plasma, magnetic loops and solar ejecta · Gold L / Magenta R · Bass swells the corona · Treble ignites particles",
+	"Vast spectral horizon and star belt · Low notes sit low and near, high notes high and far · Left / right follow the mix · Drops open the sky gate",
+	"Self-similar light tree · Deeper, finer branches carry higher frequencies · Energy and build-ups grow the canopy · Treble lights the leaves",
+	"Golden-angle seed sphere · Bottom = bass, top = treble · Left / right halves follow the channels · Beats breathe, drops scatter seeds",
+	"Rhythmic light sea · Near waves = bass, horizon = treble · Kicks send ripples · Quiet passages breathe at a calm slow pace",
+	"Stereo aurora curtains · Position = pan, glow height = pitch · Build-ups shimmer · Sudden swells after quiet send a wave of light",
+	"One glowing orb per frequency · Height = pitch, size shrinks as pitch rises · Left / right = pan · Threads link sounding neighbours",
+	"Beat-locked light lattice · Rows = pitch, columns = pan · Every beat ripples outward, bar downbeats bounce higher · Settles ahead of steady beats",
+	"Rising spectral spire · Build-ups tighten and spin the vortex · Drops fling it open · Base = bass, tip = treble"
 ]
 const SCREEN_PLACEMENT_VERSION := 1
 const SCREEN_DISTANCE := 3.0
@@ -118,12 +134,15 @@ var music_visualizer := true
 var music_visualizer_mode := 0
 var immersive_music_visualizer := true
 var visualizer_preset := 0
+var visualizer_favorites := PackedStringArray()
+var visualizer_starred_only := false
 var visualizer_quality := 0
 var visualizer_intensity := 0.75
 var visualizer_sensitivity := 1.75
 var visualizer_motion := 0.6
 var visualizer_sync := 0.0
 var visualizer_auto_change := false
+var visualizer_grab_mode := VisualizerGrab.DEFAULT
 var ui_size := 1.0
 var text_size := 1.0
 var accent_color := VpxTheme.DEFAULT_ACCENT
@@ -268,12 +287,39 @@ func visualizer_advance_limit() -> float:
 	return minf(0.25, floorf(maxf(0.0, AudioServer.get_output_latency()) / 0.005) * 0.005)
 
 
+func toggle_visualizer_favorite(index: int) -> void:
+	if index < 0 or index > VISUALIZER_PRESET_MAX:
+		return
+	var favorites := visualizer_favorites.duplicate()
+	var name: String = VISUALIZER_PRESETS[index]
+	if name in favorites:
+		favorites.remove_at(favorites.find(name))
+	else:
+		favorites.append(name)
+	apply("visualizer_favorites", favorites)
+
+
+func next_visualizer_preset(direction: int) -> int:
+	var step := 1 if direction > 0 else -1
+	for offset in range(1, VISUALIZER_PRESETS.size() + 1):
+		var index := posmod(visualizer_preset + offset * step, VISUALIZER_PRESETS.size())
+		if not visualizer_starred_only or VISUALIZER_PRESETS[index] in visualizer_favorites:
+			return index
+	return visualizer_preset
+
+
+func cycle_visualizer_preset(direction: int) -> void:
+	if direction != 0:
+		apply("visualizer_preset", next_visualizer_preset(direction))
+
+
 func _validate_visualizer() -> void:
 	music_visualizer_mode = clampi(music_visualizer_mode, 0, 2)
 	if music_visualizer_mode == 1:
 		music_visualizer_mode = 0
 	visualizer_preset = clampi(visualizer_preset, 0, VISUALIZER_PRESET_MAX)
 	visualizer_quality = clampi(visualizer_quality, 0, 3)
+	visualizer_grab_mode = clampi(visualizer_grab_mode, VisualizerGrab.DEFAULT, VisualizerGrab.AUDIO_ONLY)
 	visualizer_intensity = clampf(visualizer_intensity, 0.0, 1.5) if is_finite(visualizer_intensity) else 0.75
 	visualizer_sensitivity = clampf(visualizer_sensitivity, 0.5, 4.0) if is_finite(visualizer_sensitivity) else 1.75
 	visualizer_motion = clampf(visualizer_motion, 0.0, 1.0) if is_finite(visualizer_motion) else 0.6
@@ -281,18 +327,26 @@ func _validate_visualizer() -> void:
 
 
 func apply(property: StringName, value: Variant) -> void:
+	if property == &"visualizer_favorites":
+		if not value is PackedStringArray:
+			return
+		var favorites := PackedStringArray()
+		for name: String in value:
+			if name in VISUALIZER_PRESETS and name not in favorites:
+				favorites.append(name)
+		value = favorites
 	if property in [&"ui_size", &"text_size"]:
 		if not (value is float or value is int) or not is_finite(float(value)):
 			return
 		value = clampf(float(value), 0.8, 1.25) if property == &"ui_size" else clampf(float(value), 1.0, 1.5)
-	if property in [&"music_visualizer_mode", &"visualizer_preset", &"visualizer_quality", &"visualizer_intensity", &"visualizer_sensitivity", &"visualizer_motion", &"visualizer_sync"]:
+	if property in [&"music_visualizer_mode", &"visualizer_preset", &"visualizer_quality", &"visualizer_grab_mode", &"visualizer_intensity", &"visualizer_sensitivity", &"visualizer_motion", &"visualizer_sync"]:
 		if not (value is int or value is float) or not is_finite(float(value)):
 			return
-		var limits := {&"music_visualizer_mode": Vector2(0, 2), &"visualizer_preset": Vector2(0, VISUALIZER_PRESET_MAX), &"visualizer_quality": Vector2(0, 3), &"visualizer_intensity": Vector2(0, 1.5), &"visualizer_sensitivity": Vector2(0.5, 4), &"visualizer_motion": Vector2(0, 1), &"visualizer_sync": Vector2(-0.25, 0.25)}
+		var limits := {&"music_visualizer_mode": Vector2(0, 2), &"visualizer_preset": Vector2(0, VISUALIZER_PRESET_MAX), &"visualizer_quality": Vector2(0, 3), &"visualizer_grab_mode": Vector2(0, 2), &"visualizer_intensity": Vector2(0, 1.5), &"visualizer_sensitivity": Vector2(0.5, 4), &"visualizer_motion": Vector2(0, 1), &"visualizer_sync": Vector2(-0.25, 0.25)}
 		if property == &"visualizer_sync":
 			limits[property].y = visualizer_advance_limit()
 		value = clampf(float(value), limits[property].x, limits[property].y)
-		if property in [&"music_visualizer_mode", &"visualizer_preset", &"visualizer_quality"]:
+		if property in [&"music_visualizer_mode", &"visualizer_preset", &"visualizer_quality", &"visualizer_grab_mode"]:
 			value = int(value)
 		if property == &"music_visualizer_mode" and value == 1:
 			value = 0
@@ -303,6 +357,8 @@ func apply(property: StringName, value: Variant) -> void:
 	if get(property) == value:
 		return
 	set(property, value)
+	if property in [&"visualizer_favorites", &"visualizer_starred_only"] and visualizer_starred_only and VISUALIZER_PRESETS[visualizer_preset] not in visualizer_favorites:
+		visualizer_preset = next_visualizer_preset(1)
 	if property == &"picture_zoom":
 		zoom_changed.emit(is_equal_approx(float(value), 1.0))
 	Log.note_setting(property, value)
@@ -552,7 +608,7 @@ func _persisted() -> PackedStringArray:
 		"stereo_depth", "stereo_vertical", "picture_zoom", "single_eye", "flat_image_repeat", "photo_pan_x", "photo_pan_y",
 		"auto_crop", "deband", "dither", "compositor_layer", "spatial_audio", "dialogue_boost", "audio_filter",
 		"remote_control", "flat_video_pan", "music_visualizer", "audio_stretch_quality", "accent_color", "ui_size", "text_size",
-		"music_visualizer_mode", "immersive_music_visualizer", "visualizer_preset", "visualizer_quality", "visualizer_intensity", "visualizer_sensitivity", "visualizer_motion", "visualizer_sync", "visualizer_auto_change",
+		"music_visualizer_mode", "immersive_music_visualizer", "visualizer_preset", "visualizer_favorites", "visualizer_starred_only", "visualizer_quality", "visualizer_intensity", "visualizer_sensitivity", "visualizer_motion", "visualizer_sync", "visualizer_auto_change", "visualizer_grab_mode",
 	])
 
 

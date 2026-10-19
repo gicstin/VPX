@@ -4,6 +4,8 @@ signal mounted(url: String, path: String)
 signal mount_failed(url: String, message: String)
 signal servers_changed
 
+const BackgroundTask := preload("res://scripts/background_task.gd")
+const MOUNT_TIMEOUT := 30.0
 const SSDP_ADDRESS := "239.255.255.250"
 const SSDP_PORT := 1900
 const SEARCH_TARGET := "urn:schemas-upnp-org:service:ContentDirectory:1"
@@ -17,27 +19,13 @@ var media_servers: Array[Dictionary] = []
 var socket: PacketPeerUDP
 var search_left := 0.0
 var locations := {}
-var mount_thread: Thread
+var mount_job: Node
 var mount_url := ""
-var mount_cancelled := false
-var queued_mount := ""
+var mounted_is_directory := false
+var mount_serial := 0
 
 
 func _process(delta: float) -> void:
-	if mount_thread != null and not mount_thread.is_alive():
-		var result: Dictionary = mount_thread.wait_to_finish()
-		mount_thread = null
-		if not mount_cancelled:
-			if result.get("path", "").is_empty():
-				Log.warn("mount %s failed: %s" % [mount_url, result.get("error", "")])
-				mount_failed.emit(mount_url, result.get("error", "Could not connect"))
-			else:
-				Log.info("mounted %s at %s" % [mount_url, result["path"]])
-				mounted.emit(mount_url, result["path"])
-		if not queued_mount.is_empty():
-			var next := queued_mount
-			queued_mount = ""
-			mount(next)
 	if socket == null:
 		return
 	while socket.get_available_packet_count() > 0:
@@ -108,65 +96,123 @@ static func strip_password(url: String) -> String:
 
 
 func is_mounting() -> bool:
-	return mount_thread != null
+	return not mount_url.is_empty()
 
 
 func mount(url: String) -> void:
-	if mount_thread != null:
-		queued_mount = url
-		mount_cancelled = true
-		return
-	mount_cancelled = false
+	cancel_mount()
 	mount_url = url
-	mount_thread = Thread.new()
-	mount_thread.start(_mount_blocking.bind(url))
+	var serial := mount_serial
+	var result := await _mount(url, serial, Time.get_ticks_msec() + int(MOUNT_TIMEOUT * 1000.0))
+	if serial != mount_serial:
+		return
+	mount_job = null
+	mount_url = ""
+	if result.get("path", "").is_empty():
+		Log.warn("mount %s failed: %s" % [strip_password(url), result.get("error", "")])
+		mount_failed.emit(url, result.get("error", "Could not connect"))
+	else:
+		Log.info("mounted %s at %s" % [strip_password(url), result["path"]])
+		mounted_is_directory = result.get("is_directory", false)
+		mounted.emit(url, result["path"])
 
 
 func cancel_mount() -> void:
-	mount_cancelled = true
-	queued_mount = ""
+	mount_serial += 1
+	mount_url = ""
+	if is_instance_valid(mount_job):
+		mount_job.cancel()
+	mount_job = null
 
 
-func _mount_blocking(url: String) -> Dictionary:
+func _exit_tree() -> void:
+	cancel_mount()
+
+
+func _command(program: String, arguments: PackedStringArray, serial: int, deadline: int) -> Dictionary:
+	if serial != mount_serial:
+		return {"ok": false, "cancelled": true}
+	var remaining := (deadline - Time.get_ticks_msec()) / 1000.0
+	if remaining <= 0.0:
+		return {"ok": false, "error": "Operation timed out"}
+	var job := BackgroundTask.command(program, arguments, remaining)
+	mount_job = job
+	var result: Dictionary = await job.completed
+	if mount_job == job:
+		mount_job = null
+	return result
+
+
+func _check_path(path: String, serial: int, deadline: int) -> Dictionary:
+	if serial != mount_serial:
+		return {"ok": false, "cancelled": true}
+	var remaining := (deadline - Time.get_ticks_msec()) / 1000.0
+	if remaining <= 0.0:
+		return {"ok": false, "error": "Operation timed out"}
+	var job := BackgroundTask.start(_path_info.bind(path), remaining)
+	mount_job = job
+	var result: Dictionary = await job.completed
+	if mount_job == job:
+		mount_job = null
+	return result
+
+
+static func _path_info(token: RefCounted, path: String) -> Dictionary:
+	var directory := DirAccess.dir_exists_absolute(path)
+	if token.is_cancelled():
+		return {"ok": false, "cancelled": true}
+	if directory or FileAccess.file_exists(path):
+		return {"ok": true, "path": path, "is_directory": directory}
+	return {"ok": false, "error": "Could not open " + path}
+
+
+func _mount(url: String, serial: int, deadline: int) -> Dictionary:
 	var kind := scheme(url)
 	if OS.get_name() == "Windows":
-		return _windows_share(url, kind)
+		if kind != "smb":
+			return {"error": "Only Windows / Samba shares are supported on Windows"}
+		var result := await _check_path(_windows_share_path(url), serial, deadline)
+		if not result.get("ok", false) and not result.get("cancelled", false) and result.get("error") != "Operation timed out":
+			result["error"] = "Could not open the share (sign in to the share in File Explorer first)"
+		return result
 	if _has_command("busctl"):
 		var kio_url := url
 		if kind == "dav":
 			kio_url = "webdav" + url.substr(3)
 		elif kind == "davs":
 			kio_url = "webdavs" + url.substr(4)
-		var output := []
-		var code := OS.execute("busctl", ["--user", "--timeout=60", "call", "org.kde.KIOFuse", "/org/kde/KIOFuse", "org.kde.KIOFuse.VFS", "mountUrl", "s", kio_url], output, true)
-		var text: String = "".join(output).strip_edges()
-		if code == 0 and text.begins_with("s \""):
-			var path := _unescape_busctl(text.substr(3, text.length() - 4))
-			if DirAccess.dir_exists_absolute(path) or FileAccess.file_exists(path):
-				return {"path": path}
-		elif not text.contains("ServiceUnknown") and not text.contains("not activatable"):
-			if not _has_command("gio"):
-				return {"error": text if not text.is_empty() else "Could not connect"}
+		var result := await _command("busctl", ["--user", "--timeout=30", "call", "org.kde.KIOFuse", "/org/kde/KIOFuse", "org.kde.KIOFuse.VFS", "mountUrl", "s", kio_url], serial, deadline)
+		if serial != mount_serial or result.get("cancelled", false) or result.get("error") == "Operation timed out":
+			return result
+		var text := str(result.get("output", "")).strip_edges()
+		if result.get("ok", false) and text.begins_with("s \""):
+			var checked := await _check_path(_unescape_busctl(text.substr(3, text.length() - 4)), serial, deadline)
+			if checked.get("ok", false) or serial != mount_serial or checked.get("error") == "Operation timed out":
+				return checked
+		elif not _has_command("gio"):
+			return {"error": str(result.get("error", "")) if not str(result.get("error", "")).is_empty() else "Could not connect"}
+	if serial != mount_serial:
+		return {"cancelled": true}
 	if _has_command("gio"):
 		var gio_url := url
 		if kind == "webdav":
 			gio_url = "dav" + url.substr(6)
 		elif kind == "webdavs":
 			gio_url = "davs" + url.substr(7)
-		var output := []
-		OS.execute("gio", ["mount", gio_url], output, true)
-		var info := []
-		OS.execute("gio", ["info", gio_url], info, true)
-		for line: String in "".join(info).split("\n"):
+		var mounted_result := await _command("gio", ["mount", gio_url], serial, deadline)
+		if serial != mount_serial or mounted_result.get("cancelled", false) or mounted_result.get("error") == "Operation timed out":
+			return mounted_result
+		var info := await _command("gio", ["info", gio_url], serial, deadline)
+		if serial != mount_serial or info.get("cancelled", false) or info.get("error") == "Operation timed out":
+			return info
+		for line: String in str(info.get("output", "")).split("\n"):
 			if line.strip_edges().begins_with("local path:"):
-				var path := line.split(":", true, 1)[1].strip_edges()
-				if DirAccess.dir_exists_absolute(path) or FileAccess.file_exists(path):
-					return {"path": path}
-		return {"error": "".join(output).strip_edges() if not "".join(output).strip_edges().is_empty() else "Could not connect"}
+				return await _check_path(line.split(":", true, 1)[1].strip_edges(), serial, deadline)
+		return {"error": str(mounted_result.get("error", "")) if not str(mounted_result.get("error", "")).strip_edges().is_empty() else "Could not connect"}
 	return {"error": "Network shares need kio-fuse (KDE) or gvfs (GNOME)"}
 
 
-func _unescape_busctl(text: String) -> String:
+static func _unescape_busctl(text: String) -> String:
 	var bytes := PackedByteArray()
 	var i := 0
 	var raw := text.to_utf8_buffer()
@@ -185,18 +231,14 @@ func _unescape_busctl(text: String) -> String:
 	return bytes.get_string_from_utf8()
 
 
-func _windows_share(url: String, kind: String) -> Dictionary:
-	if kind != "smb":
-		return {"error": "Only Windows / Samba shares are supported on Windows"}
+static func _windows_share_path(url: String) -> String:
 	var rest := url.substr(url.find("://") + 3)
 	var host_end := rest.find("/")
 	var host := rest.substr(0, host_end if host_end >= 0 else rest.length())
 	host = host.substr(host.rfind("@") + 1)
 	var share_path := rest.substr(host_end) if host_end >= 0 else ""
 	var path := ("\\\\" + host + share_path.uri_decode()).replace("/", "\\").trim_suffix("\\")
-	if DirAccess.dir_exists_absolute(path) or FileAccess.file_exists(path):
-		return {"path": path}
-	return {"error": "Could not open %s (sign in to the share in File Explorer first)" % path}
+	return path
 
 
 func _has_command(command: String) -> bool:

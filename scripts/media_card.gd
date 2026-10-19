@@ -288,8 +288,10 @@ func refresh() -> void:
 		for part in [context, format, resolution, status if not status.is_empty() else ("" if is_dir and not single else _size_text(media))]:
 			if not part.is_empty():
 				parts.append(part)
-		meta_label.text = "  ·  ".join(parts)
-		side_label.text = length
+		if meta_label != null:
+			meta_label.text = "  ·  ".join(parts)
+		if side_label != null:
+			side_label.text = length
 	if progress != null:
 		progress.visible = resume_at > 0.0 and duration > 0.0
 		progress.value = clampf(resume_at / maxf(duration, 1.0), 0.0, 1.0)

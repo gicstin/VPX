@@ -182,6 +182,8 @@ func _on_load_changed(state: Dictionary) -> void:
 			title.text = "Buffering media"
 			stage("Waiting for the stream to continue…")
 		"failed":
+			if request_mode == "disc" and is_instance_valid(ui.disc_job):
+				return
 			if source != state["path"]:
 				begin(state["path"], state.get("options", {}))
 			fail(state["message"], state.get("details", ""), state.get("kind", "decode"))
@@ -240,6 +242,7 @@ func _restore_focus() -> void:
 
 func cancel() -> void:
 	generation += 1
+	ui.cancel_disc_open()
 	mount_source = ""
 	ui.resolving_path = ""
 	ui.web.cancel()
@@ -287,7 +290,7 @@ func _locate() -> void:
 		return
 	picker = QuickPanel.SubtitleFilePicker.new()
 	var directory := source.get_base_dir()
-	if not DirAccess.dir_exists_absolute(directory):
+	if directory.is_empty() or directory.contains("://"):
 		directory = ui.directory
 	picker.configure(directory, PackedStringArray(), "Locate media file", "Open file")
 	picker.z_index = 105

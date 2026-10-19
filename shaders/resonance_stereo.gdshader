@@ -1694,6 +1694,180 @@ Pulse pan_trails(vec3 v, float id, float count) {
 	return hidden();
 }
 
+vec3 orrery_point(float band, float layer, float along, float channel) {
+	vec4 f = band_at(band, along * 2.6);
+	float level = gate(channel < 0.5 ? f.z : f.w);
+	float angle = along * TAU + layer * 0.42 + spin * 0.13 * (channel < 0.5 ? 1.0 : -1.0);
+	float radius = 2.2 + band * 5.6 + level * 0.65;
+	vec3 p = vec3(cos(angle) * radius, sin(angle) * radius, 0.0);
+	float tilt = layer * 0.31 + 0.35;
+	p.yz = mat2(vec2(cos(tilt), sin(tilt)), vec2(-sin(tilt), cos(tilt))) * p.yz;
+	p.xz = mat2(vec2(0.9, 0.4359), vec2(-0.4359, 0.9)) * p.xz;
+	return p + vec3(0.0, 0.8, -11.0);
+}
+
+Pulse celestial_orrery(vec3 v, float id, float count, vec4 c) {
+	if (shape == 0) {
+		float channel = mod(id, 2.0);
+		float band = floor(id / 2.0) / max(1.0, floor(count / 2.0) - 1.0);
+		float layer = floor(id / 12.0);
+		vec4 f = band_at(band, v.x * 2.6);
+		float level = gate(channel < 0.5 ? f.z : f.w);
+		vec3 p = orrery_point(band, layer, v.x, channel);
+		vec3 next = orrery_point(band, layer, v.x + 0.002, channel);
+		vec3 tint = mix(channel < 0.5 ? vec3(0.08, 0.65, 1.0) : vec3(1.0, 0.6, 0.18), band_colour(band), 0.28);
+		return make(ribbon(p, next, v.y * (0.02 + level * 0.045)), tint, (0.035 + level * 0.65) * intensity, v.y);
+	} else if (shape == 1) {
+		float band = c.x;
+		vec4 f = band_at(band, c.z * 3.2);
+		float level = gate(mod(id, 2.0) < 0.5 ? f.z : f.w);
+		vec3 p = orrery_point(band, floor(c.y * 12.0), fract(c.z + spin * 0.02), mod(id, 2.0));
+		return make(p + v * (0.015 + level * 0.045), mix(band_colour(band), vec3(0.85, 0.95, 1.0), 0.55), level * (0.3 + c.w * 0.8) * intensity, 0.0);
+	} else if (shape == 2) {
+		float angle = v.x * TAU;
+		float radius = 1.1 + id / count * 0.75 + bass * 0.45;
+		vec3 p = vec3(cos(angle) * radius, sin(angle) * radius, sin(angle * 3.0 + spin * 0.2 + id) * 0.3);
+		return make(p + vec3(0.0, 0.8, -11.0) + normalize(p) * v.y * 0.018, mix(vec3(0.3, 0.5, 1.0), vec3(1.0, 0.8, 0.4), id / count), (0.045 + bass * 0.16) * intensity, v.y);
+	} else {
+		float angle = v.x * TAU;
+		vec3 p = dome(angle, sin(angle * 2.0 + id) * 0.3) * (13.0 + id * 0.3);
+		return make(p + vec3(0.0, 0.0, -5.0) + normalize(p) * v.y * 0.025, vec3(0.15, 0.3, 0.55), (0.025 + mids * 0.035) * intensity, v.y);
+	}
+}
+
+vec3 garden_point(float seed, float band, float along, float channel) {
+	float angle = seed * TAU;
+	float radius = 5.0 + hash(seed * 81.0) * 15.0;
+	vec4 f = band_at(band, (1.0 - along) * 3.2);
+	float level = gate(channel < 0.5 ? f.z : f.w);
+	float height = 3.0 + hash(seed * 37.0) * 5.0;
+	vec3 root = vec3(sin(angle) * radius, -3.2, cos(angle) * radius - 4.0);
+	float sway = sin(along * 4.5 + clock * motion * 0.35 + seed * 31.0);
+	return root + vec3(sway * along * along * (0.5 + level * 1.8), along * height, cos(along * 5.0 + seed * 19.0 + spin * 0.2) * along * 0.8);
+}
+
+Pulse abyssal_garden(vec3 v, float id, float count, vec4 c) {
+	if (shape == 0) {
+		float seed = (id + 0.5) / count;
+		float channel = mod(id, 2.0);
+		float band = fract(id * 0.618034);
+		vec4 f = band_at(band, (1.0 - v.x) * 3.2);
+		float level = gate(channel < 0.5 ? f.z : f.w);
+		vec3 p = garden_point(seed, band, v.x, channel);
+		vec3 next = garden_point(seed, band, v.x + 0.002, channel);
+		float nodes = pow(0.5 + 0.5 * cos(v.x * 90.0 - spin * 0.3 + seed * 12.0), 6.0);
+		vec3 tint = mix(channel < 0.5 ? vec3(0.02, 0.95, 0.65) : vec3(0.55, 0.16, 1.0), vec3(0.5, 1.0, 1.0), nodes * v.x);
+		return make(ribbon(p, next, v.y * (0.02 + sin(v.x * PI) * (0.07 + level * 0.12))), tint, (0.03 + level * (0.15 + nodes * 1.1)) * intensity, v.y);
+	} else if (shape == 1) {
+		vec4 f = band_at(c.x, c.w * 3.0);
+		float level = gate(mod(id, 2.0) < 0.5 ? f.z : f.w);
+		float angle = c.z * TAU + spin * 0.015;
+		float rise = fract(c.y + clock * motion * (0.006 + c.w * 0.012));
+		vec3 p = vec3(sin(angle) * (4.0 + c.x * 22.0), -3.0 + rise * 12.0, cos(angle) * (4.0 + c.x * 22.0) - 4.0);
+		float fade = smoothstep(0.0, 0.12, rise) * (1.0 - smoothstep(0.75, 1.0, rise));
+		return make(p + v * (0.018 + level * 0.045), mix(vec3(0.05, 0.8, 0.65), vec3(0.5, 0.45, 1.0), c.x), fade * level * (0.3 + c.w) * intensity, 0.0);
+	} else if (shape == 2) {
+		float angle = v.x * TAU;
+		float radius = 2.5 + id / count * 28.0;
+		vec4 f = band_at(fract(id * 0.618034), 0.0);
+		vec3 p = vec3(sin(angle) * radius, -3.3 + sin(angle * 8.0 + radius - travel * 0.3) * (0.08 + bass * 0.2), cos(angle) * radius - 4.0);
+		return make(p + vec3(0.0, v.y * 0.022, 0.0), mix(vec3(0.015, 0.2, 0.3), vec3(0.02, 0.8, 0.65), f.y), (0.05 + gate(f.y) * 0.16) * intensity, v.y);
+	}
+	return hidden();
+}
+
+vec3 sanctuary_point(float layer, float along, float channel) {
+	float angle = along * TAU;
+	vec4 f = band_at(fract(along * 2.0), layer / 19.0 * 3.2);
+	float level = gate(channel < 0.5 ? f.z : f.w);
+	float facets = 8.0;
+	float polygon = cos(PI / facets) / cos(mod(angle, TAU / facets) - PI / facets);
+	float radius = (4.2 + width * 0.8 + level * 0.35) * polygon;
+	return vec3(cos(angle) * radius, sin(angle) * radius + 1.0, 8.5 - layer * 2.2);
+}
+
+Pulse prism_sanctuary(vec3 v, float id, float count, vec4 c) {
+	if (shape == 0) {
+		float channel = mod(id, 2.0);
+		float layer = floor(id / 8.0);
+		float inset = mod(floor(id / 2.0), 4.0) * 0.045;
+		vec3 p = sanctuary_point(layer, v.x, channel);
+		p.xy *= 1.0 + inset;
+		p.z -= channel * 0.22;
+		vec3 next = sanctuary_point(layer, v.x + 0.002, channel);
+		next.xy *= 1.0 + inset;
+		next.z -= channel * 0.22;
+		vec4 f = band_at(fract(v.x * 2.0), layer * 0.14);
+		float level = gate(channel < 0.5 ? f.z : f.w);
+		vec3 tint = mix(channel < 0.5 ? vec3(0.12, 0.7, 1.0) : vec3(1.0, 0.18, 0.5), vec3(0.9, 0.7, 1.0), inset * 3.0);
+		return make(ribbon(p, next, v.y * (0.035 + level * 0.04)), tint, (0.04 + level * 0.8) / (1.0 + layer * 0.08) * intensity, v.y);
+	} else if (shape == 1) {
+		float depth = c.y * 30.0;
+		vec4 f = band_at(c.x, depth / 30.0 * 3.2);
+		float level = gate(mod(id, 2.0) < 0.5 ? f.z : f.w);
+		float angle = c.z * TAU + spin * 0.025;
+		float radius = 0.8 + c.w * 3.1;
+		vec3 p = vec3(cos(angle) * radius, sin(angle) * radius + 1.0, -5.0 - depth);
+		return make(p + v * (0.015 + level * 0.06), mix(vec3(0.2, 0.65, 1.0), vec3(1.0, 0.4, 0.7), c.x), level * (0.2 + pow(c.w, 6.0) * 1.4) * intensity, 0.0);
+	} else if (shape == 2) {
+		float angle = floor(id / 3.0) / max(1.0, floor(count / 3.0)) * TAU;
+		float offset = mod(id, 3.0) * 0.035;
+		float radius = 4.3 + offset + width * 0.8;
+		vec3 p = vec3(cos(angle) * radius, sin(angle) * radius + 1.0, 8.5 - v.x * 44.0);
+		return make(p + vec3(cos(angle), sin(angle), 0.0) * v.y * 0.02, mix(vec3(0.2, 0.4, 0.9), vec3(0.9, 0.5, 0.3), mod(id, 3.0) / 2.0), (0.055 + mids * 0.14) * (1.0 - v.x * 0.65) * intensity, v.y);
+	} else {
+		float angle = v.x * TAU;
+		float petal = 1.6 + 0.65 * cos(angle * 8.0 + id * 0.15 + spin * 0.1);
+		vec3 p = vec3(cos(angle) * petal, sin(angle) * petal + 1.0, -16.0 - id * 0.7);
+		return make(p + vec3(cos(angle), sin(angle), 0.0) * v.y * 0.035, mix(vec3(0.2, 0.8, 1.0), vec3(1.0, 0.55, 0.15), id / count), (0.08 + bass * 0.3) * intensity, v.y);
+	}
+}
+
+vec3 plasma_point(float band, float along, float channel) {
+	vec4 f = band_at(band, along * 3.2);
+	float level = gate(channel < 0.5 ? f.z : f.w);
+	float angle = along * TAU * 2.5 + band * TAU + spin * 0.16 * (channel < 0.5 ? 1.0 : -1.0);
+	float radius = 1.8 + along * 7.0 + level * 0.5 + bass * 0.3;
+	return vec3(cos(angle) * radius, sin(angle) * radius * 0.36 + sin(along * PI) * level * 1.4, sin(angle) * radius * 0.65) + vec3(0.0, 0.7, -12.0);
+}
+
+Pulse solar_crucible(vec3 v, float id, float count, vec4 c) {
+	if (shape == 0) {
+		float band = floor(id / 2.0) / max(1.0, floor(count / 2.0) - 1.0);
+		float channel = mod(id, 2.0);
+		vec4 f = band_at(band, v.x * 3.2);
+		float level = gate(channel < 0.5 ? f.z : f.w);
+		vec3 p = plasma_point(band, v.x, channel);
+		vec3 next = plasma_point(band, v.x + 0.002, channel);
+		vec3 tint = mix(channel < 0.5 ? vec3(1.0, 0.27, 0.025) : vec3(0.85, 0.06, 0.48), vec3(1.0, 0.9, 0.45), level * (1.0 - v.x));
+		return make(ribbon(p, next, v.y * (0.025 + level * 0.06)), tint, (0.025 + level * 0.6) * (1.0 - v.x * 0.6) * intensity, v.y);
+	} else if (shape == 1) {
+		float age = fract(c.y + clock * motion * (0.025 + c.z * 0.025));
+		vec4 f = band_at(c.x, age * 3.0);
+		float level = gate(mod(id, 2.0) < 0.5 ? f.z : f.w);
+		float angle = c.w * TAU + age * 0.5;
+		float radius = 1.8 + age * (9.0 + c.z * 8.0);
+		vec3 p = dome(angle, (c.x - 0.5) * 1.4) * radius + vec3(0.0, 0.7, -12.0);
+		float fade = sin(age * PI);
+		return make(p + v * (0.02 + level * 0.04), mix(vec3(1.0, 0.16, 0.03), vec3(1.0, 0.8, 0.4), 1.0 - age), fade * level * (0.25 + treble * 0.5) * intensity, 0.0);
+	} else if (shape == 2) {
+		float angle = v.x * TAU;
+		float az = id / count * TAU + spin * 0.07;
+		vec4 f = band_at(id / count, 0.0);
+		float level = gate(f.y);
+		float radius = 1.5 + bass * 0.4 + sin(angle * 3.0 + az * 5.0) * 0.12;
+		vec3 p = vec3(cos(angle) * cos(az), sin(angle), cos(angle) * sin(az)) * radius;
+		return make(p + normalize(p) * v.y * 0.025 + vec3(0.0, 0.7, -12.0), mix(vec3(1.0, 0.2, 0.025), vec3(1.0, 0.85, 0.35), level), (0.055 + level * 0.28) * intensity, v.y);
+	} else {
+		float angle = id / count * TAU;
+		float arch = v.x * PI;
+		vec3 radial = vec3(cos(angle), 0.0, sin(angle));
+		vec3 p = radial * (1.5 + sin(arch) * (2.0 + mids * 2.0));
+		p.y = cos(arch) * (1.9 + bass * 0.5);
+		return make(p + radial * v.y * 0.04 + vec3(0.0, 0.7, -12.0), vec3(1.0, 0.4, 0.08), (0.08 + mids * 0.3) * intensity, v.y);
+	}
+}
+
 void vertex() {
 	float id = float(INSTANCE_ID);
 	float count = max(1.0, float(instance_count));
@@ -1781,8 +1955,18 @@ void vertex() {
 		p = pan_trails(VERTEX, id, count);
 	} else if (stereo_style == 40) {
 		p = dual_waveform(VERTEX, id, count);
-	} else {
+	} else if (stereo_style == 41) {
 		p = spectral_balance(VERTEX, id, count);
+	} else if (stereo_style == 42) {
+		p = celestial_orrery(VERTEX, id, count, c);
+	} else if (stereo_style == 43) {
+		p = abyssal_garden(VERTEX, id, count, c);
+	} else if (stereo_style == 44) {
+		p = prism_sanctuary(VERTEX, id, count, c);
+	} else if (stereo_style == 45) {
+		p = solar_crucible(VERTEX, id, count, c);
+	} else {
+		p = hidden();
 	}
 	VERTEX = p.point;
 	colour = p.colour;

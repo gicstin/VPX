@@ -10,6 +10,7 @@ signal recenter_requested
 signal reset_position_requested
 signal level_requested
 
+const BackgroundTask := preload("res://scripts/background_task.gd")
 const VIDEO_EXTENSIONS := ["mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "m2ts", "vob", "wmv", "flv", "mpg", "mpeg"]
 const DISC_EXTENSIONS := ["iso"]
 const FormatDetector := preload("res://scripts/format_detector.gd")
@@ -54,6 +55,7 @@ const CHEAT_SHEET := [
 	["A / X", "Play / pause, or click when pointing at the menu"],
 	["B / Y", "Menu"],
 	["Hold stick click 1 s", "Recenter"],
+	["Tap stick click (music)", "Next music scene"],
 	["Grip + A / X", "Favourite what is playing"],
 	["Stick ◀ ▶", "Seek 10 s, hold to speed up"],
 	["Trigger + stick ◀ ▶", "Seek 1 min"],
@@ -135,6 +137,11 @@ const NAV_KEYS := [KEY_TAB, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_ENTER, KE
 @export var player: VPXPlayer
 
 var directory := Settings.last_directory
+var directory_fallbacks := true
+var paths_job: Node
+var paths_serial := 0
+var saved_path_info := {}
+var places_cache: Array = []
 var playlist: PackedStringArray = []
 var music_playlist: PackedStringArray = []
 var listing: PackedStringArray = []
@@ -164,6 +171,8 @@ var scan_started_msec := -1
 var scan_hint: Label
 var updating_slider := false
 var seeking := false
+var seek_edit_serial := 0
+var seek_media_serial := -1
 var stats_timer := STATS_INTERVAL
 var clock_timer := 0.0
 var shuffle := Shuffle.new()
@@ -209,6 +218,7 @@ var archive_members := PackedStringArray()
 var sacd_path := ""
 var sacd_info_cache := {}
 var sacd_serial := 0
+var disc_job: DiscImage
 var sacd_popup: PopupMenu
 var archive_popup: PopupMenu
 var removing_servers := false
@@ -224,6 +234,7 @@ var rail_slot: Control
 var rail_scroll: ScrollContainer
 var rail_overlay: Panel
 var rail_width := RAIL_COLLAPSED
+var rail_expanded_width := RAIL_EXPANDED
 var rail_open := false
 var rail_hover_time := 0.0
 var rail_away_time := 0.0
@@ -355,8 +366,6 @@ func _ready() -> void:
 	scanner.finished.connect(_on_scan_finished)
 	scanner.cover_found.connect(_on_cover_found)
 	add_child(scanner)
-	if Settings.library_source == Settings.LibrarySource.FOLDER:
-		Library.mark_folder_visited(directory)
 	refresh_directory()
 	_refresh_now_playing()
 	page_scroll.follow_focus = true
@@ -454,6 +463,7 @@ func _build_rail() -> void:
 	rail.position = Vector2.ZERO
 	var brand: HBoxContainer = rail.get_node("Brand")
 	brand.alignment = BoxContainer.ALIGNMENT_BEGIN
+	brand.add_theme_constant_override("separation", 0)
 	%Logo.custom_minimum_size.x = RAIL_COLLAPSED
 	brand.get_node("BrandName").clip_text = true
 	brand.get_node("BrandName").size_flags_horizontal = SIZE_EXPAND_FILL
@@ -463,8 +473,24 @@ func _build_rail() -> void:
 	var search: Button = tabs.get_node("SettingsSearch")
 	search.clip_text = true
 	search.pressed.connect(_collapse_rail)
+	search.theme_changed.connect(_fit_rail_width.call_deferred)
 	rail_slot.custom_minimum_size.y = 0
+	_fit_rail_width()
 	_layout_rail()
+
+
+func _fit_rail_width() -> void:
+	rail_expanded_width = RAIL_EXPANDED
+	for button: Button in nav_buttons + [tabs.get_node("SettingsSearch"), %ModeButton, %CloseButton, %QuitButton]:
+		var width := button.get_theme_font("font").get_string_size(button.text, HORIZONTAL_ALIGNMENT_LEFT, -1, button.get_theme_font_size("font_size")).x
+		width += button.get_theme_stylebox("normal").get_minimum_size().x
+		if button.icon != null:
+			var icon_width := float(button.icon.get_width())
+			var max_width := button.get_theme_constant("icon_max_width")
+			if max_width > 0:
+				icon_width = minf(icon_width, max_width)
+			width += icon_width + button.get_theme_constant("h_separation")
+		rail_expanded_width = maxf(rail_expanded_width, ceilf(width) + rail_scroll.get_v_scroll_bar().get_combined_minimum_size().x)
 
 
 func set_display_mode(desktop: bool, switching := false) -> void:
@@ -495,7 +521,7 @@ func _update_rail(delta: float) -> void:
 		rail_away_time += delta
 		if rail_away_time >= RAIL_CLOSE_DELAY:
 			rail_open = false
-	var target := RAIL_EXPANDED if rail_open else RAIL_COLLAPSED
+	var target := rail_expanded_width if rail_open else RAIL_COLLAPSED
 	rail_width = lerpf(rail_width, target, 1.0 - exp(-RAIL_EASE * delta))
 	if absf(rail_width - target) < 0.5:
 		rail_width = target
@@ -743,6 +769,7 @@ func opening_media() -> bool:
 
 
 func open_media(path: String, extra := {}) -> void:
+	cancel_disc_open()
 	recovery.mount_source = ""
 	network.cancel_mount()
 	player.cancel_open()
@@ -751,6 +778,9 @@ func open_media(path: String, extra := {}) -> void:
 		web.cancel()
 	if path.get_extension().to_lower() in ArchiveFiles.ARCHIVE_EXTENSIONS:
 		_open_archive(path)
+		return
+	if path.get_extension().to_lower() == "iso":
+		await _open_disc(path, extra)
 		return
 	if not WebVideo.needs_resolve(path):
 		await player.open(path, extra)
@@ -964,7 +994,7 @@ func _build_network() -> void:
 		recovery.mount_source = ""
 		network_status = ""
 		recovery.complete(false)
-		if DirAccess.dir_exists_absolute(path):
+		if network.mounted_is_directory:
 			open_directory(path)
 			return
 		open_directory(path.get_base_dir())
@@ -1143,6 +1173,7 @@ func _normalized_url(text: String, share := false) -> String:
 
 
 func _connect_share(url: String) -> void:
+	cancel_disc_open()
 	var waiting := network.is_mounting()
 	player.cancel_open()
 	resolving_path = ""
@@ -1337,7 +1368,10 @@ func _connect_controls() -> void:
 		control.gui_input.connect(_on_volume_nudge_input)
 	shuffle_button.toggled.connect(func(on: bool) -> void: Settings.apply("shuffle", on))
 	end_button.pressed.connect(func() -> void: Settings.apply("end_action", wrapi(Settings.end_action + 1, 0, END_ACTIONS.size())))
-	seek_slider.drag_started.connect(func() -> void: seeking = true)
+	seek_slider.drag_started.connect(func() -> void:
+		seek_edit_serial += 1
+		seeking = true
+		seek_media_serial = player.open_serial)
 	seek_slider.drag_ended.connect(_on_seek_ended)
 	seek_slider.value_changed.connect(_on_seek_value)
 	seek_slider.gui_input.connect(_on_seek_hover)
@@ -1521,17 +1555,28 @@ func _refresh_photo_source_note() -> void:
 
 
 func _on_seek_value(value: float) -> void:
-	# Seek only on drag_ended. value_changed can fire before drag_started on click,
-	# which paired with drag_ended caused an immediate + delayed double seek.
+	if updating_slider:
+		return
+	seek_edit_serial += 1
 	if seeking:
 		_show_bubble(value, _slider_x(value))
+	else:
+		_commit_seek_value.call_deferred(value, seek_edit_serial, player.open_serial)
+
+
+func _commit_seek_value(value: float, serial: int, media_serial: int) -> void:
+	if serial != seek_edit_serial or media_serial != player.open_serial or seeking or not seek_slider.editable:
+		return
+	player.seek_to(value)
+	seek_slider.set_value_no_signal(value)
 
 
 func _on_seek_ended(changed: bool) -> void:
+	seek_edit_serial += 1
 	seeking = false
 	seek_bubble.visible = false
 	previews.stop(self)
-	if changed and seek_slider.editable:
+	if changed and seek_slider.editable and seek_media_serial == player.open_serial:
 		player.seek_to(seek_slider.value)
 
 
@@ -1964,10 +2009,11 @@ func _on_cover_found(path: String, cover: Dictionary) -> void:
 
 
 func open_directory(path: String) -> void:
-	if not DirAccess.dir_exists_absolute(path):
+	cancel_disc_open()
+	if path.is_empty():
 		return
 	directory = _clean_directory(path)
-	Library.mark_folder_visited(directory)
+	directory_fallbacks = false
 	Settings.apply("last_directory", directory)
 	Settings.apply("library_source", Settings.LibrarySource.FOLDER)
 	refresh_directory()
@@ -1977,12 +2023,14 @@ func _select_source(source: int) -> void:
 	if Settings.library_source == source:
 		return
 	Settings.apply("library_source", source)
-	if source == Settings.LibrarySource.FOLDER:
-		Library.mark_folder_visited(directory)
 	refresh_directory()
 
 
-func refresh_directory() -> void:
+func refresh_directory(check_paths := true) -> void:
+	paths_serial += 1
+	if is_instance_valid(paths_job):
+		paths_job.cancel()
+	paths_job = null
 	MediaInfo.cancel_pending()
 	scanner.cancel()
 	scanner.clear_covers()
@@ -2010,11 +2058,11 @@ func refresh_directory() -> void:
 		media_grid = _section(1, 0, file_list.get_theme_constant("separation"), MediaCard.Layout.ROW)
 	match Settings.library_source:
 		Settings.LibrarySource.RECENT:
-			_list_recent()
+			_list_recent(check_paths)
 		Settings.LibrarySource.FAVORITES:
-			_list_favorites()
+			_list_favorites(check_paths)
 		Settings.LibrarySource.PLACES:
-			_list_places()
+			_list_places(check_paths)
 		Settings.LibrarySource.NETWORK:
 			_list_network()
 		_:
@@ -2049,7 +2097,7 @@ func _start_scan() -> void:
 	var query := Settings.library_query.strip_edges()
 	var filter := _scan_filter()
 	if query.is_empty() or Settings.library_flat_view:
-		scanner.folder(directory, Settings.library_sort, _folder_fallbacks(), filter, Settings.library_flat_view, query.to_lower().split(" ", false))
+		scanner.folder(directory, Settings.library_sort, _folder_fallbacks() if directory_fallbacks else PackedStringArray(), filter, Settings.library_flat_view, query.to_lower().split(" ", false))
 	else:
 		scanner.search(directory, query.to_lower().split(" ", false), Settings.library_sort, SEARCH_MAX_FOLDERS, SEARCH_MAX_DEPTH, SEARCH_MAX_RESULTS, filter)
 
@@ -2086,13 +2134,16 @@ func _show_scan(result: Dictionary) -> void:
 	if result.get("error", false):
 		scan_started_msec = -1
 		_end_scan_hint()
-		_add_hint("This folder cannot be opened")
+		_add_hint("This folder stopped responding. Choose another location or retry." if result.get("message") == "Operation timed out" else "This folder cannot be opened")
 		return
 	if result["kind"] == "folder" and result["path"] != directory:
 		directory = result["path"]
-		Library.mark_folder_visited(directory)
 		_build_crumbs()
 		up_button.disabled = _is_root(directory)
+	if result["kind"] == "folder":
+		directory_fallbacks = false
+		Library.mark_folder_visited(directory)
+		Settings.apply("last_directory", directory)
 	var folders: PackedStringArray = result["folders"]
 	var files: PackedStringArray = result["files"]
 	folder_grid.set_items(folders)
@@ -2125,67 +2176,140 @@ func _show_scan(result: Dictionary) -> void:
 		disc_status = ""
 
 
-func _list_recent() -> void:
+func _list_recent(check_paths := true) -> void:
 	var folders := Array(Library.recent_folders(RECENT_LIMIT)).filter(_query_matches)
 	var paths := Array(Library.recent_paths(RECENT_LIMIT)).filter(_wanted)
 	for path: String in folders:
-		_queue_item(path, true, "", _short_dir(path.get_base_dir()))
+		_queue_item(path, true, "", _saved_context(path))
 	for path: String in paths:
-		_queue_item(path, false, "", _short_dir(path.get_base_dir()))
+		_queue_item(path, false, "", _saved_context(path))
+	if check_paths:
+		_check_saved_paths(PackedStringArray(folders + paths))
 	_set_count(folders.size(), paths.size())
 	if folders.is_empty() and paths.is_empty():
 		_add_hint("Nothing matches" if _narrowed() else "No recent folders or media yet")
 
 
-func _list_favorites() -> void:
+func _list_favorites(check_paths := true) -> void:
 	var folders: Array[String] = []
 	var files: Array[String] = []
 	for path in Library.favorite_paths():
-		if DirAccess.dir_exists_absolute(path):
+		var info: Dictionary = saved_path_info.get(path, {})
+		if info.get("is_directory", Library.get_pref(path, "is_directory", Library.get_pref(path, "folder_visited") != null)):
 			folders.append(path)
-		elif FileAccess.file_exists(path) or path.contains("://"):
+		else:
 			files.append(path)
+	if check_paths:
+		_check_saved_paths(Library.favorite_paths())
 	folders = _sorted(_keep(folders, _query_matches), true)
 	files = _sorted(_keep(files, _wanted), false)
 	for path in folders:
-		_queue_item(path, true, "", _short_dir(path.get_base_dir()))
+		_queue_item(path, true, "", _saved_context(path))
 	for path in files:
-		_queue_item(path, false, "", _short_dir(path.get_base_dir()))
+		_queue_item(path, false, "", _saved_context(path))
 	_set_count(folders.size(), files.size())
 	if folders.is_empty() and files.is_empty():
 		_add_hint("No favourites yet — tap the star on any folder, video or photo")
 
 
-func _list_places() -> void:
+func _saved_context(path: String) -> String:
+	var info: Dictionary = saved_path_info.get(path, {})
+	return ("Unavailable · " if info.get("available") == false else "") + _short_dir(path.get_base_dir())
+
+
+func _check_saved_paths(paths: PackedStringArray) -> void:
+	if paths.is_empty():
+		return
+	_start_paths_job(_read_saved_paths.bind(paths))
+
+
+func _start_paths_job(action: Callable, places := false) -> void:
+	var serial := paths_serial
+	var job := BackgroundTask.start(action, 15.0)
+	paths_job = job
+	job.completed.connect(func(result: Dictionary) -> void:
+		if serial != paths_serial:
+			return
+		paths_job = null
+		if result.get("ok", false):
+			if places:
+				places_cache = result["places"]
+			else:
+				saved_path_info.merge(result["paths"], true)
+			_refresh_saved_listing())
+
+
+func _refresh_saved_listing() -> void:
+	var scroll := file_scroll.scroll_vertical
+	var focus := get_viewport().gui_get_focus_owner()
+	var focus_path: String = focus.path if focus is MediaCard else ""
+	refresh_directory(false)
+	file_scroll.set_deferred("scroll_vertical", scroll)
+	if not focus_path.is_empty():
+		for grid: VirtualGrid in [folder_grid, media_grid]:
+			var index := grid.items.find(focus_path)
+			if index >= 0:
+				grid.control_at(index).grab_focus()
+				break
+
+
+static func _read_saved_paths(token: RefCounted, paths: PackedStringArray) -> Dictionary:
+	var info := {}
+	for path in paths:
+		if token.is_cancelled():
+			return {"cancelled": true}
+		if path.contains("://"):
+			continue
+		var directory := DirAccess.dir_exists_absolute(path)
+		var available := directory or FileAccess.file_exists(path)
+		info[path] = {"available": available, "mtime": FileAccess.get_modified_time(path) if available else 0, "bytes": FileAccess.get_size(path) if available and not directory else 0}
+		if available:
+			info[path]["is_directory"] = directory
+	return {"ok": true, "paths": info}
+
+
+func _list_places(check_paths := true) -> void:
 	var home := PlatformPaths.home()
 	var places: Array = [[home, "Home", "home"]]
 	for kind in [OS.SYSTEM_DIR_MOVIES, OS.SYSTEM_DIR_DOWNLOADS, OS.SYSTEM_DIR_PICTURES, OS.SYSTEM_DIR_DOCUMENTS]:
 		var path := OS.get_system_dir(kind)
-		if not path.is_empty() and path != home and DirAccess.dir_exists_absolute(path):
+		if not path.is_empty() and path != home:
 			places.append([path, path.get_file(), "folder"])
-	if OS.get_name() == "Windows":
-		for drive in _windows_drives():
-			places.append([drive, drive.trim_suffix("/"), "drive"])
-		for place in places:
-			_queue_item(place[0], true, place[1], _short_dir(place[0]), place[2])
-		_set_count(places.size(), 0)
-		return
-	var user := OS.get_environment("USER")
-	var mounts: Array[String] = []
-	for root in ["/run/media/%s" % user, "/run/media", "/media/%s" % user, "/media", "/mnt"]:
-		if not DirAccess.dir_exists_absolute(root):
-			continue
-		for name in DirAccess.get_directories_at(root):
-			var path: String = root.path_join(name)
-			if name == user or name.begins_with(".") or path in mounts:
-				continue
-			mounts.append(path)
-	for path in mounts:
-		places.append([path, path.get_file(), "drive"])
-	places.append(["/", "Computer", "drive"])
-	for place in places:
+	var seeds := places.duplicate(true)
+	for place: Array in places_cache:
+		if not places.any(func(existing: Array) -> bool: return existing[0] == place[0]):
+			places.append(place)
+	for place: Array in places:
 		_queue_item(place[0], true, place[1], _short_dir(place[0]), place[2])
 	_set_count(places.size(), 0)
+	if check_paths:
+		_start_paths_job(_read_places.bind(seeds, OS.get_name(), OS.get_environment("USER")), true)
+
+
+static func _read_places(token: RefCounted, places: Array, platform: String, user: String) -> Dictionary:
+	if platform == "Windows":
+		for code in range(65, 91):
+			if token.is_cancelled():
+				return {"cancelled": true}
+			var path := String.chr(code) + ":/"
+			if DirAccess.dir_exists_absolute(path):
+				places.append([path, path.trim_suffix("/"), "drive"])
+	else:
+		var mounts: Array[String] = []
+		for root in ["/run/media/%s" % user, "/run/media", "/media/%s" % user, "/media", "/mnt"]:
+			if token.is_cancelled():
+				return {"cancelled": true}
+			var folder := DirAccess.open(root)
+			if folder == null:
+				continue
+			for name in folder.get_directories():
+				var path: String = root.path_join(name)
+				if name != user and not name.begins_with(".") and path not in mounts:
+					mounts.append(path)
+		for path in mounts:
+			places.append([path, path.get_file(), "drive"])
+		places.append(["/", "Computer", "drive"])
+	return {"ok": true, "places": places}
 
 
 func _narrowed() -> bool:
@@ -2378,19 +2502,15 @@ func _sorted(paths: Array[String], folders: bool) -> Array[String]:
 	match Settings.library_sort:
 		Settings.LibrarySort.DATE:
 			for path in paths:
-				keys[path] = FileAccess.get_modified_time(path) if not folders else _folder_time(path)
+				keys[path] = saved_path_info.get(path, {}).get("mtime", 0)
 			paths.sort_custom(func(a: String, b: String) -> bool: return keys[a] > keys[b] or (keys[a] == keys[b] and a.naturalnocasecmp_to(b) < 0))
 		Settings.LibrarySort.SIZE when not folders:
 			for path in paths:
-				keys[path] = FileAccess.get_size(path)
+				keys[path] = saved_path_info.get(path, {}).get("bytes", MediaInfo.entries.get(path, {}).get("bytes", 0))
 			paths.sort_custom(func(a: String, b: String) -> bool: return keys[a] > keys[b] or (keys[a] == keys[b] and a.naturalnocasecmp_to(b) < 0))
 		_:
 			paths.sort_custom(func(a: String, b: String) -> bool: return a.get_file().naturalnocasecmp_to(b.get_file()) < 0)
 	return paths
-
-
-func _folder_time(path: String) -> int:
-	return FileAccess.get_modified_time(path)
 
 
 func _set_count(folders: int, files: int, reading := false) -> void:
@@ -2464,8 +2584,10 @@ func _release_card(key: String, card: Control) -> void:
 
 
 func set_favorite(path: String, on: bool) -> void:
-	Library.set_favorite(path, on)
 	var card := _card_for(path)
+	if on and card != null:
+		Library.set_pref(path, "is_directory", card.is_dir and card.path == path)
+	Library.set_favorite(path, on)
 	if card != null:
 		card.refresh()
 	if path == _favorite_path():
@@ -2485,42 +2607,13 @@ func _is_virtual(path: String) -> bool:
 
 
 func _on_item_activated(path: String, is_dir: bool) -> void:
+	cancel_disc_open()
 	if path.get_extension().to_lower() in ArchiveFiles.ARCHIVE_EXTENSIONS:
 		_open_archive(path)
 		return
-	sacd_serial += 1
-	sacd_path = ""
-	sacd_info_cache = {}
 	disc_status = ""
-	if path.get_extension().to_lower() == "iso":
-		var is_sacd := DiscImage.is_sacd(path)
-		var iso_sacd_info: Dictionary = DiscImage.sacd_info(path)
-		if iso_sacd_info.get("ok", false):
-			sacd_info_cache = iso_sacd_info
-			sacd_path = path
-			sacd_popup.clear()
-			if not Array(sacd_info_cache.get("stereo", [])).is_empty():
-				sacd_popup.add_item("Stereo (2-channel)", 0)
-			if not Array(sacd_info_cache.get("multichannel", [])).is_empty():
-				sacd_popup.add_item("Multichannel", 1)
-			sacd_popup.popup_centered()
-			return
-		if is_sacd:
-			_set_playlist(PackedStringArray(), "")
-			disc_status = str(iso_sacd_info.get("error", "Could not read SACD tracks"))
-			refresh_directory()
-			return
-		if await player.open(path, {"input_format": "dvdvideo"}):
-			_set_playlist(PackedStringArray([path]), path)
-			return
-		var mounted := DiscImage.mount(path)
-		if mounted.get("ok", false):
-			_set_playlist(PackedStringArray(), "")
-			open_directory(mounted["path"])
-			return
-		_set_playlist(PackedStringArray(), "")
-		disc_status = str(mounted.get("error", "Could not open this ISO image"))
-		refresh_directory()
+	if path.get_extension().to_lower() == "iso" and not is_dir:
+		open_media(path)
 		return
 	if _is_virtual(path):
 		_on_network_item(path)
@@ -2545,6 +2638,93 @@ func _on_item_activated(path: String, is_dir: bool) -> void:
 	else:
 		_set_playlist(listing, path)
 	open_media(path)
+
+
+func cancel_disc_open() -> void:
+	sacd_serial += 1
+	sacd_path = ""
+	sacd_info_cache = {}
+	if sacd_popup != null:
+		sacd_popup.hide()
+	if is_instance_valid(disc_job):
+		disc_job.cancel()
+		disc_job = null
+		if recovery != null and recovery.request_mode == "disc" and recovery.status == "opening":
+			recovery.status = "cancelled"
+			recovery.hide()
+
+
+func _disc_current(job: DiscImage, serial: int) -> bool:
+	return disc_job == job and serial == sacd_serial and not job.cancelled
+
+
+func _finish_disc(job: DiscImage) -> void:
+	if disc_job == job:
+		disc_job = null
+	job.queue_free()
+
+
+func _open_disc(path: String, extra: Dictionary) -> void:
+	var job := DiscImage.new()
+	add_child(job)
+	disc_job = job
+	var serial := sacd_serial
+	recovery.begin(path, extra, "disc")
+	recovery.stage("Reading disc image…")
+	var inspected := await job.inspect(path)
+	if not _disc_current(job, serial):
+		_finish_disc(job)
+		return
+	if not inspected.get("ok", false):
+		_finish_disc(job)
+		recovery.fail(inspected.get("error", "Could not read this ISO image"), "", "disc")
+		return
+	var info: Dictionary = inspected["info"]
+	if info.get("ok", false):
+		sacd_info_cache = info
+		sacd_path = path
+		sacd_popup.clear()
+		if not Array(info.get("stereo", [])).is_empty():
+			sacd_popup.add_item("Stereo (2-channel)", 0)
+		if not Array(info.get("multichannel", [])).is_empty():
+			sacd_popup.add_item("Multichannel", 1)
+		_finish_disc(job)
+		recovery.complete(false)
+		sacd_popup.popup_centered()
+		return
+	if inspected["is_sacd"]:
+		_finish_disc(job)
+		recovery.fail(str(info.get("error", "Could not read SACD tracks")), "", "disc")
+		return
+	var options := extra.duplicate()
+	options["input_format"] = "dvdvideo"
+	var opened := await player.open(path, options)
+	if not _disc_current(job, serial):
+		_finish_disc(job)
+		return
+	if opened:
+		_finish_disc(job)
+		_set_playlist(PackedStringArray([path]), path)
+		return
+	recovery.stage("Mounting disc image…")
+	var mounted := await job.mount(path)
+	if not _disc_current(job, serial):
+		_finish_disc(job)
+		return
+	_finish_disc(job)
+	if mounted.get("ok", false):
+		recovery.complete(false)
+		_set_playlist(PackedStringArray(), "")
+		open_directory(mounted["path"])
+	else:
+		recovery.fail(str(mounted.get("error", "Could not open this ISO image")), str(mounted.get("details", "")), "disc")
+
+
+func _exit_tree() -> void:
+	paths_serial += 1
+	if is_instance_valid(paths_job):
+		paths_job.cancel()
+	cancel_disc_open()
 
 
 func _on_archive_member_selected(id: int) -> void:
@@ -2754,19 +2934,10 @@ func _is_root(path: String) -> bool:
 	return _clean_directory(path).trim_suffix("/") == _path_root(path).trim_suffix("/")
 
 
-func _windows_drives() -> PackedStringArray:
-	var drives := PackedStringArray()
-	for code in range(65, 91):
-		var path := String.chr(code) + ":/"
-		if DirAccess.dir_exists_absolute(path):
-			drives.append(path)
-	return drives
-
-
 func _folder_fallbacks() -> PackedStringArray:
 	var paths := PackedStringArray([OS.get_system_dir(OS.SYSTEM_DIR_MOVIES), PlatformPaths.home()])
 	if OS.get_name() == "Windows":
-		paths.append_array(_windows_drives())
+		paths.append(OS.get_environment("SystemDrive") + "/")
 	else:
 		paths.append("/")
 	return paths
@@ -2801,27 +2972,29 @@ func _make_focusable(node: Variant, recursive := true) -> void:
 
 
 func handle_key(event: InputEventKey) -> bool:
-	if recovery != null and is_instance_valid(recovery.picker):
-		if event.pressed and event.keycode == KEY_ESCAPE:
-			recovery.picker.cancel()
+	var modal_picker: Control
+	var candidates: Array = [recovery.picker if recovery != null else null, backup_picker, quick.picker]
+	for candidate: Variant in candidates:
+		if is_instance_valid(candidate) and candidate.visible and not candidate.is_queued_for_deletion():
+			modal_picker = candidate
+			break
+	if is_instance_valid(modal_picker) and modal_picker.visible and not modal_picker.is_queued_for_deletion():
+		if not event.pressed:
+			if forwarded_keys.erase(event.keycode):
+				get_viewport().push_input(event)
+		elif event.keycode == KEY_ESCAPE:
+			modal_picker.cancel()
 		else:
+			modal_picker.contain_focus()
 			_forward(event)
+			if is_instance_valid(modal_picker) and modal_picker.visible and not modal_picker.is_queued_for_deletion():
+				modal_picker.contain_focus()
 		return true
-	if recovery != null and recovery.visible and not is_instance_valid(recovery.picker):
+	if recovery != null and recovery.visible:
 		if event.pressed and event.keycode == KEY_ESCAPE:
 			recovery.cancel()
 		else:
 			_forward(event)
-		return true
-	if quick.has_picker():
-		if not event.pressed:
-			if forwarded_keys.erase(event.keycode):
-				get_viewport().push_input(event)
-			return true
-		if event.keycode == KEY_ESCAPE:
-			quick.close_picker()
-			return true
-		_forward(event)
 		return true
 	if not event.pressed:
 		if forwarded_keys.erase(event.keycode):
@@ -2892,7 +3065,10 @@ func handle_key(event: InputEventKey) -> bool:
 
 
 func _forward(event: InputEventKey) -> void:
-	forwarded_keys[event.keycode] = true
+	if event.pressed:
+		forwarded_keys[event.keycode] = true
+	else:
+		forwarded_keys.erase(event.keycode)
 	get_viewport().push_input(event)
 
 
@@ -3234,7 +3410,7 @@ func _build_settings_backup() -> void:
 			backup_picker = QuickPanel.SubtitleFilePicker.new()
 			add_child(backup_picker)
 			var directory := OS.get_system_dir(OS.SYSTEM_DIR_DOCUMENTS)
-			if not DirAccess.dir_exists_absolute(directory):
+			if directory.is_empty():
 				directory = PlatformPaths.home()
 			backup_picker.configure(directory, PackedStringArray(["*.cfg; VPX settings"]), "Import settings" if importing else "Export settings", "Import" if importing else "Save", not importing)
 			if not importing:

@@ -537,7 +537,8 @@ func _prepare_stream(video: FFmpegVideoStream, serial: int) -> bool:
 	opening_stream = null
 	if video.get_open_status() != 2:
 		load_error = video.get_open_error()
-		_fail_load("connection", "Could not open this stream. Check that the source is online, then retry.", load_error)
+		var remote := _network_path(video.file) or _network_path(video.audio_file)
+		_fail_load("connection" if remote else "decode", "Could not open this stream. Check that the source is online, then retry." if remote else "Could not play this file. It may be damaged or use an unsupported format.", load_error)
 		return false
 	return true
 

@@ -1,5 +1,6 @@
 .godot/
 *.import
+!assets/visualizer_previews.png.import
 .idea/
 bin/
 obj/

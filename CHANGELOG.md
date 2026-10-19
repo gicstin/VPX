@@ -6,6 +6,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-10-19
+
+### Added
+
+- Star music visualizer presets and remember favorites and the compact global Starred only button beside Disable Visualisation, including filtered forward, backward and automatic scene changes.
+- Announce published GitHub releases in Discord through a release-triggered workflow, including release changelogs and download links.
+- Choose whether music grabs move the scene with spatial audio or move audio alone, with existing desktop and VR behavior retained by default.
+
+### Changed
+
+- Reduce all music visualisation previews to 160×90 and use lossy texture compression to shrink the packaged thumbnail atlas while retaining full-size picker cards.
+
+### Fixed
+
+- Release VR slider drags outside panels and retain pointer capture across panels and tracking loss.
+- Cancel and replace network-share connections immediately, with helper deadlines and stale-result protection.
+- Keep favourites, recent locations, drive discovery and folder navigation responsive during unavailable filesystem reads, preserving unavailable saved entries.
+- Keep ISO inspection and mounting responsive, with cancellable progress, helper timeouts and stale-result protection.
+- Keep file pickers responsive during slow directory reads, path checks and cancellation.
+- Contain settings import/export keyboard focus and shortcuts, and close the picker with one Escape.
+- Commit keyboard timeline changes without duplicate drag seeks or seeks into replacement media.
+- Offer software decoding recovery for damaged local videos instead of reporting a network connection failure.
+- Keep sidebar tab highlights evenly inset and fully rounded when collapsed or expanded, with centered collapsed icons and no left-only accent border.
+- Allow Grip + A / X to toggle music favourites during visualization, matching the shortcut help.
+- Use direct Spectrum and Oscilloscope buttons for compact music display selection so both styles can be selected inside the VR panel.
+- Keep the music visual selector open after choosing a scene so users can finish selecting before closing it.
+- Remove the duplicate Music scene entry from VR shortcut help when the active shortcut already cycles music scenes.
+- Size the expanded navigation sidebar to fit its labels at larger text sizes, preventing Search settings from clipping.
+
 ## [0.0.2] - 2026-10-18
 
 ### Added

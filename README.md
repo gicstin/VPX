@@ -25,7 +25,13 @@ Use it on desktop or in VR. Music can play over photos or with a 3D visualiser t
 | Music visualiser scenes | Flat or curved cinema screen; 180° / 360°, fisheye, EAC and cubemaps | Local files, network shares, DLNA and web links |
 | Beat, bass, frequency and stereo-position response | 2D, SBS / over-under 3D and Apple spatial video | Thumbnails, search, favourites and resume |
 | Compact spectrum or oscilloscope; music over photos | Hardware decoding with software fallback, 10-bit video and HDR tone mapping | Subtitles, chapters, bookmarks and A–B loops |
-| MP3, FLAC, WAV, AAC, Ogg / Opus and more through FFmpeg | Passthrough, picture controls and head-tracked audio | Shuffle, repeat, pitch-corrected 0.5–2× speed and sleep timer |
+| AC3, DTS, multichannel FLAC, MP3, WAV, AAC, Ogg / Opus and more through FFmpeg | Passthrough, picture controls and head-tracked audio | Shuffle, repeat, pitch-corrected 0.5–2× speed and sleep timer |
+
+### Multichannel audio & 3D audio
+
+Play surround-sound music and video, including AC3 (Dolby Digital), DTS and multichannel FLAC files from DVD and Blu-ray music collections.
+
+With **Spatial audio** enabled under **Audio & subs**, VPX renders 5.1 / 7.1 multichannel audio as virtual speakers around the screen. Head-tracked 3D audio responds as you turn your head in VR, including audio rotation for 360° ambisonic sound. Mono and stereo tracks play unchanged.
 
 ## Start playing
 

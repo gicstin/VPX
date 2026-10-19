@@ -1,6 +1,12 @@
 extends SceneTree
 
+const Stimulus := preload("res://packaging/checks/music_stimulus.gd")
+const TILE_SIZE := Vector2i(160, 90)
+
 func _initialize() -> void:
+	if not preload("res://packaging/checks/isolated_data.gd").verify():
+		quit(2)
+		return
 	run.call_deferred()
 
 func run() -> void:
@@ -21,9 +27,18 @@ func run() -> void:
 	viewport.add_child(field)
 	field.active = true
 	field.set_process(false)
-	var atlas := Image.create_empty(256 * 8, 144 * ceili(settings.VISUALIZER_PRESETS.size() / 8.0), false, Image.FORMAT_RGB8)
-	for index in settings.VISUALIZER_PRESETS.size():
-		field.silence()
+	var atlas := Image.create_empty(TILE_SIZE.x * 8, TILE_SIZE.y * ceili(settings.VISUALIZER_PRESETS.size() / 8.0), false, Image.FORMAT_RGB8)
+	var start := 0
+	var args := OS.get_cmdline_user_args()
+	var from := args.find("--from")
+	if from >= 0 and from + 1 < args.size():
+		start = clampi(int(args[from + 1]), 0, settings.VISUALIZER_PRESETS.size() - 1)
+		var previous := Image.load_from_file("res://assets/visualizer_previews.png")
+		atlas.blit_rect(previous, Rect2i(Vector2i.ZERO, previous.get_size()), Vector2i.ZERO)
+	var music := Stimulus.new()
+	for index in range(start, settings.VISUALIZER_PRESETS.size()):
+		field.reset()
+		music.clear()
 		field.preset_index = index
 		field._apply_preset()
 		field._apply_quality()
@@ -36,7 +51,13 @@ func run() -> void:
 			for channel in 2:
 				for band in field.BANDS:
 					spectrum[channel * field.BANDS + band] = clampf(0.65 + 0.23 * sin(band * 0.38 + t * 4.0 + channel * 1.4) + 0.1 * cos(t * 9.0 + band), 0.0, 1.0)
-			field.feed(spectrum, {"rms": 0.18, "width": 0.65, "onset": 0.1 if frame % 30 == 0 else 0.0})
+			if index >= field.PSYCHE_START:
+				music.groove(t)
+				var sound := music.frame(1.0 / 60.0)
+				field.feed(sound["spectrum"], sound["features"])
+			else:
+				field.feed(spectrum, {"rms": 0.18, "width": 0.65, "onset": 0.1 if frame % 30 == 0 else 0.0})
+			field.beat_age = minf(4.0, field.beat_age + 1.0 / 60.0)
 			var wave := PackedFloat32Array()
 			wave.resize(512)
 			for sample in 256:
@@ -51,9 +72,9 @@ func run() -> void:
 		await process_frame
 		RenderingServer.force_draw()
 		var shot := viewport.get_texture().get_image()
-		shot.resize(256, 144, Image.INTERPOLATE_LANCZOS)
+		shot.resize(TILE_SIZE.x, TILE_SIZE.y, Image.INTERPOLATE_LANCZOS)
 		shot.convert(Image.FORMAT_RGB8)
-		atlas.blit_rect(shot, Rect2i(0, 0, 256, 144), Vector2i(index % 8 * 256, index / 8 * 144))
+		atlas.blit_rect(shot, Rect2i(Vector2i.ZERO, TILE_SIZE), Vector2i(index % 8, index / 8) * TILE_SIZE)
 		print("Preview ", index, " ", settings.VISUALIZER_PRESETS[index])
 	atlas.save_png("res://assets/visualizer_previews.png")
 	quit()

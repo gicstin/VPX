@@ -12,6 +12,10 @@ const PULSE_COUNTS := [Vector4i(64, 1600, 32, 3), Vector4i(96, 3200, 48, 3), Vec
 const PULSE_START := 17
 const STEREO_COUNTS := [Vector4i(96, 2000, 48, 16), Vector4i(128, 3600, 64, 16), Vector4i(160, 5200, 96, 16)]
 const STEREO_START := 22
+const PSYCHE_COUNTS := [Vector4i(127, 900, 24, 24), Vector4i(191, 1400, 32, 32), Vector4i(255, 2000, 48, 48)]
+const PSYCHE_LIMITS := [Vector4i(160, 2000, 6, 20), Vector4i(255, 1400, 10, 0), Vector4i(55, 1600, 7, 48), Vector4i(96, 1400, 24, 4), Vector4i(128, 1400, 6, 0), Vector4i(47, 2000, 48, 48), Vector4i(72, 1728, 6, 0), Vector4i(96, 1400, 5, 0)]
+const PSYCHE_SEGMENTS := [96, 8, 192, 96, 64, 32, 48, 96]
+const PSYCHE_START := 68
 const SPECTRAL_HISTORY_RATE := 45.0
 const WAVE_SAMPLES := 256
 const HISTORY_SAMPLES := 192
@@ -25,6 +29,8 @@ const PULSE_SHADER := preload("res://shaders/resonance_pulse.gdshader")
 const PULSE_SKY_SHADER := preload("res://shaders/resonance_pulse_sky.gdshader")
 const STEREO_SHADER := preload("res://shaders/resonance_stereo.gdshader")
 const STEREO_SKY_SHADER := preload("res://shaders/resonance_stereo_sky.gdshader")
+const PSYCHE_SHADER := preload("res://shaders/resonance_psyche.gdshader")
+const PSYCHE_SKY_SHADER := preload("res://shaders/resonance_psyche_sky.gdshader")
 
 var camera: Camera3D
 var anchor: Node3D
@@ -83,7 +89,11 @@ var spectral_history_duration := 0.0
 var scene_opacity := 1.0
 var strip_mesh: ArrayMesh
 var surface_mesh: ArrayMesh
+var psyche_meshes: Array[ArrayMesh] = []
+var ring_mesh: ArrayMesh
+var psyche_bass := 0.0
 var stereo := StereoImage.new()
+var affect := MusicAffect.new()
 
 
 func _ready() -> void:
@@ -118,6 +128,9 @@ func _ready() -> void:
 	sky.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(sky)
 	strip_mesh = _strip(256)
+	ring_mesh = _strip(64)
+	for segments in PSYCHE_SEGMENTS:
+		psyche_meshes.append(_strip(segments))
 	surface_mesh = _surface(48, 192)
 	for kind in 4:
 		var layer := MultiMeshInstance3D.new()
@@ -125,7 +138,7 @@ func _ready() -> void:
 		instances.transform_format = MultiMesh.TRANSFORM_3D
 		instances.use_custom_data = true
 		instances.mesh = _octahedron() if kind == 1 else strip_mesh
-		instances.instance_count = maxi(maxi(COUNTS[2][kind], DEPTH_COUNTS[2][kind]), maxi(PULSE_COUNTS[2][kind], STEREO_COUNTS[2][kind]))
+		instances.instance_count = maxi(maxi(maxi(COUNTS[2][kind], DEPTH_COUNTS[2][kind]), maxi(PULSE_COUNTS[2][kind], STEREO_COUNTS[2][kind])), PSYCHE_COUNTS[2][kind])
 		instances.custom_aabb = AABB(Vector3.ONE * -40.0, Vector3.ONE * 80.0)
 		var rng := RandomNumberGenerator.new()
 		rng.seed = 0x52534E43 + kind
@@ -161,13 +174,15 @@ func _settings_changed() -> void:
 
 
 func cycle_preset() -> void:
-	Settings.apply("visualizer_preset", (preset_index + 1) % Settings.VISUALIZER_PRESETS.size())
+	preset_elapsed = 0.0
+	Settings.cycle_visualizer_preset(1)
 
 
 func _apply_preset() -> void:
 	var pulse := preset_index >= PULSE_START and preset_index < STEREO_START
-	var image_scene := preset_index >= STEREO_START
-	var shader := LEGACY_SHADER if preset_index < 3 else (STEREO_SHADER if image_scene else (PULSE_SHADER if pulse else (DEPTH_SHADER if preset_index >= 7 else SHADER)))
+	var psyche := preset_index >= PSYCHE_START
+	var image_scene := preset_index >= STEREO_START and not psyche
+	var shader := LEGACY_SHADER if preset_index < 3 else (PSYCHE_SHADER if psyche else (STEREO_SHADER if image_scene else (PULSE_SHADER if pulse else (DEPTH_SHADER if preset_index >= 7 else SHADER))))
 	for kind in materials.size():
 		var material := materials[kind]
 		material.shader = shader
@@ -179,20 +194,30 @@ func _apply_preset() -> void:
 		material.set_shader_parameter("depth_style", maxi(0, preset_index - 7))
 		material.set_shader_parameter("pulse_style", maxi(0, preset_index - PULSE_START))
 		material.set_shader_parameter("stereo_style", maxi(0, preset_index - STEREO_START))
+		material.set_shader_parameter("psyche_style", maxi(0, preset_index - PSYCHE_START))
 		stereo.bind(material)
-	layers[2].multimesh.mesh = surface_mesh if preset_index >= 7 and preset_index < PULSE_START else strip_mesh
-	sky_material.shader = LEGACY_SKY_SHADER if preset_index < 3 else (STEREO_SKY_SHADER if image_scene else (PULSE_SKY_SHADER if pulse else SKY_SHADER))
+	for kind in [0, 2, 3]:
+		layers[kind].multimesh.mesh = (psyche_meshes[preset_index - PSYCHE_START] if kind == 0 else ring_mesh) if psyche else (surface_mesh if kind == 2 and preset_index >= 7 and preset_index < PULSE_START else strip_mesh)
+	sky_material.shader = LEGACY_SKY_SHADER if preset_index < 3 else (PSYCHE_SKY_SHADER if psyche else (STEREO_SKY_SHADER if image_scene else (PULSE_SKY_SHADER if pulse else SKY_SHADER)))
 	sky_material.set_shader_parameter("pulse_style", maxi(0, preset_index - PULSE_START))
 	sky_material.set_shader_parameter("stereo_style", maxi(0, preset_index - STEREO_START))
+	sky_material.set_shader_parameter("psyche_style", maxi(0, preset_index - PSYCHE_START))
 	stereo.bind(sky_material)
 	sky_material.set_shader_parameter("spectrum_texture", texture)
 	scene_opacity = 0.0
 
 
 func _apply_quality() -> void:
-	var counts: Array = LEGACY_COUNTS if preset_index < 3 else (STEREO_COUNTS if preset_index >= STEREO_START else (PULSE_COUNTS if preset_index >= PULSE_START else (DEPTH_COUNTS if preset_index >= 7 else COUNTS)))
+	var counts: Array = LEGACY_COUNTS if preset_index < 3 else (PSYCHE_COUNTS if preset_index >= PSYCHE_START else (STEREO_COUNTS if preset_index >= STEREO_START else (PULSE_COUNTS if preset_index >= PULSE_START else (DEPTH_COUNTS if preset_index >= 7 else COUNTS))))
 	for kind in layers.size():
-		layers[kind].multimesh.visible_instance_count = counts[clampi(quality, 0, 2)][kind]
+		var count: int = counts[clampi(quality, 0, 2)][kind]
+		if preset_index >= PSYCHE_START:
+			var limit: int = PSYCHE_LIMITS[preset_index - PSYCHE_START][kind]
+			count = mini(count, limit)
+			if kind == 0 and preset_index == PSYCHE_START + 1:
+				count = [127, 191, 255][clampi(quality, 0, 2)]
+		layers[kind].multimesh.visible_instance_count = count
+		materials[kind].set_shader_parameter("seed_count", mini(counts[clampi(quality, 0, 2)][1], 1600))
 		materials[kind].set_shader_parameter("instance_count", layers[kind].multimesh.visible_instance_count)
 	if active:
 		apply_render_quality()
@@ -228,6 +253,7 @@ func feed(data: PackedFloat32Array, features: Dictionary) -> void:
 	elif (channels == 2 and not features.get("ambisonic", false)) or not spatial:
 		source_count = 2
 	stereo.feed(data, source_count == 1, float(features.get("correlation", 1.0)))
+	affect.feed(data, float(features.get("rms", 0.0)))
 	for channel in 2:
 		var power := Vector3.ZERO
 		for band in BANDS:
@@ -252,7 +278,17 @@ func feed(data: PackedFloat32Array, features: Dictionary) -> void:
 	energy.x = maxf(energy.x, clampf(float(features.get("lfe", 0.0)) * 4.0, 0.0, 1.0))
 	var rise := (energy - domain_targets).max(Vector3.ZERO)
 	transients = transients.max(rise * Vector3(4.0, 5.0, 6.0)).min(Vector3.ONE)
-	if rise.x > 0.045 and energy.x > 0.08 and beat_age > 0.16:
+	var beat_rise := rise.x
+	var beat_energy := energy.x
+	if preset_index >= PSYCHE_START:
+		var low_power := 0.0
+		for band in 10:
+			var value := maxf(data[band], data[BANDS + band])
+			var magnitude := db_to_linear(value * 60.0 - 60.0) if value > 0.0 else 0.0
+			low_power += magnitude * magnitude / 10.0
+		beat_energy = sqrt(low_power) * 5.0
+		psyche_bass = beat_energy
+	if beat_rise > 0.045 and beat_energy > (0.1 if preset_index >= PSYCHE_START else 0.08) and beat_age > 0.16:
 		beat_age = 0.0
 		beat_count += 1
 	domain_targets = energy
@@ -262,6 +298,8 @@ func silence() -> void:
 	if has_audio:
 		_clear_spectrum()
 		stereo.clear()
+		affect.silence()
+		psyche_bass = 0.0
 		channel_targets = [Vector3.ZERO, Vector3.ZERO]
 		channel_levels = [Vector3.ZERO, Vector3.ZERO]
 		history_image.fill(Color(0, 0, 0, 0))
@@ -289,6 +327,8 @@ func reset() -> void:
 	travel = 0.0
 	spin = 0.0
 	surge = 0.0
+	affect.reset()
+	psyche_bass = 0.0
 	bass = 0.0
 	mids = 0.0
 	treble = 0.0
@@ -341,6 +381,12 @@ func place() -> void:
 	audio_basis = source_basis.orthonormalized().inverse() * global_basis.orthonormalized()
 
 
+func rotate_scene(rotation: Basis) -> void:
+	global_basis = (rotation * global_basis).orthonormalized()
+	var source_basis := audio_anchor.global_basis if audio_anchor != null else global_basis
+	audio_basis = source_basis.orthonormalized().inverse() * global_basis
+
+
 func _process(delta: float) -> void:
 	visible = active
 	if not active:
@@ -373,6 +419,7 @@ func _process(delta: float) -> void:
 	_update_history(delta)
 	_update_spectral_history(delta)
 	stereo.update(delta)
+	affect.update(delta, beat_count, psyche_bass, Settings.visualizer_motion)
 	scene_opacity = lerpf(scene_opacity, 1.0, 1.0 - exp(-delta * 8.0))
 	var dim := (0.2 if menu != null and menu.visible else 1.0) * scene_opacity
 	var palette := clock * 0.0025 + preset.dot(Vector3(0.0, 0.17, 0.38))
@@ -406,6 +453,7 @@ func _process(delta: float) -> void:
 		material.set_shader_parameter("preset", preset)
 		material.set_shader_parameter("dim", dim)
 		stereo.apply(material)
+		affect.apply(material)
 	sky_material.set_shader_parameter("source_count", source_count if preset_index >= 6 else 0)
 	sky_material.set_shader_parameter("channel_left", channel_levels[0])
 	sky_material.set_shader_parameter("channel_right", channel_levels[1])
@@ -423,6 +471,7 @@ func _process(delta: float) -> void:
 	sky_material.set_shader_parameter("intensity", Settings.visualizer_intensity)
 	sky_material.set_shader_parameter("dim", dim)
 	stereo.apply(sky_material)
+	affect.apply(sky_material)
 	_auto_quality(delta)
 
 

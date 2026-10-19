@@ -3,7 +3,7 @@ extends Dropdown
 signal scene_selected
 
 const THUMBNAILS := preload("res://assets/visualizer_previews.png")
-const TILE_SIZE := Vector2(256, 144)
+const TILE_SIZE := Vector2(160, 90)
 
 var external_button: Button
 var selected: Button
@@ -14,6 +14,9 @@ var more_controls: VBoxContainer
 var adjustments: Dictionary = {}
 var gallery: ScrollContainer
 var tiles: Array[Button] = []
+var favorite_buttons: Array[Button] = []
+var starred_filter: Button
+var empty_favorites: Label
 
 
 func _ready() -> void:
@@ -38,12 +41,26 @@ func _build() -> void:
 	menu = VBoxContainer.new()
 	menu.visible = false
 	column.add_child(menu)
-	disabled_button = make_button("Disable Visualisation", MENU_WIDTH)
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 8)
+	menu.add_child(actions)
+	disabled_button = make_button("Disable Visualisation", 0)
+	disabled_button.size_flags_horizontal = SIZE_EXPAND_FILL
 	disabled_button.toggle_mode = true
 	disabled_button.pressed.connect(func() -> void:
 		Settings.apply("immersive_music_visualizer", false)
 		close())
-	menu.add_child(disabled_button)
+	actions.add_child(disabled_button)
+	starred_filter = make_button("★", 60)
+	starred_filter.toggle_mode = true
+	for state: String in ["normal", "pressed", "hover", "hover_pressed"]:
+		starred_filter.add_theme_stylebox_override(state, VpxTheme.flat(VpxTheme.HOVER if "hover" in state else VpxTheme.BACKGROUND, 8, 8, 4))
+	starred_filter.add_theme_color_override("font_pressed_color", VpxTheme.FAVORITE)
+	starred_filter.add_theme_color_override("font_hover_pressed_color", VpxTheme.FAVORITE)
+	starred_filter.toggled.connect(func(on: bool) -> void:
+		Settings.apply("visualizer_starred_only", on)
+		gallery.set_deferred("scroll_vertical", 0))
+	actions.add_child(starred_filter)
 	tuning = VBoxContainer.new()
 	tuning.add_theme_constant_override("separation", 6)
 	menu.add_child(tuning)
@@ -63,9 +80,10 @@ func _build() -> void:
 			gallery.set_deferred("scroll_vertical", 0))
 	_option(more_controls, "Quality", &"visualizer_quality", PackedStringArray(["Automatic", "Performance", "Balanced", "High"]))
 	_adjustment(more_controls, "Timing", &"visualizer_sync", -0.25, Settings.visualizer_advance_limit(), 0.005, 1000.0, " ms")
+	_option(more_controls, "Grab moves", &"visualizer_grab_mode", PackedStringArray(["Default", "Scene + audio", "Audio only"]), PackedInt32Array(), true)
 	_toggle(more_controls, "Auto scene change", &"visualizer_auto_change")
 	_toggle(more_controls, "Compact visualizer", &"music_visualizer")
-	_option(more_controls, "Compact display", &"music_visualizer_mode", PackedStringArray(["Spectrum", "Oscilloscope"]), PackedInt32Array([0, 2]))
+	_option(more_controls, "Compact display", &"music_visualizer_mode", PackedStringArray(["Spectrum", "Oscilloscope"]), PackedInt32Array([0, 2]), true)
 	tuning.minimum_size_changed.connect(_resize_gallery)
 	gallery = ScrollContainer.new()
 	gallery.custom_minimum_size.y = 560
@@ -81,6 +99,10 @@ func _build() -> void:
 	scene_list.size_flags_horizontal = SIZE_EXPAND_FILL
 	gallery.add_child(scene_list)
 	scene_list.add_child(more_controls)
+	empty_favorites = Label.new()
+	empty_favorites.text = "No starred presets.\nTurn off Starred only, then star your favorites."
+	empty_favorites.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	scene_list.add_child(empty_favorites)
 	scene_list.add_child(grid)
 	for index in options.size():
 		var tile := SceneTile.new()
@@ -126,9 +148,30 @@ func _build() -> void:
 			scene_selected.emit()
 			write(index)
 			Settings.apply("immersive_music_visualizer", true)
-			close())
+			_pull())
 		grid.add_child(tile)
 		tiles.append(tile)
+		var favorite := Button.new()
+		favorite.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+		favorite.offset_left = -48
+		favorite.offset_right = -4
+		favorite.offset_top = 4
+		favorite.offset_bottom = 48
+		favorite.custom_minimum_size = Vector2(44, 44)
+		favorite.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+		favorite.focus_mode = FOCUS_NONE
+		favorite.mouse_filter = MOUSE_FILTER_STOP
+		favorite.toggle_mode = true
+		favorite.add_theme_font_size_override("font_size", 28)
+		for state: String in ["normal", "pressed", "hover", "hover_pressed"]:
+			favorite.add_theme_stylebox_override(state, VpxTheme.flat(VpxTheme.HOVER if "hover" in state else VpxTheme.BACKGROUND, 8, 4, 4))
+		favorite.add_theme_color_override("font_color", VpxTheme.TEXT)
+		favorite.add_theme_color_override("font_hover_color", VpxTheme.FAVORITE)
+		favorite.add_theme_color_override("font_pressed_color", VpxTheme.FAVORITE)
+		favorite.add_theme_color_override("font_hover_pressed_color", VpxTheme.FAVORITE)
+		favorite.pressed.connect(func() -> void: Settings.toggle_visualizer_favorite(index))
+		tile.add_child(favorite)
+		favorite_buttons.append(favorite)
 
 
 func _adjustment(parent: VBoxContainer, title: String, key: StringName, low: float, high: float, increment: float, display_scale: float, suffix: String) -> void:
@@ -174,7 +217,7 @@ func _adjustment(parent: VBoxContainer, title: String, key: StringName, low: flo
 	adjustments[key] = slider
 
 
-func _option(parent: VBoxContainer, title: String, key: StringName, labels: PackedStringArray, values := PackedInt32Array()) -> void:
+func _option(parent: VBoxContainer, title: String, key: StringName, labels: PackedStringArray, values := PackedInt32Array(), inline_choices := false) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	parent.add_child(row)
@@ -182,6 +225,25 @@ func _option(parent: VBoxContainer, title: String, key: StringName, labels: Pack
 	label.text = title
 	label.custom_minimum_size.x = 130
 	row.add_child(label)
+	if inline_choices:
+		var group := ButtonGroup.new()
+		for index in labels.size():
+			var choice := Button.new()
+			choice.text = labels[index]
+			if key == &"visualizer_grab_mode" and index == Settings.VisualizerGrab.DEFAULT:
+				choice.tooltip_text = "Scene + audio on desktop; audio only in VR"
+			choice.custom_minimum_size.y = 40
+			choice.size_flags_horizontal = SIZE_EXPAND_FILL
+			choice.focus_mode = FOCUS_NONE
+			choice.toggle_mode = true
+			choice.button_group = group
+			row.add_child(choice)
+			var value := values[index] if not values.is_empty() else index
+			choice.pressed.connect(func() -> void: Settings.apply(key, value))
+			var pull := func() -> void: choice.set_pressed_no_signal(int(Settings.get(key)) == value)
+			Settings.changed.connect(pull)
+			pull.call()
+		return
 	var choice := OptionButton.new()
 	choice.custom_minimum_size.y = 40
 	choice.size_flags_horizontal = SIZE_EXPAND_FILL
@@ -224,8 +286,17 @@ func _pull() -> void:
 		selected.set_pressed_no_signal(enabled)
 	selected.tooltip_text = "Immersive music visualizer · " + label + " · Choose a scene or Disable Visualisation"
 	disabled_button.set_pressed_no_signal(not enabled)
+	starred_filter.set_pressed_no_signal(Settings.visualizer_starred_only)
+	starred_filter.text = "★" if Settings.visualizer_starred_only else "☆"
+	starred_filter.tooltip_text = "Starred only: " + ("On" if Settings.visualizer_starred_only else "Off")
+	empty_favorites.visible = Settings.visualizer_starred_only and Settings.visualizer_favorites.is_empty()
 	for i in tiles.size():
+		var starred: bool = options[i] in Settings.visualizer_favorites
+		tiles[i].visible = not Settings.visualizer_starred_only or starred
 		tiles[i].set_pressed_no_signal(enabled and i == index)
+		favorite_buttons[i].text = "★" if starred else "☆"
+		favorite_buttons[i].set_pressed_no_signal(starred)
+		favorite_buttons[i].tooltip_text = ("Unstar " if starred else "Star ") + options[i]
 
 
 func close() -> void:
@@ -248,7 +319,8 @@ func _toggle_gallery() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	if is_instance_valid(gallery) and gallery.visible:
-		gallery.scroll_vertical = int(tiles[clampi(int(read()), 0, tiles.size() - 1)].position.y) if Settings.immersive_music_visualizer else 0
+		var tile := tiles[clampi(int(read()), 0, tiles.size() - 1)]
+		gallery.scroll_vertical = int(tile.position.y) if Settings.immersive_music_visualizer and tile.visible else 0
 
 
 static func thumbnail(index: int) -> AtlasTexture:

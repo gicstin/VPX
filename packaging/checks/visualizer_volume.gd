@@ -5,6 +5,9 @@ var main: Node
 var output_capture := AudioEffectCapture.new()
 
 func _initialize() -> void:
+	if not preload("res://packaging/checks/isolated_data.gd").verify():
+		quit(2)
+		return
 	run.call_deferred()
 
 func check(ok: bool, label: String) -> void:
