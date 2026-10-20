@@ -8,6 +8,7 @@ signal marks_changed
 signal sleep_finished
 signal music_changed
 signal music_ended
+signal music_metadata_changed
 
 const AUDIO_EXTENSIONS := ["mp3", "flac", "wav", "ogg", "opus", "oga", "m4a", "aac", "mka", "ac3", "eac3", "dts", "wma", "aiff", "aif", "m4b", "aob", "dsf"]
 const ALPHA_PROBE_KEY := "alpha_detected"
@@ -80,6 +81,8 @@ var source_title := ""
 var auto_crop: AutoCrop = AutoCrop.new()
 var auto_cropped := false
 var auto_crop_key := ""
+var radio := preload("res://scripts/radio_metadata.gd").new()
+var radio_metadata_timer := 0.0
 
 
 func _ready() -> void:
@@ -92,6 +95,8 @@ func _ready() -> void:
 	bus = OUTPUT_BUS
 	add_child(tracks)
 	add_child(auto_crop)
+	add_child(radio)
+	radio.changed.connect(music_metadata_changed.emit)
 	auto_crop.detected.connect(_on_crop_detected)
 	finished.connect(_on_finished)
 	visible = false
@@ -120,6 +125,7 @@ func _process(delta: float) -> void:
 	if paused and playback != null and not current_path.is_empty():
 		playback.pump_paused(delta)
 	_monitor_stream(delta)
+	_update_radio_metadata(delta)
 	_update_sleep(delta)
 	if current_path.is_empty() or paused or not is_playing():
 		return
@@ -142,6 +148,17 @@ func _notification(what: int) -> void:
 			playback.cancel_io()
 
 
+func _update_radio_metadata(delta: float) -> void:
+	if playback == null or not _audio_only_playing() or not stream is FFmpegVideoStream or not _network_path((stream as FFmpegVideoStream).file):
+		radio.follow("", "")
+		return
+	radio.follow(bookmark_path(), (stream as FFmpegVideoStream).file)
+	radio_metadata_timer -= delta
+	if radio_metadata_timer <= 0.0:
+		radio_metadata_timer = 0.5
+		radio.apply_stream(playback.get_stream_metadata())
+
+
 func remember_position() -> void:
 	if not music_path.is_empty() and playback != null:
 		Settings.remember_position(music_path, 0.0, 0.0)
@@ -156,7 +173,7 @@ func remember_position() -> void:
 
 
 func _is_audio_item(path: String) -> bool:
-	return path.begins_with("sacd://") or path.get_extension().to_lower() in AUDIO_EXTENSIONS
+	return path.begins_with("sacd://") or path.get_slice("?", 0).get_slice("#", 0).get_extension().to_lower() in AUDIO_EXTENSIONS
 
 
 func _on_finished() -> void:
@@ -405,7 +422,7 @@ func _open_source(path: String, options: Dictionary, serial: int) -> bool:
 		while serial == open_serial and image_loader != null:
 			await get_tree().process_frame
 		return serial == open_serial and load_error.is_empty() and image != null
-	if picture and path.get_extension().to_lower() in AUDIO_EXTENSIONS:
+	if picture and (_is_audio_item(path) or bool(options.get("audio_only", false))):
 		return await _play_with_picture(path, options, serial, source_info)
 	_apply_decode_mode(bool(options.get("software", false)))
 	var video := _create_stream(path, options)
@@ -1235,6 +1252,14 @@ func seek_relative(seconds: float) -> void:
 	seek_to(stream_position + seconds)
 
 
+func can_seek() -> bool:
+	return playback != null and get_stream_length() > 0.0
+
+
+func is_live() -> bool:
+	return playback != null and not can_seek() and (_network_path(current_path) or _network_path(music_path))
+
+
 func restart() -> void:
 	if playback == null:
 		return
@@ -1245,7 +1270,7 @@ func restart() -> void:
 
 
 func seek_to(seconds: float) -> void:
-	if playback == null:
+	if not can_seek():
 		return
 	var target := clampf(seconds, 0.0, get_stream_length())
 	if is_equal_approx(stream_position, target):

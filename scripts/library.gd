@@ -3,6 +3,7 @@ extends Node
 const PATH := "user://library.json"
 const SAVE_DELAY := 1.0
 const MAX_ENTRIES := 5000
+const MAX_LINKS := 60
 
 var entries := {}
 var favorites := {}
@@ -37,6 +38,20 @@ func favorite_paths() -> PackedStringArray:
 
 func mark_played(path: String) -> void:
 	set_pref(path, "played", Time.get_unix_time_from_system())
+
+
+func remember_link(url: String) -> void:
+	set_pref(url, "link_opened", Time.get_unix_time_from_system())
+	for path: String in recent_links(MAX_ENTRIES).slice(MAX_LINKS):
+		erase_pref(path, "link_opened")
+
+
+func recent_links(limit := MAX_LINKS) -> PackedStringArray:
+	var paths: Array = entries.keys().filter(func(path: String) -> bool:
+		return entries[path].has("link_opened") or (path.begins_with("http://") or path.begins_with("https://")) and entries[path].has("played"))
+	paths.sort_custom(func(a: String, b: String) -> bool:
+		return float(entries[a].get("link_opened", entries[a].get("played", 0.0))) > float(entries[b].get("link_opened", entries[b].get("played", 0.0))))
+	return PackedStringArray(paths.slice(0, maxi(limit, 0)))
 
 
 func mark_folder_visited(path: String) -> void:

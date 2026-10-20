@@ -6,6 +6,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-10-20
+
+### Added
+
+- Live station metadata and album art in the music player, including now-playing updates and standard stream tags.
+- Persistent opened-link history in Network, with duplicate links moved to the top when reopened.
+- Play online radio and direct audio streams, including extensionless URLs, with station names and live playback controls.
+- Independent visualizer zoom for desktop and VR, with scene-picker controls and keyboard, mouse and controller shortcuts.
+- Repeatable rendered preset calibration compares music response, loudness range, highlight clipping and motion before selecting stronger defaults.
+- Four native 3D adaptations of Geiss MilkDrop presets from projectM’s classic collection: Swirl 1, Starfish 1, Nautilus and Cosmic Dust 2, with audio response and picker previews.
+
+### Changed
+
+- Reduce idle music-player opacity to 30% while retaining full opacity on hover and during interaction.
+- Consolidate the compact music visualizer toggle under immersive visualizer Controls, freeing header space in desktop and VR music players.
+- Collapse visualizer settings behind a compact Controls toggle, giving scene previews the full gallery height by default.
+- Apply measured response profiles automatically for immersive music presets while retaining global intensity, sensitivity and motion controls.
+
+### Fixed
+
+- Normalize live-radio timestamps and buffer network audio to prevent silence after broadcast timestamp jumps and avoid skipping audio after stalls.
+- Stop inactive VR controllers from stealing desktop pointer hover and clicks on the link-entry Done button.
+
 ## [0.0.3] - 2026-10-19
 
 ### Added

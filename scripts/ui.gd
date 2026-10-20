@@ -347,6 +347,7 @@ func _ready() -> void:
 			preview_rect.texture = null
 			preview_rect.visible = false)
 	player.opened.connect(_on_opened)
+	player.music_metadata_changed.connect(_refresh_now_playing)
 	player.music_changed.connect(func() -> void:
 		_refresh_now_playing()
 		_refresh_marks()
@@ -776,6 +777,8 @@ func open_media(path: String, extra := {}) -> void:
 	resolving_path = ""
 	if web != null:
 		web.cancel()
+	if Network.scheme(path) in Network.DIRECT_SCHEMES:
+		Library.remember_link(path)
 	if path.get_extension().to_lower() in ArchiveFiles.ARCHIVE_EXTENSIONS:
 		_open_archive(path)
 		return
@@ -786,14 +789,29 @@ func open_media(path: String, extra := {}) -> void:
 		await player.open(path, extra)
 		return
 	recovery.begin(path, extra)
+	resolving_path = path
+	var request_generation: int = recovery.generation
+	if web != null:
+		recovery.stage("Checking stream…")
+		var source: Dictionary = await web.probe_stream(path)
+		if resolving_path != path or recovery.generation != request_generation:
+			return
+		if source.get("direct", false):
+			resolving_path = ""
+			var options := extra.duplicate()
+			options["audio_only"] = source.get("audio_only", false)
+			if not str(source.get("title", "")).is_empty():
+				options["title"] = source["title"]
+				Library.set_pref(path, "title", source["title"])
+			await player.open(path, options)
+			return
 	if web == null or not web.available():
+		resolving_path = ""
 		recovery.fail("Web video tools are missing. Install them in Apps & web, then retry.", "The web-video helper is not installed.", "tools")
 		return
-	resolving_path = path
 	recovery.stage("Getting the video link…")
 	if Settings.library_source == Settings.LibrarySource.NETWORK:
 		refresh_directory()
-	var request_generation: int = recovery.generation
 	web.resolve(path, func(result: Dictionary) -> void:
 		if resolving_path != path or recovery.generation != request_generation:
 			return
@@ -1427,12 +1445,12 @@ func _update_transport() -> void:
 	var length := player.get_stream_length() if has_media else 0.0
 	updating_slider = true
 	seek_slider.max_value = maxf(length, 1.0)
-	seek_slider.editable = has_media
+	seek_slider.editable = player.can_seek()
 	if not seeking:
 		seek_slider.set_value_no_signal(player.stream_position if has_media else 0.0)
 	updating_slider = false
 	elapsed_label.text = _format_time(player.stream_position if has_media else 0.0, length)
-	total_label.text = _format_time(length, length)
+	total_label.text = "LIVE" if player.is_live() else _format_time(length, length)
 	var playing := has_media and not player.paused and player.is_playing()
 	end_time_label.visible = playing and length > 0.0
 	if end_time_label.visible:
@@ -1445,8 +1463,8 @@ func _update_transport() -> void:
 	if play_button.get_meta("icon_name", "") != icon_name:
 		play_button.set_meta("icon_name", icon_name)
 		play_button.icon = VpxTheme.icon(icon_name, 36)
-	%BackButton.disabled = player.current_path.is_empty()
-	%ForwardButton.disabled = player.current_path.is_empty()
+	%BackButton.disabled = not player.can_seek()
+	%ForwardButton.disabled = not player.can_seek()
 	if seeking:
 		_show_bubble(seek_slider.value, _slider_x(seek_slider.value))
 	if not is_equal_approx(length, marks_length):
@@ -1643,7 +1661,7 @@ func _image_stats() -> String:
 
 func _on_opened(path: String) -> void:
 	var entry := _entry_for(path)
-	if entry.is_empty():
+	if entry.is_empty() or (player._audio_only_playing() and VPXPlayer._network_path(path)):
 		_request_playlist(path)
 	elif Settings.shuffle and shuffle.members.has(entry):
 		shuffle.visit(entry)
@@ -1676,9 +1694,13 @@ func _refresh_now_playing() -> void:
 		_refresh_favorite_button()
 		return
 	now_title.text = playlist_label(now_path)
+	if player.is_music_mode():
+		now_title.text = music_label()
 	if not player.music_path.is_empty():
 		now_title.text += "  ·  " + music_label()
 	var texture := MediaInfo.thumbnail(now_path)
+	if player.is_music_mode() and player.radio.artwork != null:
+		texture = player.radio.artwork
 	now_thumb.texture = texture
 	now_thumb.visible = texture != null
 	_refresh_format_badge()
@@ -1739,6 +1761,9 @@ func music_label() -> String:
 	if path.is_empty():
 		return ""
 	var name := MediaCard.pretty_name(path)
+	if player.radio.path == path and not str(player.radio.metadata.get("title", "")).is_empty():
+		var artist := str(player.radio.metadata.get("artist", ""))
+		return (artist + " — " if not artist.is_empty() else "") + str(player.radio.metadata["title"])
 	if music_playlist.is_empty():
 		return name
 	var index: int = music_playlist_index.get(path, -1)
@@ -1924,9 +1949,14 @@ func _stop_music_under_picture() -> void:
 
 
 func _request_playlist(path: String) -> void:
-	var audio_over_image := player.is_image() and path.get_extension().to_lower() in VPXPlayer.AUDIO_EXTENSIONS
+	var audio_over_image := player.is_image() and player.music_path == path
 	if not audio_over_image:
 		_set_playlist(PackedStringArray([path]), path)
+	if player._audio_only_playing() and VPXPlayer._network_path(path):
+		music_playlist = PackedStringArray([path])
+		music_playlist_index = LibraryScanner.index_of(music_playlist)
+		music_shuffle.sync(music_playlist, path)
+		return
 	if Settings.library_flat_view and Settings.library_source == Settings.LibrarySource.FOLDER and path in listing:
 		var audio := path.get_extension().to_lower() in VPXPlayer.AUDIO_EXTENSIONS
 		var image := PanoramaFiles.is_image(path)
@@ -2391,6 +2421,13 @@ func _list_network() -> void:
 		_add_hint(network_status)
 		file_list.move_child(file_list.get_child(file_list.get_child_count() - 1), 1)
 	var count := 0
+	var link_count := 0
+	for url: String in Library.recent_links():
+		var title := MediaCard.pretty_name(url)
+		if not _query_matches(url, title):
+			continue
+		_queue_item(url, false, title, "Opened link  ·  " + Network.strip_password(url), "link")
+		link_count += 1
 	for i in Settings.network_servers.size():
 		var server: Dictionary = Settings.network_servers[i]
 		if not _query_matches(server.get("url", ""), server.get("name", "")):
@@ -2403,11 +2440,11 @@ func _list_network() -> void:
 			continue
 		_queue_item("dlna:%d" % i, true, server["name"], "Media server", "network")
 		count += 1
-	_set_count(count, 0)
+	_set_count(count, link_count)
 	if network.is_searching():
 		_add_hint("Looking for media servers on your network…")
-	elif count == 0:
-		_add_hint("Add a Windows / Samba share (smb://computer/share), SFTP, FTP or WebDAV server, or open a video link. Media servers (DLNA) on your network show up here after a scan.")
+	elif count == 0 and link_count == 0:
+		_add_hint("Add a Windows / Samba share (smb://computer/share), SFTP, FTP or WebDAV server, or open a video or radio stream link. Media servers (DLNA) on your network show up here after a scan.")
 	if network.media_servers.is_empty() and not network.is_searching() and not network.get_meta("scanned", false):
 		network.set_meta("scanned", true)
 		network.discover()
@@ -2469,7 +2506,7 @@ func _ask_server() -> void:
 
 func _ask_link() -> void:
 	keyboard_purpose = "link"
-	keyboard.open("Open a video link or share", "", "https://…/video.mp4  ·  YouTube / Vimeo page%s  ·  smb://computer/share/video.mkv" % ("" if web.available() else " (needs yt-dlp)"))
+	keyboard.open("Open a media link or share", "", "Radio stream / audio / video URL  ·  YouTube / Vimeo%s  ·  smb://computer/share" % ("" if web.available() else " (needs yt-dlp)"))
 
 
 func _on_network_item(path: String) -> void:

@@ -24,7 +24,7 @@ enum AudioFilter { OFF, LEVEL, NIGHT }
 enum Deband { OFF, LOW, MEDIUM, HIGH }
 
 const CONFIG_PATH := "user://settings.cfg"
-const VISUALIZER_PRESET_MAX := 75
+const VISUALIZER_PRESET_MAX := 79
 const VISUALIZER_PRESETS := [
 	"Resonance Field", "Resonant Architecture", "Particle Cosmos",
 	"Bass Strings", "Wave Architecture", "Aurora Cosmos", "Stereo Speakers",
@@ -44,8 +44,11 @@ const VISUALIZER_PRESETS := [
 	"Dual Waveform", "Spectral Balance",
 	"Celestial Orrery", "Abyssal Garden", "Prism Sanctuary", "Solar Crucible",
 	"Awe Horizon", "Fractal Canopy", "Phyllotaxis Bloom", "Heartbeat Tide",
-	"Frisson Aurora", "Synesthesia", "Groove Lattice", "Tension Vortex"
+	"Frisson Aurora", "Synesthesia", "Groove Lattice", "Tension Vortex",
+	"PM · Geiss Swirl 1", "PM · Geiss Starfish 1", "PM · Geiss Nautilus", "PM · Geiss Cosmic Dust 2"
 ]
+const VISUALIZER_ZOOM_MIN := 0.5
+const VISUALIZER_ZOOM_MAX := 3.0
 const VISUALIZER_STUDIO_START := 52
 const VISUALIZER_STUDIO_GUIDES := [
 	"30 Hz → 18 kHz · Cyan L / Pink R · Height −60 → 0 dB · 10 dB rings",
@@ -71,7 +74,11 @@ const VISUALIZER_STUDIO_GUIDES := [
 	"Stereo aurora curtains · Position = pan, glow height = pitch · Build-ups shimmer · Sudden swells after quiet send a wave of light",
 	"One glowing orb per frequency · Height = pitch, size shrinks as pitch rises · Left / right = pan · Threads link sounding neighbours",
 	"Beat-locked light lattice · Rows = pitch, columns = pan · Every beat ripples outward, bar downbeats bounce higher · Settles ahead of steady beats",
-	"Rising spectral spire · Build-ups tighten and spin the vortex · Drops fling it open · Base = bass, tip = treble"
+	"Rising spectral spire · Build-ups tighten and spin the vortex · Drops fling it open · Base = bass, tip = treble",
+	"Native 3D adaptation of Geiss — Swirl 1 · Radial twist and colour equations · Stereo waveform ribbons with depth trails",
+	"Native 3D adaptation of Geiss — Starfish 1 · Fivefold angular zoom equation · Expanding stereo waveform petals",
+	"Native 3D adaptation of Geiss — Nautilus · Rotation-driven zoom equation · Coiled waveform shell with bass warp",
+	"Native 3D adaptation of Geiss — Cosmic Dust 2 · Moving centre and colour equations · Stereo dust streams and orbital trails",
 ]
 const SCREEN_PLACEMENT_VERSION := 1
 const SCREEN_DISTANCE := 3.0
@@ -140,6 +147,7 @@ var visualizer_quality := 0
 var visualizer_intensity := 0.75
 var visualizer_sensitivity := 1.75
 var visualizer_motion := 0.6
+var visualizer_zoom := 1.0
 var visualizer_sync := 0.0
 var visualizer_auto_change := false
 var visualizer_grab_mode := VisualizerGrab.DEFAULT
@@ -323,6 +331,7 @@ func _validate_visualizer() -> void:
 	visualizer_intensity = clampf(visualizer_intensity, 0.0, 1.5) if is_finite(visualizer_intensity) else 0.75
 	visualizer_sensitivity = clampf(visualizer_sensitivity, 0.5, 4.0) if is_finite(visualizer_sensitivity) else 1.75
 	visualizer_motion = clampf(visualizer_motion, 0.0, 1.0) if is_finite(visualizer_motion) else 0.6
+	visualizer_zoom = clampf(visualizer_zoom, VISUALIZER_ZOOM_MIN, VISUALIZER_ZOOM_MAX) if is_finite(visualizer_zoom) else 1.0
 	visualizer_sync = clampf(visualizer_sync, -0.25, visualizer_advance_limit()) if is_finite(visualizer_sync) else 0.0
 
 
@@ -339,10 +348,10 @@ func apply(property: StringName, value: Variant) -> void:
 		if not (value is float or value is int) or not is_finite(float(value)):
 			return
 		value = clampf(float(value), 0.8, 1.25) if property == &"ui_size" else clampf(float(value), 1.0, 1.5)
-	if property in [&"music_visualizer_mode", &"visualizer_preset", &"visualizer_quality", &"visualizer_grab_mode", &"visualizer_intensity", &"visualizer_sensitivity", &"visualizer_motion", &"visualizer_sync"]:
+	if property in [&"music_visualizer_mode", &"visualizer_preset", &"visualizer_quality", &"visualizer_grab_mode", &"visualizer_intensity", &"visualizer_sensitivity", &"visualizer_motion", &"visualizer_zoom", &"visualizer_sync"]:
 		if not (value is int or value is float) or not is_finite(float(value)):
 			return
-		var limits := {&"music_visualizer_mode": Vector2(0, 2), &"visualizer_preset": Vector2(0, VISUALIZER_PRESET_MAX), &"visualizer_quality": Vector2(0, 3), &"visualizer_grab_mode": Vector2(0, 2), &"visualizer_intensity": Vector2(0, 1.5), &"visualizer_sensitivity": Vector2(0.5, 4), &"visualizer_motion": Vector2(0, 1), &"visualizer_sync": Vector2(-0.25, 0.25)}
+		var limits := {&"music_visualizer_mode": Vector2(0, 2), &"visualizer_preset": Vector2(0, VISUALIZER_PRESET_MAX), &"visualizer_quality": Vector2(0, 3), &"visualizer_grab_mode": Vector2(0, 2), &"visualizer_intensity": Vector2(0, 1.5), &"visualizer_sensitivity": Vector2(0.5, 4), &"visualizer_motion": Vector2(0, 1), &"visualizer_zoom": Vector2(VISUALIZER_ZOOM_MIN, VISUALIZER_ZOOM_MAX), &"visualizer_sync": Vector2(-0.25, 0.25)}
 		if property == &"visualizer_sync":
 			limits[property].y = visualizer_advance_limit()
 		value = clampf(float(value), limits[property].x, limits[property].y)
@@ -377,6 +386,13 @@ func preview_zoom(value: float) -> void:
 	picture_zoom = clampf(value, ZOOM_MIN, ZOOM_MAX)
 	save_config()
 	zoom_changed.emit(false)
+
+
+func preview_visualizer_zoom(value: float) -> void:
+	if not is_finite(value):
+		return
+	visualizer_zoom = clampf(value, VISUALIZER_ZOOM_MIN, VISUALIZER_ZOOM_MAX)
+	save_config()
 
 
 func commit_zoom() -> void:
@@ -608,7 +624,7 @@ func _persisted() -> PackedStringArray:
 		"stereo_depth", "stereo_vertical", "picture_zoom", "single_eye", "flat_image_repeat", "photo_pan_x", "photo_pan_y",
 		"auto_crop", "deband", "dither", "compositor_layer", "spatial_audio", "dialogue_boost", "audio_filter",
 		"remote_control", "flat_video_pan", "music_visualizer", "audio_stretch_quality", "accent_color", "ui_size", "text_size",
-		"music_visualizer_mode", "immersive_music_visualizer", "visualizer_preset", "visualizer_favorites", "visualizer_starred_only", "visualizer_quality", "visualizer_intensity", "visualizer_sensitivity", "visualizer_motion", "visualizer_sync", "visualizer_auto_change", "visualizer_grab_mode",
+		"music_visualizer_mode", "immersive_music_visualizer", "visualizer_preset", "visualizer_favorites", "visualizer_starred_only", "visualizer_quality", "visualizer_intensity", "visualizer_sensitivity", "visualizer_motion", "visualizer_zoom", "visualizer_sync", "visualizer_auto_change", "visualizer_grab_mode",
 	])
 
 

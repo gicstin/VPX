@@ -1,0 +1,100 @@
+--- a/ffmpeg_video_stream.cpp
++++ b/ffmpeg_video_stream.cpp
+@@ -310,8 +310,38 @@
+ 		return;
+ 	}
+ 
++	const bool live_audio = decoder->is_audio_only() && decoder->uses_network_io() && decoder->get_duration() <= 0.0;
++	const bool live_reading = decoder->is_running() || decoder->get_decoder_state() == VideoDecoder::DecoderState::READY;
++	if (live_audio) {
++		if (live_audio_buffer_msec < 4000.0) {
++			for (Ref<DecodedAudioFrame> frame : decoder->get_decoded_audio_frames()) {
++				available_audio_frames.push_back(frame);
++			}
++		}
++		live_audio_buffer_msec = 0.0;
++		bool first = true;
++		for (const Ref<DecodedAudioFrame> &frame : available_audio_frames) {
++			const int channels = frame->get_layout().nb_channels;
++			const int samples = channels > 0 ? frame->get_sample_data().size() / channels : 0;
++			live_audio_buffer_msec += MAX(0, samples - (first ? audio_frame_offset : 0)) * 1000.0 * speed / MAX(decoder->get_audio_mix_rate(), 1);
++			first = false;
++		}
++		if (live_audio_buffering && live_audio_buffer_msec < 2000.0 && live_reading) {
++			_pump_upload(p_delta);
++			return;
++		}
++		live_audio_buffering = false;
++		if (!just_seeked && available_audio_frames.is_empty() && playback_position >= live_audio_end_msec && live_reading) {
++			live_audio_buffering = true;
++			_pump_upload(p_delta);
++			return;
++		}
++	}
+ 	if (!just_seeked && playing && !paused) {
+ 		playback_position += _vsync_step(p_delta) * speed;
++		if (live_audio && live_reading) {
++			playback_position = MIN(playback_position, live_audio_end_msec);
++		}
+ 	}
+ 	if (seek_resync_grace > 0) {
+ 		seek_resync_grace--;
+@@ -552,6 +582,9 @@
+ 		}
+ 		if (written > 0) {
+ 			progress_serial++;
++			if (live_audio) {
++				live_audio_end_msec = MAX(live_audio_end_msec, audio_time + (audio_frame_offset + written) * 1000.0 * speed / MAX(mix_rate, 1));
++			}
+ 		}
+ 		audio_frame_offset += written;
+ 		mixed_frames += written;
+@@ -795,6 +828,13 @@
+ 	Dictionary state;
+ 	state["serial"] = (int64_t)progress_serial;
+ 	state["error"] = decoder.is_valid() ? decoder->get_io_error() : 0;
++	state["audio_pending"] = available_audio_frames.size();
++	state["audio_buffering"] = live_audio_buffering && decoder.is_valid() && decoder->is_audio_only() && decoder->uses_network_io() && decoder->get_duration() <= 0.0;
++	state["audio_buffer_msec"] = live_audio_buffer_msec;
++	if (available_audio_frames.size() > 0) {
++		state["audio_first_msec"] = available_audio_frames.front()->get()->get_time();
++		state["audio_last_msec"] = available_audio_frames.back()->get()->get_time();
++	}
+ 	return state;
+ }
+ 
+@@ -965,6 +1005,9 @@
+ }
+ 
+ void FFmpegVideoStreamPlayback::clear() {
++	live_audio_buffering = true;
++	live_audio_end_msec = 0.0;
++	live_audio_buffer_msec = 0.0;
+ #ifdef GDEXTENSION
+ 	resonance_history.clear();
+ #endif
+--- a/ffmpeg_video_stream.h
++++ b/ffmpeg_video_stream.h
+@@ -207,6 +207,9 @@
+ 	int frames_processed = 0;
+ 	uint64_t progress_serial = 0;
+ 	bool started = false;
++	bool live_audio_buffering = true;
++	double live_audio_end_msec = 0.0;
++	double live_audio_buffer_msec = 0.0;
+ 	void seek_into_sync();
+ 	void _pump_upload(double p_delta);
+ 	double get_current_frame_time();
+--- a/video_decoder.cpp
++++ b/video_decoder.cpp
+@@ -2484,7 +2484,9 @@
+ 		int64_t frame_timestamp = p_received_frame->best_effort_timestamp != AV_NOPTS_VALUE ? p_received_frame->best_effort_timestamp : p_received_frame->pts;
+ 		const int64_t audio_origin = audio_stream->start_time != AV_NOPTS_VALUE ? audio_stream->start_time : 0;
+ 		double frame_time = audio_clock_msec;
+-		if (frame_timestamp != AV_NOPTS_VALUE) {
++		if (audio_only && uses_network_io() && duration <= 0.0) {
++			audio_clock_msec += p_received_frame->nb_samples * 1000.0 / MAX(p_received_frame->sample_rate, 1);
++		} else if (frame_timestamp != AV_NOPTS_VALUE) {
+ 			frame_time = (frame_timestamp - audio_origin) * audio_time_base_in_seconds * 1000.0;
+ 			audio_clock_msec = frame_time;
+ 		} else {

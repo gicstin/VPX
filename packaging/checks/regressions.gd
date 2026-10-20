@@ -50,12 +50,24 @@ func _run() -> void:
 		_playlist_cases()
 		_decoder_cases()
 		await _remote_case()
-	elif mode in ["remote_open", "replacement_end", "local_cancel", "local_read"]:
+	elif mode in ["remote_open", "replacement_end", "local_cancel", "local_read", "online_radio", "radio_clock", "radio_jitter", "radio_opus", "link_history", "radio_metadata"]:
 		main = load("res://scenes/main.tscn").instantiate()
 		root.add_child(main)
 		for i in 15:
 			await process_frame
 		match mode:
+			"radio_metadata":
+				await _radio_metadata_case()
+			"radio_opus":
+				await _radio_clock_case("/radio-opus")
+			"radio_jitter":
+				await _radio_jitter_case()
+			"radio_clock":
+				await _radio_clock_case()
+			"link_history":
+				await _link_history_case()
+			"online_radio":
+				await _online_radio_case()
 			"remote_open":
 				await _remote_open_case()
 			"replacement_end":
@@ -71,6 +83,189 @@ func _run() -> void:
 		await process_frame
 	print("RESULT: %s checks=%d failures=%d" % [mode, checks, failures])
 	quit(1 if failures else 0)
+
+
+func _radio_metadata_case() -> void:
+	var radio = main.player.radio
+	check(await main.player.open(endpoint + "/radio-icy"), "ICY metadata stream opens")
+	check(await wait_for(func() -> bool: return radio.metadata.get("title") == "First Song" and radio.artwork != null, 6.0), "stream metadata supplies artist, song and cover art")
+	check(radio.metadata.get("station") == "VPX Metadata Radio", "ICY station name is retained")
+	main.photo_bar.root.refresh()
+	check(main.photo_bar.root.title_label.text.contains("First Song") and main.photo_bar.root.details_label.text.contains("First Artist") and main.photo_bar.root.cover_image.visible, "expanded music player shows artist and station art")
+	main.photo_bar.root.set_collapsed(true)
+	check(main.photo_bar.root.preview_image.texture == radio.artwork, "collapsed music player shows station art")
+	main.photo_bar.root.set_collapsed(false)
+	var first_art: Texture2D = radio.artwork
+	var request := HTTPRequest.new()
+	root.add_child(request)
+	request.request(endpoint + "/release")
+	await request.request_completed
+	request.queue_free()
+	check(await wait_for(func() -> bool: return radio.metadata.get("title") == "Second Song" and radio.artwork != null and radio.artwork != first_art, 6.0), "live track change updates title and replaces album art")
+	check(main.player.is_playing() and main.ui.music_label().contains("Second Artist"), "metadata refresh leaves audio playing")
+	check(await main.player.open(fixture.path_join("short.wav")), "local audio replaces metadata stream")
+	await process_frame
+	check(radio.path.is_empty() and radio.artwork == null and radio.metadata.is_empty(), "leaving station clears live metadata and album art")
+	var feed = load("res://scripts/radio_metadata.gd").new()
+	root.add_child(feed)
+	feed.follow("test-station", "http://example.org/live")
+	feed.api_url = endpoint + "/station-metadata"
+	check(await wait_for(func() -> bool: return feed.metadata.get("album") == "Station Album" and feed.artwork != null, 3.0), "station JSON feed supplies album and cover art")
+	check(feed.provider_url("http://stream.radioparadise.com/flacm").ends_with("chan=0"), "Radio Paradise Main Mix uses station metadata API")
+	check(feed.provider_url("https://stream.radioparadise.com/mellow-flac").ends_with("chan=1"), "Radio Paradise Mellow Mix uses its own metadata channel")
+	feed.follow("old-station", "http://example.org/old")
+	feed.apply_stream({"radio_tags": {"title": "Old Song", "cover": endpoint + "/slow-art.png"}})
+	feed.follow("new-station", "http://example.org/new")
+	feed.apply_stream({"radio_tags": {"title": "New Song", "cover": endpoint + "/other-art.png"}})
+	check(await wait_for(func() -> bool: return feed.artwork != null, 2.0), "new station artwork loads after cancellation")
+	var current_art: Texture2D = feed.artwork
+	await create_timer(0.8).timeout
+	check(feed.metadata.get("title") == "New Song" and feed.artwork == current_art, "late artwork cannot overwrite another station")
+	feed.queue_free()
+
+
+func _radio_clock_case(route := "/radio-clock") -> void:
+	var audio := AudioEffectCapture.new()
+	audio.buffer_length = 2.0
+	AudioServer.add_bus_effect(AudioServer.get_bus_index(main.player.OUTPUT_BUS), audio)
+	check(await main.player.open(endpoint + route), "live audio fixture opens: " + route)
+	check(main.player.is_live(), "timestamp test remains a live stream")
+	await create_timer(0.5).timeout
+	audio.clear_buffer()
+	var total := 0
+	var silent := 0
+	var silent_run := 0
+	var longest_run := 0
+	var start_serial := int(main.player.playback.get_progress_state()["serial"])
+	var deadline := Time.get_ticks_msec() + 6500
+	while Time.get_ticks_msec() < deadline:
+		await process_frame
+		for sample: Vector2 in audio.get_buffer(audio.get_frames_available()):
+			total += 1
+			if sample.length_squared() < 0.0000000001:
+				silent += 1
+				silent_run += 1
+				longest_run = maxi(longest_run, silent_run)
+			else:
+				silent_run = 0
+	check(total > AudioServer.get_mix_rate() * 5, "audio continuity check measures mixed output")
+	check(silent < total * 0.01, "timestamp jump cannot mute decoded radio audio")
+	check(longest_run < AudioServer.get_mix_rate() * 0.05, "radio output has no audible gaps across timestamp jump")
+	check(int(main.player.playback.get_progress_state()["serial"]) > start_serial + 30, "radio decoder keeps feeding audio after timestamp jump")
+
+
+func _radio_jitter_case() -> void:
+	check(await main.player.open(endpoint + "/radio-jitter"), "radio with stalled connection opens")
+	check(await wait_for(func() -> bool: return int(main.player.playback.get_progress_state()["serial"]) > 5, 4.0), "radio fills its startup buffer before playing")
+	check(await wait_for(func() -> bool: return main.player.stream_position > 1.0 and main.player.playback.get_progress_state().get("audio_buffering", false), 8.0), "radio enters buffering when the network reserve is exhausted")
+	var position: float = main.player.stream_position
+	var serial := int(main.player.playback.get_progress_state()["serial"])
+	await create_timer(0.4).timeout
+	check(absf(main.player.stream_position - position) < 0.01, "radio clock stops during starvation instead of skipping samples")
+	var request := HTTPRequest.new()
+	root.add_child(request)
+	request.request(endpoint + "/release")
+	await request.request_completed
+	request.queue_free()
+	check(await wait_for(func() -> bool: return int(main.player.playback.get_progress_state()["serial"]) > serial + 10, 4.0), "radio refills and resumes feeding audio after a network stall")
+	check(main.player.stream_position > position and main.player.stream_position < position + 2.0, "recovery continues from buffered audio without a clock jump")
+
+
+func _link_history_case() -> void:
+	var library := root.get_node("Library")
+	library.remember_link(endpoint + "/first")
+	library.set_pref(endpoint + "/first", "link_opened", 1.0)
+	library.remember_link(endpoint + "/second")
+	library.remember_link(endpoint + "/first")
+	check(library.recent_links().size() == 2 and library.recent_links()[0] == endpoint + "/first", "opened-link history deduplicates and moves reopened link first")
+	check(library.save() == OK, "opened-link history saves")
+	var restored = load("res://scripts/library.gd").new()
+	root.add_child(restored)
+	check(restored.recent_links() == library.recent_links(), "opened links survive library reload")
+	restored.queue_free()
+	root.get_node("Settings").library_source = 4
+	main.ui.refresh_directory(false)
+	check(endpoint + "/first" in main.ui.listing and endpoint + "/second" in main.ui.listing, "Network page lists opened links for reopening")
+	for controller: XRController3D in [main.get_node("Origin/Left"), main.get_node("Origin/Right")]:
+		check(not controller.is_processing(), "desktop disables XR pointer injection")
+	main.ui._ask_link()
+	main.ui.keyboard._insert("http://stream.radioparadise.com/flacm")
+	var received: Array[String] = []
+	main.ui.keyboard.submitted.connect(func(text: String) -> void: received.append(text))
+	for i in 8:
+		await process_frame
+	var done: Button = main.ui.keyboard.rows.get_child(4).get_children().back()
+	var canvas := Vector2(main.ui_viewport.size_2d_override)
+	var point: Vector2 = main.desktop_view.menu_rect.position + done.get_global_rect().get_center() / canvas * main.desktop_view.menu_rect.size
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	motion.global_position = point
+	root.push_input(motion)
+	for i in 5:
+		await process_frame
+		check(main.ui_viewport.gui_get_hovered_control() == done, "Done button keeps pointer hover after pasted URL")
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = point
+		event.global_position = point
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
+		event.pressed = pressed
+		root.push_input(event)
+		for i in 3:
+			await process_frame
+	check(received == ["http://stream.radioparadise.com/flacm"], "mouse click on Done submits pasted link once")
+	main.ui.recovery.cancel()
+	check(library.recent_links().has("http://stream.radioparadise.com/flacm"), "submitted link is remembered even if opening is cancelled")
+
+
+func _online_radio_case() -> void:
+	var web = main.ui.web
+	web.tool_path = ""
+	for suffix in ["track.flac?token=kept", "track.mp3#radio", "track.aac", "live.m3u8"]:
+		check(not web.needs_resolve("https://example.org/" + suffix), "direct audio and HLS bypass web tools: " + suffix)
+	check(web.needs_resolve("https://example.org/radio"), "extensionless link needs response detection")
+	check(web.needs_resolve("https://www.youtube.com/watch?v=test"), "video pages keep web resolution")
+	for route in ["/radio", "/radio-redirect", "/radio-get"]:
+		var result: Dictionary = await web.probe_stream(endpoint + route)
+		check(result.get("direct", false) and result.get("audio_only", false), "detect stream without reading its endless body: " + route)
+		check(result.get("title") == "VPX Test Radio", "read station name: " + route)
+	check((await web.probe_stream(endpoint + "/radio-page")).is_empty(), "HTML page stays on web-video path")
+	web.probe_stream(endpoint + "/radio-slow")
+	await create_timer(0.1).timeout
+	var cancelled_at := Time.get_ticks_msec()
+	web.cancel()
+	check(Time.get_ticks_msec() - cancelled_at < 300 and web.link_probe == null, "cancel slow stream probe immediately")
+	var radio := endpoint.replace("127.0.0.1", "localhost.") + "/radio"
+	check(web.needs_resolve(radio), "radio UI case exercises extensionless link routing")
+	main.ui._open_link(radio)
+	check(await wait_for(func() -> bool: return main.player.load_state.get("status") == "ready", 10.0), "Open link plays extensionless radio without yt-dlp")
+	check(main.player._audio_only_playing() and main.player.is_live(), "radio is live audio")
+	check(main.ui.music_label().contains("VPX Test Radio"), "music controls show station name")
+	check(main.ui.music_playlist == PackedStringArray([radio]), "radio replaces previous music navigation")
+	var before: float = main.player.stream_position
+	await create_timer(0.4).timeout
+	check(main.player.stream_position > before, "live radio advances")
+	main.ui._update_transport()
+	check(not main.player.can_seek() and not main.ui.seek_slider.editable and main.ui.total_label.text == "LIVE", "live transport disables seeking and shows LIVE")
+	main.photo_bar.root.refresh()
+	check(main.photo_bar.root.time_label.text.ends_with("LIVE") and not main.photo_bar.root.progress.editable and main.photo_bar.root.back_button.disabled and main.photo_bar.root.forward_button.disabled, "compact music controls show LIVE and disable seek controls")
+	main.player.seek_to(100.0)
+	check(main.player.stream_position > before, "seek shortcut cannot rewind live radio")
+	main.player.toggle_pause()
+	check(main.player.paused, "live radio pauses")
+	main.player.toggle_pause()
+	check(not main.player.paused, "live radio resumes")
+	check(await main.player.open(fixture.path_join("photo.png")), "photo opens over live radio")
+	check(main.player.is_image() and main.player.music_path == radio, "radio continues under photo")
+	await main.ui.open_media(radio)
+	check(main.player.is_image() and main.player.music_path == radio, "extensionless radio opens over existing photo")
+	check(await main.player.open(fixture.path_join("short.wav")), "local audio replaces live radio")
+	check(main.player.can_seek() and not main.player.is_live(), "local audio keeps normal seeking")
+	main.ui.open_media(endpoint.replace("127.0.0.1", "localhost.") + "/radio-slow")
+	await create_timer(0.1).timeout
+	await main.ui.open_media(fixture.path_join("short.wav"))
+	check(main.player.music_path == fixture.path_join("short.wav") and main.ui.resolving_path.is_empty(), "replacement cancels pending stream detection")
 
 
 func _playlist_cases() -> void:

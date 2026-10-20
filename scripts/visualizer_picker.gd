@@ -10,7 +10,7 @@ var selected: Button
 var menu: VBoxContainer
 var disabled_button: Button
 var tuning: VBoxContainer
-var more_controls: VBoxContainer
+var controls_button: Button
 var adjustments: Dictionary = {}
 var gallery: ScrollContainer
 var tiles: Array[Button] = []
@@ -61,30 +61,21 @@ func _build() -> void:
 		Settings.apply("visualizer_starred_only", on)
 		gallery.set_deferred("scroll_vertical", 0))
 	actions.add_child(starred_filter)
+	controls_button = make_button("Controls ▾", 0)
+	controls_button.toggle_mode = true
+	controls_button.tooltip_text = "Adjust visualizer response and display"
+	controls_button.toggled.connect(func(on: bool) -> void:
+		tuning.visible = on
+		controls_button.text = "Controls ▴" if on else "Controls ▾"
+		gallery.set_deferred("scroll_vertical", 0))
+	actions.add_child(controls_button)
 	tuning = VBoxContainer.new()
+	tuning.visible = false
 	tuning.add_theme_constant_override("separation", 6)
-	menu.add_child(tuning)
 	_adjustment(tuning, "Intensity", &"visualizer_intensity", 0.0, 1.5, 0.05, 100.0, "%")
 	_adjustment(tuning, "Sensitivity", &"visualizer_sensitivity", 0.5, 4.0, 0.05, 100.0, "%")
 	_adjustment(tuning, "Motion", &"visualizer_motion", 0.0, 1.0, 0.05, 100.0, "%")
-	var more := make_button("More controls ▾", MENU_WIDTH)
-	more.custom_minimum_size.y = 40
-	tuning.add_child(more)
-	more_controls = VBoxContainer.new()
-	more_controls.visible = false
-	more_controls.add_theme_constant_override("separation", 6)
-	more.pressed.connect(func() -> void:
-		more_controls.visible = not more_controls.visible
-		more.text = "Fewer controls ▴" if more_controls.visible else "More controls ▾"
-		if more_controls.visible:
-			gallery.set_deferred("scroll_vertical", 0))
-	_option(more_controls, "Quality", &"visualizer_quality", PackedStringArray(["Automatic", "Performance", "Balanced", "High"]))
-	_adjustment(more_controls, "Timing", &"visualizer_sync", -0.25, Settings.visualizer_advance_limit(), 0.005, 1000.0, " ms")
-	_option(more_controls, "Grab moves", &"visualizer_grab_mode", PackedStringArray(["Default", "Scene + audio", "Audio only"]), PackedInt32Array(), true)
-	_toggle(more_controls, "Auto scene change", &"visualizer_auto_change")
-	_toggle(more_controls, "Compact visualizer", &"music_visualizer")
-	_option(more_controls, "Compact display", &"music_visualizer_mode", PackedStringArray(["Spectrum", "Oscilloscope"]), PackedInt32Array([0, 2]), true)
-	tuning.minimum_size_changed.connect(_resize_gallery)
+	_adjustment(tuning, "Zoom", &"visualizer_zoom", Settings.VISUALIZER_ZOOM_MIN, Settings.VISUALIZER_ZOOM_MAX, 0.05, 100.0, "%")
 	gallery = ScrollContainer.new()
 	gallery.custom_minimum_size.y = 560
 	gallery.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -98,7 +89,13 @@ func _build() -> void:
 	var scene_list := VBoxContainer.new()
 	scene_list.size_flags_horizontal = SIZE_EXPAND_FILL
 	gallery.add_child(scene_list)
-	scene_list.add_child(more_controls)
+	scene_list.add_child(tuning)
+	_option(tuning, "Quality", &"visualizer_quality", PackedStringArray(["Automatic", "Performance", "Balanced", "High"]))
+	_adjustment(tuning, "Timing", &"visualizer_sync", -0.25, Settings.visualizer_advance_limit(), 0.005, 1000.0, " ms")
+	_option(tuning, "Grab moves", &"visualizer_grab_mode", PackedStringArray(["Default", "Scene + audio", "Audio only"]), PackedInt32Array(), true)
+	_toggle(tuning, "Auto scene change", &"visualizer_auto_change")
+	_toggle(tuning, "Compact visualizer", &"music_visualizer")
+	_option(tuning, "Compact display", &"music_visualizer_mode", PackedStringArray(["Spectrum", "Oscilloscope"]), PackedInt32Array([0, 2]), true)
 	empty_favorites = Label.new()
 	empty_favorites.text = "No starred presets.\nTurn off Starred only, then star your favorites."
 	empty_favorites.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -271,11 +268,6 @@ func _toggle(parent: VBoxContainer, title: String, key: StringName) -> void:
 	pull.call()
 
 
-func _resize_gallery() -> void:
-	if gallery != null:
-		gallery.custom_minimum_size.y = maxf(180.0, 560.0 - tuning.get_combined_minimum_size().y)
-
-
 func _pull() -> void:
 	var index := clampi(int(read()), 0, options.size() - 1)
 	var enabled := Settings.immersive_music_visualizer
@@ -300,6 +292,7 @@ func _pull() -> void:
 
 
 func close() -> void:
+	controls_button.set_pressed(false)
 	menu.hide()
 	gallery.hide()
 	if external_button != null:
@@ -315,12 +308,14 @@ func _toggle_gallery() -> void:
 	menu.show()
 	gallery.show()
 	_pull()
-	_resize_gallery()
 	await get_tree().process_frame
 	await get_tree().process_frame
 	if is_instance_valid(gallery) and gallery.visible:
 		var tile := tiles[clampi(int(read()), 0, tiles.size() - 1)]
-		gallery.scroll_vertical = int(tile.position.y) if Settings.immersive_music_visualizer and tile.visible else 0
+		if Settings.immersive_music_visualizer and tile.visible:
+			gallery.ensure_control_visible(tile)
+		else:
+			gallery.scroll_vertical = 0
 
 
 static func thumbnail(index: int) -> AtlasTexture:

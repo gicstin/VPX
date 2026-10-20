@@ -14,6 +14,7 @@ func run() -> void:
 	var args := OS.get_cmdline_user_args()
 	var expected := int(args[1])
 	if args[0] == "select":
+		settings.apply("visualizer_zoom", 1.8)
 		settings.apply("visualizer_preset", expected)
 		settings.apply("immersive_music_visualizer", true)
 	elif args[0] == "cycle":
@@ -21,6 +22,10 @@ func run() -> void:
 	elif args[0] == "disable":
 		settings.apply("immersive_music_visualizer", false)
 	else:
+		if not is_equal_approx(settings.visualizer_zoom, 1.8):
+			printerr("FAIL: visualizer zoom lost across restart")
+			quit(1)
+			return
 		if settings.visualizer_preset != expected or settings.immersive_music_visualizer != (args[0] == "restore"):
 			printerr("FAIL: last preset or enabled state lost across restart")
 			quit(1)

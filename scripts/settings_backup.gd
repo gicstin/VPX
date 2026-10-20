@@ -5,7 +5,7 @@ const MAX_BYTES := 16777216
 const LIMITS := {
 	"ui_size": [0.8, 1.25], "text_size": [1, 1.5],
 	"music_visualizer_mode": [0, 2], "visualizer_preset": [0, Settings.VISUALIZER_PRESET_MAX], "visualizer_quality": [0, 3], "visualizer_grab_mode": [0, 2],
-	"visualizer_intensity": [0, 1.5], "visualizer_sensitivity": [0.5, 4], "visualizer_motion": [0, 1], "visualizer_sync": [-0.25, 0.25],
+	"visualizer_intensity": [0, 1.5], "visualizer_sensitivity": [0.5, 4], "visualizer_motion": [0, 1], "visualizer_zoom": [Settings.VISUALIZER_ZOOM_MIN, Settings.VISUALIZER_ZOOM_MAX], "visualizer_sync": [-0.25, 0.25],
 	"projection": [0, 5], "stereo": [0, 2], "alpha_mask": [0, 2], "background": [0, 3],
 	"decode_mode": [0, 2], "end_action": [0, 2], "playback_priority": [0, 1], "panorama_source": [0, 1],
 	"grip_action": [0, 15], "trigger_action": [0, 15], "chord_action": [0, 15], "library_view": [0, 1],

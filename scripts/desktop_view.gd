@@ -164,7 +164,8 @@ func _is_flat() -> bool:
 
 func _fit_camera(window: Vector2) -> void:
 	if not _is_flat():
-		camera.fov = sphere_fov
+		var zoom: float = Settings.visualizer_zoom if main.resonance_field != null and main.resonance_field.active else 1.0
+		camera.fov = rad_to_deg(2.0 * atan(tan(deg_to_rad(sphere_fov) * 0.5) / zoom))
 		return
 	var quad := screen.mesh as QuadMesh
 	if quad == null or quad.size.x <= 0.0 or quad.size.y <= 0.0:
@@ -307,7 +308,10 @@ func _video_button(button: InputEventMouseButton) -> void:
 				return
 			var direction := 1 if button.button_index == MOUSE_BUTTON_WHEEL_UP else -1
 			if button.ctrl_pressed and not _is_flat():
-				Settings.apply("picture_zoom", Settings.picture_zoom * exp(direction * 0.08))
+				if main.resonance_field != null and main.resonance_field.active:
+					main.adjust_visualizer_zoom(direction * 0.08)
+				else:
+					Settings.apply("picture_zoom", Settings.picture_zoom * exp(direction * 0.08))
 			else:
 				main.step_volume(direction)
 

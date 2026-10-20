@@ -1,4 +1,5 @@
 import http.server
+import json
 import os
 from pathlib import Path
 import shutil
@@ -11,6 +12,26 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def jump_ogg_timestamps(data):
+    pages = bytearray(data)
+    offset = 0
+    while offset < len(pages):
+        header_size = 27 + pages[offset + 26]
+        page_size = header_size + sum(pages[offset + 27:offset + header_size])
+        granule = int.from_bytes(pages[offset + 6:offset + 14], "little")
+        if 44100 < granule < 2**63:
+            pages[offset + 6:offset + 14] = (granule + 44100 * 86400 * 32).to_bytes(8, "little")
+            pages[offset + 22:offset + 26] = bytes(4)
+            checksum = 0
+            for value in pages[offset:offset + page_size]:
+                checksum ^= value << 24
+                for _ in range(8):
+                    checksum = ((checksum << 1) ^ (0x04C11DB7 if checksum & 0x80000000 else 0)) & 0xFFFFFFFF
+            pages[offset + 22:offset + 26] = checksum.to_bytes(4, "little")
+        offset += page_size
+    return pages
 
 
 class MediaServer(http.server.ThreadingHTTPServer):
@@ -32,8 +53,98 @@ class MediaHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
 
+    def do_HEAD(self):
+        if self.path == "/radio-get":
+            self.send_error(405)
+        elif self.path == "/radio-redirect":
+            self.send_response(302)
+            self.send_header("Location", "/radio")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        elif self.path == "/radio":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/ogg")
+            self.send_header("Icy-Name", "VPX Test Radio")
+            self.end_headers()
+        elif self.path == "/radio-page":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+        elif self.path == "/radio-slow":
+            self.server.stopped.wait(15)
+        else:
+            self.send_error(404)
+
     def do_GET(self):
         try:
+            if self.path in ["/art.png", "/slow-art.png", "/other-art.png"]:
+                if self.path == "/slow-art.png":
+                    self.server.stopped.wait(0.7)
+                name = "other.png" if self.path == "/other-art.png" else "photo.png"
+                data = (self.server.media / name).read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            if self.path == "/station-metadata":
+                second = self.server.release.is_set()
+                body = json.dumps({"title": "Second Song" if second else "First Song", "artist": "Station Artist", "album": "Station Album", "cover": f"http://127.0.0.1:{self.server.server_port}/other-art.png" if second else f"http://127.0.0.1:{self.server.server_port}/art.png"}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if self.path == "/radio-icy":
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/mpeg")
+                self.send_header("icy-name", "VPX Metadata Radio")
+                self.send_header("icy-metaint", "4096")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                data = (self.server.media / "radio.mp3").read_bytes()
+                for index, offset in enumerate(range(0, len(data), 4096)):
+                    if index == 16:
+                        self.server.release.wait(15)
+                    chunk = data[offset:offset + 4096]
+                    self.wfile.write(chunk)
+                    if len(chunk) == 4096:
+                        second = index >= 16
+                        title = "Second Artist - Second Song" if second else "First Artist - First Song"
+                        art = "other-art.png" if second else "art.png"
+                        metadata = f"StreamTitle='{title}';StreamUrl='http://127.0.0.1:{self.server.server_port}/{art}';".encode()
+                        blocks = (len(metadata) + 15) // 16
+                        self.wfile.write(bytes([blocks]) + metadata.ljust(blocks * 16, b"\0"))
+                    self.wfile.flush()
+                self.server.stopped.wait(20)
+                return
+            if self.path in ["/radio", "/radio-get", "/radio-clock", "/radio-jitter", "/radio-opus"]:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/ogg")
+                self.send_header("Icy-Name", "VPX Test Radio")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                name = {"/radio-clock": "radio-clock.ogg", "/radio-opus": "radio-opus.ogg"}.get(self.path, "radio.ogg")
+                data = (self.server.media / name).read_bytes()
+                if self.path == "/radio-jitter":
+                    offset = 0
+                    while offset < len(data):
+                        header_size = 27 + data[offset + 26]
+                        page_size = header_size + sum(data[offset + 27:offset + header_size])
+                        granule = int.from_bytes(data[offset + 6:offset + 14], "little")
+                        offset += page_size
+                        if granule >= 44100 * 4:
+                            break
+                    self.wfile.write(data[:offset])
+                    self.wfile.flush()
+                    self.server.release.wait(15)
+                    data = data[offset:]
+                self.wfile.write(data)
+                self.wfile.flush()
+                self.server.stopped.wait(20)
+                return
             if self.path == "/release":
                 self.server.release.set()
                 self.send_response(200)
@@ -110,6 +221,10 @@ class RegressionTests(unittest.TestCase):
         cls.media.mkdir()
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "90", "-c:a", "pcm_s16le", str(cls.media / "audio.wav")], check=True, timeout=20)
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "1", str(cls.media / "short.wav")], check=True, timeout=20)
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "45", "-c:a", "flac", "-f", "ogg", str(cls.media / "radio.ogg")], check=True, timeout=20)
+        (cls.media / "radio-clock.ogg").write_bytes(jump_ogg_timestamps((cls.media / "radio.ogg").read_bytes()))
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "10", "-c:a", "libopus", "-frame_duration", "2.5", str(cls.media / "radio-opus.ogg")], check=True, timeout=20)
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "45", "-c:a", "libmp3lame", "-b:a", "128k", "-write_xing", "0", str(cls.media / "radio.mp3")], check=True, timeout=20)
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=10", "-t", "12", "-c:v", "mpeg4", "-g", "1", "-movflags", "+faststart", str(cls.media / "movie.mp4")], check=True, timeout=20)
         (cls.media / "movie.en.srt").write_text("1\n00:00:00,000 --> 00:00:10,000\nFilesystem subtitle\n")
         for filename, color in [("photo.png", "blue"), ("other.png", "green")]:
@@ -194,6 +309,24 @@ class RegressionTests(unittest.TestCase):
 
     def test_remote_open_transport(self):
         self.run_case("remote_open")
+
+    def test_online_radio(self):
+        self.run_case("online_radio")
+
+    def test_radio_audio_clock(self):
+        self.run_case("radio_clock")
+
+    def test_radio_buffering(self):
+        self.run_case("radio_jitter")
+
+    def test_radio_short_audio_frames(self):
+        self.run_case("radio_opus")
+
+    def test_link_history_and_clicks(self):
+        self.run_case("link_history")
+
+    def test_radio_metadata(self):
+        self.run_case("radio_metadata")
 
     def test_finishing_track_during_replacement(self):
         self.run_case("replacement_end")

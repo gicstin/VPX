@@ -106,7 +106,7 @@ func run() -> void:
 	check(is_equal_approx(desktop.root.scene_picker.gallery.size.x, desktop.root.rows.size.x), "scene dropdown fills mini player content width")
 	var mini_preview: TextureRect = desktop.root.scene_picker.tiles[0].get_child(0).get_child(0)
 	check(mini_preview.size.y > 100 and absf(mini_preview.size.x / mini_preview.size.y - 16.0 / 9.0) < 0.01, "mini player previews grow to full card width without cropping")
-	check(desktop.root.scene_picker.gallery.size.y >= 180 and desktop.root.scene_picker.tuning.visible, "scene dropdown leaves preview space beneath pinned controls")
+	check(desktop.root.scene_picker.gallery.size.y >= 560 and not desktop.root.scene_picker.tuning.visible, "scene dropdown gives previews full height with controls collapsed")
 
 	check(is_equal_approx(desktop.root.scene_picker.disabled_button.get_parent().size.x, desktop.root.rows.size.x), "scene actions fill mini player content width")
 	desktop.root.hide()
@@ -156,10 +156,17 @@ func run() -> void:
 	await process_frame
 	await process_frame
 	await process_frame
-	var pinned_position: Vector2 = picker.tuning.global_position
+	check(not picker.tuning.visible and not picker.controls_button.button_pressed, "response controls start collapsed")
+	var gallery_height: float = picker.gallery.size.y
+	picker.controls_button.set_pressed(true)
+	await process_frame
+	await process_frame
+	check(picker.tuning.visible and picker.gallery.scroll_vertical == 0, "Controls reveals all settings at the top of the gallery")
+	check(is_equal_approx(picker.gallery.size.y, gallery_height), "expanded controls preserve gallery viewport height")
+	var controls_position: Vector2 = picker.tuning.global_position
 	picker.gallery.scroll_vertical = 2000
 	await process_frame
-	check(picker.tuning.global_position == pinned_position and picker.tuning.get_parent() == picker.menu, "intensity controls stay pinned while previews scroll")
+	check(picker.tuning.global_position.y < controls_position.y and picker.gallery.is_ancestor_of(picker.tuning), "settings scroll with previews without taking pinned space")
 	var preset_before: int = settings.visualizer_preset
 	picker.adjustments[&"visualizer_intensity"].value = 1.15
 	check(is_equal_approx(settings.visualizer_intensity, 1.15) and is_equal_approx(desktop.root.scene_picker.adjustments[&"visualizer_intensity"].value, 1.15) and is_equal_approx(vr.view.scene_picker.adjustments[&"visualizer_intensity"].value, 1.15), "intensity edits synchronize desktop and VR controls")
@@ -175,12 +182,19 @@ func run() -> void:
 		resets_valid = resets_valid and row.get_child(2) is Label and reset.icon != null and "to default" in reset.tooltip_text
 		reset.pressed.emit()
 		resets_valid = resets_valid and is_equal_approx(float(settings.get(setting_key)), float(settings.defaults[setting_key]))
+	picker.adjustments[&"visualizer_zoom"].value = 2.0
+	check(is_equal_approx(settings.visualizer_zoom, 2.0) and is_equal_approx(desktop.root.scene_picker.adjustments[&"visualizer_zoom"].value, 2.0) and is_equal_approx(vr.view.scene_picker.adjustments[&"visualizer_zoom"].value, 2.0), "zoom edits synchronize desktop and VR controls")
 	check(resets_valid, "every visualiser slider has a separate reset button after its value")
-	picker.tuning.get_child(3).pressed.emit()
+	picker.controls_button.set_pressed(false)
 	await process_frame
 	await process_frame
-	check(picker.more_controls.visible and picker.gallery.custom_minimum_size.y >= 180, "advanced options keep a scrollable preview area")
-	picker.tuning.get_child(3).pressed.emit()
+	check(not picker.tuning.visible and picker.gallery.scroll_vertical == 0 and is_equal_approx(picker.gallery.size.y, gallery_height), "collapsing controls restores full preview area")
+	picker.controls_button.set_pressed(true)
+	picker.close()
+	picker.selected.pressed.emit()
+	await process_frame
+	await process_frame
+	check(not picker.tuning.visible and not picker.controls_button.button_pressed, "reopening picker returns to previews with controls collapsed")
 
 	picker.tiles[47].pressed.emit()
 	check(settings.visualizer_preset == 47 and picker.selected.text == "Terrain Canyon ▾" and picker.gallery.visible, "thumbnail selects scene and keeps gallery open")

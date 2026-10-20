@@ -76,5 +76,7 @@ func run() -> void:
 		shot.convert(Image.FORMAT_RGB8)
 		atlas.blit_rect(shot, Rect2i(Vector2i.ZERO, TILE_SIZE), Vector2i(index % 8, index / 8) * TILE_SIZE)
 		print("Preview ", index, " ", settings.VISUALIZER_PRESETS[index])
+	for index in range(settings.VISUALIZER_PRESETS.size(), 8 * ceili(settings.VISUALIZER_PRESETS.size() / 8.0)):
+		atlas.fill_rect(Rect2i(Vector2i(index % 8, index / 8) * TILE_SIZE, TILE_SIZE), Color.BLACK)
 	atlas.save_png("res://assets/visualizer_previews.png")
 	quit()

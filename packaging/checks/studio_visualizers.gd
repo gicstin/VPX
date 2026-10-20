@@ -51,6 +51,8 @@ func difference(a: Image, b: Image) -> float:
 			count += 1
 	return total / count
 
+
+
 func run() -> void:
 	create_timer(120.0).timeout.connect(func() -> void: quit(2))
 	DirAccess.make_dir_recursive_absolute(captures)
@@ -136,6 +138,13 @@ func run() -> void:
 				var side := await capture()
 				side.save_png(captures.path_join("%02d-view-%d.png" % [index, turn + 1]))
 			camera.rotation.y = 0.0
+		if index >= field.MILKDROP_START:
+			camera.position.x = -0.032
+			var left_eye := await capture()
+			camera.position.x = 0.032
+			var right_eye := await capture()
+			camera.position.x = 0.0
+			check(difference(left_eye, right_eye) > 0.0005, title + " provides native stereo parallax")
 		if previous != null:
 			check(difference(first, previous) > 0.01, title + " has distinct geometry")
 		previous = first

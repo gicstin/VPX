@@ -3,6 +3,7 @@ extends Node3D
 
 signal activity_changed
 
+const RESPONSE_PROFILES := preload("res://scripts/visualizer_response_profiles.gd")
 const BANDS := 48
 const ROWS := 50
 const COUNTS := [Vector4i(24, 900, 12, 4), Vector4i(40, 2400, 20, 6), Vector4i(64, 5200, 32, 8)]
@@ -16,6 +17,9 @@ const PSYCHE_COUNTS := [Vector4i(127, 900, 24, 24), Vector4i(191, 1400, 32, 32),
 const PSYCHE_LIMITS := [Vector4i(160, 2000, 6, 20), Vector4i(255, 1400, 10, 0), Vector4i(55, 1600, 7, 48), Vector4i(96, 1400, 24, 4), Vector4i(128, 1400, 6, 0), Vector4i(47, 2000, 48, 48), Vector4i(72, 1728, 6, 0), Vector4i(96, 1400, 5, 0)]
 const PSYCHE_SEGMENTS := [96, 8, 192, 96, 64, 32, 48, 96]
 const PSYCHE_START := 68
+const MILKDROP_START := 76
+const MILKDROP_COUNTS := [Vector4i(32, 700, 8, 0), Vector4i(48, 1400, 12, 0), Vector4i(64, 2000, 16, 0)]
+const MILKDROP_SHADER := preload("res://shaders/resonance_milkdrop.gdshader")
 const SPECTRAL_HISTORY_RATE := 45.0
 const WAVE_SAMPLES := 256
 const HISTORY_SAMPLES := 192
@@ -42,6 +46,8 @@ var texture: ImageTexture
 var layers: Array[MultiMeshInstance3D] = []
 var materials: Array[ShaderMaterial] = []
 var sky_material: ShaderMaterial
+var sky: MeshInstance3D
+var vr_zoom := false
 var clock := 0.0
 var presence := 0.0
 var bass := 0.0
@@ -51,6 +57,7 @@ var impulse := 0.0
 var stereo_width := 0.0
 var correlation := 1.0
 var preset := Vector3(1, 0, 0)
+var response_profile := Vector3.ONE
 var preset_index := 0
 var selected_preset := -1
 var has_audio := false
@@ -115,7 +122,7 @@ func _ready() -> void:
 	wave_empty.resize(WAVE_SAMPLES * 2 * 4)
 	wave_image = Image.create_from_data(WAVE_SAMPLES, 2, false, Image.FORMAT_RF, wave_empty)
 	wave_texture = ImageTexture.create_from_image(wave_image)
-	var sky := MeshInstance3D.new()
+	sky = MeshInstance3D.new()
 	var sphere := SphereMesh.new()
 	sphere.radius = 65.0
 	sphere.height = 130.0
@@ -179,10 +186,12 @@ func cycle_preset() -> void:
 
 
 func _apply_preset() -> void:
+	response_profile = RESPONSE_PROFILES.VALUES.get(Settings.VISUALIZER_PRESETS[preset_index], Vector3.ONE)
 	var pulse := preset_index >= PULSE_START and preset_index < STEREO_START
-	var psyche := preset_index >= PSYCHE_START
-	var image_scene := preset_index >= STEREO_START and not psyche
-	var shader := LEGACY_SHADER if preset_index < 3 else (PSYCHE_SHADER if psyche else (STEREO_SHADER if image_scene else (PULSE_SHADER if pulse else (DEPTH_SHADER if preset_index >= 7 else SHADER))))
+	var milkdrop := preset_index >= MILKDROP_START
+	var psyche := preset_index >= PSYCHE_START and not milkdrop
+	var image_scene := preset_index >= STEREO_START and not psyche and not milkdrop
+	var shader := MILKDROP_SHADER if milkdrop else LEGACY_SHADER if preset_index < 3 else (PSYCHE_SHADER if psyche else (STEREO_SHADER if image_scene else (PULSE_SHADER if pulse else (DEPTH_SHADER if preset_index >= 7 else SHADER))))
 	for kind in materials.size():
 		var material := materials[kind]
 		material.shader = shader
@@ -195,23 +204,27 @@ func _apply_preset() -> void:
 		material.set_shader_parameter("pulse_style", maxi(0, preset_index - PULSE_START))
 		material.set_shader_parameter("stereo_style", maxi(0, preset_index - STEREO_START))
 		material.set_shader_parameter("psyche_style", maxi(0, preset_index - PSYCHE_START))
+		material.set_shader_parameter("milkdrop_style", maxi(0, preset_index - MILKDROP_START))
 		stereo.bind(material)
 	for kind in [0, 2, 3]:
 		layers[kind].multimesh.mesh = (psyche_meshes[preset_index - PSYCHE_START] if kind == 0 else ring_mesh) if psyche else (surface_mesh if kind == 2 and preset_index >= 7 and preset_index < PULSE_START else strip_mesh)
-	sky_material.shader = LEGACY_SKY_SHADER if preset_index < 3 else (PSYCHE_SKY_SHADER if psyche else (STEREO_SKY_SHADER if image_scene else (PULSE_SKY_SHADER if pulse else SKY_SHADER)))
+	sky_material.shader = PSYCHE_SKY_SHADER if milkdrop else LEGACY_SKY_SHADER if preset_index < 3 else (PSYCHE_SKY_SHADER if psyche else (STEREO_SKY_SHADER if image_scene else (PULSE_SKY_SHADER if pulse else SKY_SHADER)))
 	sky_material.set_shader_parameter("pulse_style", maxi(0, preset_index - PULSE_START))
 	sky_material.set_shader_parameter("stereo_style", maxi(0, preset_index - STEREO_START))
-	sky_material.set_shader_parameter("psyche_style", maxi(0, preset_index - PSYCHE_START))
+	sky_material.set_shader_parameter("psyche_style", 1 if milkdrop else maxi(0, preset_index - PSYCHE_START))
 	stereo.bind(sky_material)
 	sky_material.set_shader_parameter("spectrum_texture", texture)
 	scene_opacity = 0.0
 
 
 func _apply_quality() -> void:
-	var counts: Array = LEGACY_COUNTS if preset_index < 3 else (PSYCHE_COUNTS if preset_index >= PSYCHE_START else (STEREO_COUNTS if preset_index >= STEREO_START else (PULSE_COUNTS if preset_index >= PULSE_START else (DEPTH_COUNTS if preset_index >= 7 else COUNTS))))
+	var counts: Array = MILKDROP_COUNTS if preset_index >= MILKDROP_START else LEGACY_COUNTS if preset_index < 3 else (PSYCHE_COUNTS if preset_index >= PSYCHE_START else (STEREO_COUNTS if preset_index >= STEREO_START else (PULSE_COUNTS if preset_index >= PULSE_START else (DEPTH_COUNTS if preset_index >= 7 else COUNTS))))
 	for kind in layers.size():
 		var count: int = counts[clampi(quality, 0, 2)][kind]
-		if preset_index >= PSYCHE_START:
+		if preset_index >= MILKDROP_START:
+			if kind == 1 and preset_index != MILKDROP_START + 3:
+				count = 0
+		elif preset_index >= PSYCHE_START and preset_index < MILKDROP_START:
 			var limit: int = PSYCHE_LIMITS[preset_index - PSYCHE_START][kind]
 			count = mini(count, limit)
 			if kind == 0 and preset_index == PSYCHE_START + 1:
@@ -391,6 +404,10 @@ func _process(delta: float) -> void:
 	visible = active
 	if not active:
 		return
+	_update_zoom()
+	var response_intensity := clampf(Settings.visualizer_intensity * response_profile.x, 0.0, 1.5)
+	var response_sensitivity := clampf(Settings.visualizer_sensitivity * response_profile.y, 0.5, 4.0)
+	var response_motion := clampf(Settings.visualizer_motion * response_profile.z, 0.0, 1.0)
 	var playing := player != null and not player.paused and player.is_playing()
 	if playing:
 		clock += minf(delta, 0.1)
@@ -411,15 +428,15 @@ func _process(delta: float) -> void:
 	bass = energies.x
 	mids = energies.y
 	treble = energies.z
-	var drive := (0.6 + bass * 2.2 + impulse * 2.5 + transients.x * 1.5) * Settings.visualizer_motion
+	var drive := (0.6 + bass * 2.2 + impulse * 2.5 + transients.x * 1.5) * response_motion
 	surge = lerpf(surge, drive if playing else 0.0, 1.0 - exp(-delta * 10.0))
 	travel = fmod(travel + surge * delta, 1000.0)
-	spin += (0.5 + mids * 1.6 + transients.y) * Settings.visualizer_motion * delta * (1.0 if playing else 0.0)
+	spin += (0.5 + mids * 1.6 + transients.y) * response_motion * delta * (1.0 if playing else 0.0)
 	_smooth_spectrum(delta)
 	_update_history(delta)
 	_update_spectral_history(delta)
 	stereo.update(delta)
-	affect.update(delta, beat_count, psyche_bass, Settings.visualizer_motion)
+	affect.update(delta, beat_count, psyche_bass, response_motion)
 	scene_opacity = lerpf(scene_opacity, 1.0, 1.0 - exp(-delta * 8.0))
 	var dim := (0.2 if menu != null and menu.visible else 1.0) * scene_opacity
 	var palette := clock * 0.0025 + preset.dot(Vector3(0.0, 0.17, 0.38))
@@ -433,9 +450,9 @@ func _process(delta: float) -> void:
 		material.set_shader_parameter("history_fraction", history_elapsed * HISTORY_RATE)
 		material.set_shader_parameter("audio_basis", audio_basis)
 		material.set_shader_parameter("clock", clock)
-		material.set_shader_parameter("intensity", Settings.visualizer_intensity)
-		material.set_shader_parameter("sensitivity", Settings.visualizer_sensitivity)
-		material.set_shader_parameter("motion", Settings.visualizer_motion)
+		material.set_shader_parameter("intensity", response_intensity)
+		material.set_shader_parameter("sensitivity", response_sensitivity)
+		material.set_shader_parameter("motion", response_motion)
 		material.set_shader_parameter("presence", 0.35 + presence * 0.65)
 		material.set_shader_parameter("bass", bass)
 		material.set_shader_parameter("mids", mids)
@@ -457,7 +474,7 @@ func _process(delta: float) -> void:
 	sky_material.set_shader_parameter("source_count", source_count if preset_index >= 6 else 0)
 	sky_material.set_shader_parameter("channel_left", channel_levels[0])
 	sky_material.set_shader_parameter("channel_right", channel_levels[1])
-	sky_material.set_shader_parameter("clock", clock * Settings.visualizer_motion)
+	sky_material.set_shader_parameter("clock", clock * response_motion)
 	sky_material.set_shader_parameter("bass", bass)
 	sky_material.set_shader_parameter("mids", mids)
 	sky_material.set_shader_parameter("treble", treble)
@@ -467,12 +484,26 @@ func _process(delta: float) -> void:
 	sky_material.set_shader_parameter("beat_count", float(beat_count))
 	sky_material.set_shader_parameter("travel", travel)
 	sky_material.set_shader_parameter("spin", spin)
-	sky_material.set_shader_parameter("sensitivity", Settings.visualizer_sensitivity)
-	sky_material.set_shader_parameter("intensity", Settings.visualizer_intensity)
+	sky_material.set_shader_parameter("sensitivity", response_sensitivity)
+	sky_material.set_shader_parameter("intensity", response_intensity)
 	sky_material.set_shader_parameter("dim", dim)
 	stereo.apply(sky_material)
 	affect.apply(sky_material)
 	_auto_quality(delta)
+
+
+func _update_zoom() -> void:
+	var transform := Transform3D.IDENTITY
+	if vr_zoom and camera != null and not is_equal_approx(Settings.visualizer_zoom, 1.0):
+		var view := global_basis.inverse() * camera.global_basis.orthonormalized()
+		var depth := view * Basis.from_scale(Vector3(1.0, 1.0, 1.0 / Settings.visualizer_zoom)) * view.inverse()
+		var origin := to_local(camera.global_position)
+		transform = Transform3D(depth, origin - depth * origin)
+	for layer in layers:
+		if not layer.transform.is_equal_approx(transform):
+			layer.transform = transform
+	if not sky.transform.is_equal_approx(transform):
+		sky.transform = transform
 
 
 func _smooth_spectrum(delta: float) -> void:

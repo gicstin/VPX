@@ -335,6 +335,11 @@ func audition(index: int) -> Dictionary:
 	var name: String = settings.VISUALIZER_PRESETS[index]
 	settings.apply("visualizer_preset", index)
 	field.reset()
+	var response := argument("--response")
+	if not response.is_empty():
+		var components := response.split(",")
+		if components.size() == 3:
+			field.response_profile = Vector3(float(components[0]), float(components[1]), float(components[2]))
 	time = 0.0
 	var metrics := {}
 	var rest_frames: Array[Dictionary] = []
@@ -454,6 +459,11 @@ func audition(index: int) -> Dictionary:
 func benchmark(index: int) -> void:
 	settings.apply("visualizer_preset", index)
 	field.reset()
+	var response := argument("--response")
+	if not response.is_empty():
+		var components := response.split(",")
+		if components.size() == 3:
+			field.response_profile = Vector3(float(components[0]), float(components[1]), float(components[2]))
 	var gpu: Array[float] = []
 	var rid := root.get_viewport_rid()
 	for frame in 240:
@@ -561,6 +571,11 @@ func run() -> void:
 		var metrics := await audition(index)
 		judge(index, metrics, {} if update else baseline)
 		results[settings.VISUALIZER_PRESETS[index]] = metrics
+	var report := argument("--report")
+	if not report.is_empty():
+		var output := FileAccess.open(report, FileAccess.WRITE)
+		output.store_string(JSON.stringify(results, "\t", true) + "\n")
+		output.close()
 	if update:
 		var file := FileAccess.open(BASELINE_PATH, FileAccess.WRITE)
 		file.store_string(JSON.stringify(results, "\t", true) + "\n")

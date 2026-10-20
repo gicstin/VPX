@@ -4,7 +4,7 @@ signal collapsed_changed
 
 const WIDTH := 640.0
 const PREVIEW_SIZE := 128.0
-const IDLE_OPACITY := 0.5
+const IDLE_OPACITY := 0.3
 const OPACITY_RATE := 14.0
 
 var player: VPXPlayer
@@ -23,15 +23,18 @@ var mute_button: Button
 var collapsed := false
 var title_label: Label
 var time_label: Label
+var details_label: Label
+var cover_image: TextureRect
 var progress: HSlider
 var spectrum_view: TextureRect
-var visualizer_button: Button
 var immersive_button: Button
 var previous_style_button: Button
 var next_style_button: Button
 var scene_picker: Dropdown
 var play_button: Button
 var favorite_button: Button
+var back_button: Button
+var forward_button: Button
 var seeking := false
 var refreshing := false
 var grabbed := false
@@ -48,6 +51,13 @@ func _init() -> void:
 	header = HBoxContainer.new()
 	header.add_theme_constant_override("separation", 8)
 	rows.add_child(header)
+	cover_image = TextureRect.new()
+	cover_image.custom_minimum_size = Vector2(88, 88)
+	cover_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	cover_image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	cover_image.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cover_image.visible = false
+	header.add_child(cover_image)
 	var metadata := VBoxContainer.new()
 	metadata.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	metadata.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -56,12 +66,15 @@ func _init() -> void:
 	title_label = Label.new()
 	title_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	metadata.add_child(title_label)
+	details_label = Label.new()
+	details_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	details_label.add_theme_font_size_override("font_size", VpxTheme.SMALL_FONT_SIZE)
+	details_label.add_theme_color_override("font_color", VpxTheme.MUTED)
+	rows.add_child(details_label)
 	time_label = Label.new()
 	time_label.add_theme_font_size_override("font_size", VpxTheme.SMALL_FONT_SIZE)
 	time_label.add_theme_color_override("font_color", VpxTheme.MUTED)
 	metadata.add_child(time_label)
-	visualizer_button = _icon_button(header, "audio", func() -> void: Settings.apply("music_visualizer", not Settings.music_visualizer))
-	visualizer_button.toggle_mode = true
 	immersive_button = _icon_button(header, "format", Callable())
 	immersive_button.toggle_mode = true
 	favorite_button = _favorite_button(header)
@@ -117,11 +130,13 @@ func _init() -> void:
 	previous_style_button.tooltip_text = "Previous immersive visualizer style"
 	previous_style_button.visible = false
 	_icon_button(controls, "prev", func() -> void: track(-1)).tooltip_text = "Previous music track"
-	_icon_button(controls, "back", func() -> void: player.seek_relative(-10.0), 34).tooltip_text = "Music back 10 seconds"
+	back_button = _icon_button(controls, "back", func() -> void: player.seek_relative(-10.0), 34)
+	back_button.tooltip_text = "Music back 10 seconds"
 	play_button = _icon_button(controls, "play", func() -> void: player.toggle_pause(), 36)
 	play_button.custom_minimum_size = Vector2(76, 76)
 	play_button.theme_type_variation = &"PlayButton"
-	_icon_button(controls, "forward", func() -> void: player.seek_relative(10.0), 34).tooltip_text = "Music forward 10 seconds"
+	forward_button = _icon_button(controls, "forward", func() -> void: player.seek_relative(10.0), 34)
+	forward_button.tooltip_text = "Music forward 10 seconds"
 	_icon_button(controls, "next", func() -> void: track(1)).tooltip_text = "Next music track"
 	next_style_button = _icon_button(controls, "chevron_right", func() -> void: _cycle_style(1))
 	next_style_button.tooltip_text = "Next immersive visualizer style"
@@ -165,12 +180,24 @@ func wanted_size() -> Vector2:
 func refresh() -> void:
 	title_label.text = ui.music_label() if ui != null and ui.has_method("music_label") else music_path().get_file().get_basename()
 	title_label.tooltip_text = title_label.text
+	var radio_active := player.radio.path == music_path()
+	var details := PackedStringArray()
+	if radio_active:
+		if not str(player.radio.metadata.get("title", "")).is_empty():
+			title_label.text = str(player.radio.metadata["title"])
+		for key in ["artist", "album", "station"]:
+			var value := str(player.radio.metadata.get(key, ""))
+			if not value.is_empty():
+				details.append(value)
+	details_label.text = " · ".join(details)
+	details_label.tooltip_text = details_label.text
+	details_label.visible = not details.is_empty()
+	cover_image.texture = player.radio.artwork if radio_active else null
+	cover_image.visible = cover_image.texture != null
 	_refresh_volume()
 	if collapsed:
 		_refresh_preview()
 	spectrum_view.visible = Settings.music_visualizer
-	visualizer_button.set_pressed_no_signal(Settings.music_visualizer)
-	visualizer_button.tooltip_text = "Hide compact music visualizer" if Settings.music_visualizer else "Show compact music visualizer"
 	if not player._audio_only_playing():
 		scene_picker.close()
 	immersive_button.visible = player._audio_only_playing()
@@ -182,11 +209,13 @@ func refresh() -> void:
 	var length := player.get_stream_length()
 	refreshing = true
 	progress.max_value = maxf(length, 1.0)
-	progress.editable = length > 0.0
+	progress.editable = player.can_seek()
+	back_button.disabled = not player.can_seek()
+	forward_button.disabled = not player.can_seek()
 	if not seeking:
 		progress.value = player.stream_position
 	refreshing = false
-	time_label.text = "%s / %s" % [_format_time(progress.value if seeking else player.stream_position), _format_time(length)]
+	time_label.text = "%s / %s" % [_format_time(progress.value if seeking else player.stream_position), "LIVE" if player.is_live() else _format_time(length)]
 	var playing := not player.paused and player.is_playing()
 	play_button.icon = VpxTheme.icon("pause" if playing else "play", 36)
 	play_button.tooltip_text = "Pause music" if playing else "Play music"
@@ -224,12 +253,14 @@ func _refresh_preview() -> void:
 	if preview_path != path:
 		preview_path = path
 		MediaInfo.request(path)
-	var texture := MediaInfo.thumbnail(path)
+	var texture := player.radio.artwork if player.radio.path == path else null
+	if texture == null:
+		texture = MediaInfo.thumbnail(path)
 	if texture == null and Settings.music_visualizer:
 		texture = spectrum_view.texture
 	preview_image.texture = texture
 	preview_button.icon = VpxTheme.icon("audio", 48) if texture == null else null
-	preview_button.tooltip_text = "Expand music player · " + title_label.text
+	preview_button.tooltip_text = "Expand music player · " + title_label.tooltip_text
 
 
 func _refresh_volume() -> void:

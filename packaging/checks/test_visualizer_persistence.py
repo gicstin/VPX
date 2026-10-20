@@ -30,7 +30,7 @@ class VisualizerPersistenceTests(unittest.TestCase):
                 settings_path = next(Path(directory).rglob("settings.cfg"))
             saved = settings_path.read_bytes()
             environment.pop("VPX_CHECK_DATA_ROOT")
-            for script in ["checks/music_visualizer.gd", "checks/studio_visualizers.gd", "checks/visualizer_channels.gd", "checks/visualizer_volume.gd", "checks/visualizer_music.gd", "checks/visualizer_response.gd", "generate_visualizer_previews.gd"]:
+            for script in ["checks/music_visualizer.gd", "checks/studio_visualizers.gd", "checks/visualizer_channels.gd", "checks/visualizer_volume.gd", "checks/visualizer_music.gd", "checks/visualizer_response.gd", "checks/visualizer_calibration.gd", "checks/visualizer_profiles.gd", "checks/visualizer_zoom.gd", "generate_visualizer_previews.gd"]:
                 rejected = command[:command.index("--script")] + ["--script", "res://packaging/" + script]
                 result = subprocess.run(rejected, env=environment, capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)

@@ -204,6 +204,7 @@ func _ready() -> void:
 		zoom_indicator.menu = panel
 		add_child(zoom_indicator)
 	resonance_field = ResonanceField.new()
+	resonance_field.vr_zoom = not desktop_mode
 	resonance_field.camera = camera
 	resonance_field.anchor = screen_anchor
 	resonance_field.audio_anchor = screen
@@ -250,6 +251,7 @@ func _ready() -> void:
 	screen.view_origin = camera
 	player.opened.connect(_on_opened)
 	for controller in [$Origin/Left, $Origin/Right]:
+		controller.visualizer = resonance_field
 		controller.seek_bar = seek_bar
 		if music_panel != null:
 			controller.extra_panels.append(music_panel)
@@ -288,6 +290,8 @@ func _ready() -> void:
 
 
 func _create_desktop_view() -> void:
+	for controller: XRController3D in [$Origin/Left, $Origin/Right]:
+		controller.set_process(false)
 	desktop_view = DESKTOP_VIEW.new()
 	desktop_view.main = self
 	desktop_view.camera = camera
@@ -888,6 +892,10 @@ func _adjust(direction: int, slot: String) -> void:
 	_refresh_help()
 
 
+func adjust_visualizer_zoom(amount: float) -> void:
+	Settings.apply("visualizer_zoom", Settings.visualizer_zoom * exp(amount))
+
+
 func _step_action(action: Settings.StickAction, direction: int) -> void:
 	if player._audio_only_playing() and action in FORMAT_ACTION_NAMES:
 		Settings.cycle_visualizer_preset(direction)
@@ -895,7 +903,10 @@ func _step_action(action: Settings.StickAction, direction: int) -> void:
 	if player._audio_only_playing() and action in [Settings.StickAction.VOLUME, Settings.StickAction.PLAYBACK_SPEED, Settings.StickAction.AUDIO_TRACK, Settings.StickAction.SUBTITLE_TRACK, Settings.StickAction.CHAPTER]:
 		return
 	if action == Settings.StickAction.PICTURE_ZOOM:
-		Settings.apply("picture_zoom", Settings.picture_zoom * exp(direction * 0.05))
+		if resonance_field != null and resonance_field.active:
+			adjust_visualizer_zoom(direction * 0.05)
+		else:
+			Settings.apply("picture_zoom", Settings.picture_zoom * exp(direction * 0.05))
 		return
 	if action in NUMERIC_ACTIONS:
 		var entry: Array = NUMERIC_ACTIONS[action]
@@ -917,13 +928,15 @@ func _step_action(action: Settings.StickAction, direction: int) -> void:
 
 
 func _presented_action(action: Settings.StickAction) -> Settings.StickAction:
-	if action == Settings.StickAction.SCREEN_SIZE and Settings.projection != Settings.ProjectionMode.FLAT:
+	if action == Settings.StickAction.SCREEN_SIZE and ((resonance_field != null and resonance_field.active) or Settings.projection != Settings.ProjectionMode.FLAT):
 		return Settings.StickAction.PICTURE_ZOOM
 	return action
 
 
 func action_name(action: Settings.StickAction) -> String:
 	action = _presented_action(action)
+	if action == Settings.StickAction.PICTURE_ZOOM and resonance_field != null and resonance_field.active:
+		return "Visualizer zoom"
 	if action in FORMAT_ACTION_NAMES:
 		return "Music scene" if player._audio_only_playing() else FORMAT_ACTION_NAMES[action]
 	if action in TRACK_ACTION_NAMES:
@@ -938,6 +951,8 @@ func action_name(action: Settings.StickAction) -> String:
 
 func action_value(action: Settings.StickAction) -> String:
 	action = _presented_action(action)
+	if action == Settings.StickAction.PICTURE_ZOOM and resonance_field != null and resonance_field.active:
+		return "%.0f%%" % (Settings.visualizer_zoom * 100.0)
 	if action in FORMAT_ACTION_NAMES:
 		if player._audio_only_playing():
 			return "%d / %d · %s" % [Settings.visualizer_preset + 1, Settings.VISUALIZER_PRESETS.size(), Settings.VISUALIZER_PRESETS[Settings.visualizer_preset]]
@@ -1723,7 +1738,10 @@ func _handle_key(event: InputEventKey) -> bool:
 			if not event.echo:
 				if not player._audio_only_playing():
 					Settings.apply("playback_speed", 1.0)
-				Settings.apply("picture_zoom", 1.0)
+				if resonance_field != null and resonance_field.active:
+					Settings.apply("visualizer_zoom", 1.0)
+				else:
+					Settings.apply("picture_zoom", 1.0)
 				_show_status("Speed and zoom reset")
 		_:
 			if event.keycode not in KEY_NUMERIC_ACTIONS:

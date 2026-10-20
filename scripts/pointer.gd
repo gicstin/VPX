@@ -52,6 +52,8 @@ const LASER_FREE_LENGTH := 3.0
 @onready var laser: MeshInstance3D = $Laser
 
 var zooming := false
+var visualizer_zooming := false
+var visualizer: ResonanceField
 var sizing := false
 var stick_armed := true
 var stick_axis := Vector2.ZERO
@@ -157,6 +159,14 @@ func _lock_click() -> void:
 func _process(delta: float) -> void:
 	if is_instance_valid(pressed_viewport) and (not active or not get_is_active() or (is_instance_valid(pressed_panel) and not pressed_panel.visible)):
 		_cancel_click()
+	if not get_is_active():
+		if last_uv != Vector2(-1, -1) and active:
+			_push_motion(Vector2(-1, -1))
+		last_uv = Vector2(-1, -1)
+		hit_panel = null
+		hovered = null
+		laser.visible = false
+		return
 	_update_aim()
 	_update_stick(delta)
 	_update_recenter_hold(delta)
@@ -452,9 +462,9 @@ func _update_stick(delta: float) -> void:
 
 func _handle_stick(stick: Vector2, delta: float) -> void:
 	var action := _continuous_stick_action()
-	if zooming and action != Settings.StickAction.PICTURE_ZOOM:
-		zooming = false
-		Settings.commit_zoom()
+	var visualizing := visualizer != null and visualizer.active
+	if zooming and (action != Settings.StickAction.PICTURE_ZOOM or visualizing != visualizer_zooming):
+		_commit_stick_zoom()
 	if sizing and action != Settings.StickAction.SCREEN_SIZE:
 		sizing = false
 		Settings.commit()
@@ -462,14 +472,17 @@ func _handle_stick(stick: Vector2, delta: float) -> void:
 		var amount := signf(stick.y) * (absf(stick.y) - SCROLL_DEADZONE) / (1.0 - SCROLL_DEADZONE)
 		if action == Settings.StickAction.PICTURE_ZOOM:
 			zooming = true
-			Settings.preview_zoom(Settings.picture_zoom * exp(amount * Settings.ZOOM_RATE * delta))
+			visualizer_zooming = visualizing
+			if visualizing:
+				Settings.preview_visualizer_zoom(Settings.visualizer_zoom * exp(amount * Settings.ZOOM_RATE * delta))
+			else:
+				Settings.preview_zoom(Settings.picture_zoom * exp(amount * Settings.ZOOM_RATE * delta))
 		else:
 			sizing = true
 			Settings.preview_screen_size(Settings.screen_size + amount * Settings.SCREEN_SIZE_RATE * delta)
 		return
 	if zooming:
-		zooming = false
-		Settings.commit_zoom()
+		_commit_stick_zoom()
 	if sizing:
 		sizing = false
 		Settings.commit()
@@ -499,6 +512,15 @@ func _handle_stick(stick: Vector2, delta: float) -> void:
 	_flick(axis, _hold_scale(), true)
 
 
+func _commit_stick_zoom() -> void:
+	zooming = false
+	if visualizer_zooming:
+		Settings.commit()
+	else:
+		Settings.commit_zoom()
+	visualizer_zooming = false
+
+
 func _zoom_stick_active() -> bool:
 	return _continuous_stick_action() == Settings.StickAction.PICTURE_ZOOM
 
@@ -515,7 +537,7 @@ func _continuous_stick_action() -> int:
 	var action := Settings.chord_action if grip_held and trigger_held else (Settings.grip_action if grip_held else Settings.trigger_action)
 	if not grip_held and not trigger_held:
 		return Settings.StickAction.PICTURE_ZOOM if ui.player.is_image() else -1
-	if action == Settings.StickAction.SCREEN_SIZE and Settings.projection != Settings.ProjectionMode.FLAT:
+	if action == Settings.StickAction.SCREEN_SIZE and ((visualizer != null and visualizer.active) or Settings.projection != Settings.ProjectionMode.FLAT):
 		return Settings.StickAction.PICTURE_ZOOM
 	return action if action in [Settings.StickAction.PICTURE_ZOOM, Settings.StickAction.SCREEN_SIZE] else -1
 

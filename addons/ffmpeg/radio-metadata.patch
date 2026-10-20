@@ -1,0 +1,79 @@
+--- a/video_decoder.cpp
++++ b/video_decoder.cpp
+@@ -726,6 +726,7 @@
+ 		metadata_mutex->lock();
+ 		stream_metadata = metadata;
+ 		metadata_mutex->unlock();
++		_collect_audio_metadata();
+ 		if (!can_seek()) {
+ 			return;
+ 		}
+@@ -872,6 +873,36 @@
+ 	result["disparity"] = p_stereo->horizontal_disparity_adjustment.den != 0 ? av_q2d(p_stereo->horizontal_disparity_adjustment) : 0.0;
+ 	result["hfov"] = p_stereo->horizontal_field_of_view.den != 0 ? av_q2d(p_stereo->horizontal_field_of_view) : 0.0;
+ 	return result;
++}
++
++void VideoDecoder::_collect_audio_metadata() {
++	if (!audio_only || format_context == nullptr || audio_stream == nullptr) {
++		return;
++	}
++	Dictionary tags;
++	for (AVDictionary *source : {format_context->metadata, audio_stream->metadata}) {
++		const AVDictionaryEntry *entry = nullptr;
++		while ((entry = av_dict_get(source, "", entry, AV_DICT_IGNORE_SUFFIX)) != nullptr) {
++			if (strlen(entry->value) <= 16384) {
++				tags[String::utf8(entry->key).to_lower()] = String::utf8(entry->value);
++			}
++		}
++	}
++	PackedByteArray artwork;
++	for (unsigned int i = 0; i < format_context->nb_streams; i++) {
++		const AVStream *track = format_context->streams[i];
++		if ((track->disposition & AV_DISPOSITION_ATTACHED_PIC) && track->attached_pic.data != nullptr && track->attached_pic.size > 0 && track->attached_pic.size <= 8 * 1024 * 1024) {
++			artwork.resize(track->attached_pic.size);
++			memcpy(artwork.ptrw(), track->attached_pic.data, track->attached_pic.size);
++			break;
++		}
++	}
++	metadata_mutex->lock();
++	stream_metadata["radio_tags"] = tags;
++	stream_metadata["artwork_data"] = artwork;
++	metadata_mutex->unlock();
++	format_context->event_flags &= ~AVFMT_EVENT_FLAG_METADATA_UPDATED;
++	audio_stream->event_flags &= ~AVSTREAM_EVENT_FLAG_METADATA_UPDATED;
+ }
+ 
+ void VideoDecoder::_collect_container_metadata() {
+@@ -1774,6 +1805,21 @@
+ 	const bool from_external_audio = packet_source == audio_format_context && audio_format_context != nullptr;
+ 	if (read_frame_result >= 0) {
+ 		decoder_state = DecoderState::RUNNING;
++		if (audio_only) {
++			size_t metadata_size = 0;
++			const uint8_t *metadata_data = av_packet_get_side_data(p_packet, AV_PKT_DATA_STRINGS_METADATA, &metadata_size);
++			if (metadata_data != nullptr) {
++				AVDictionary *updates = nullptr;
++				if (av_packet_unpack_dictionary(metadata_data, metadata_size, &updates) >= 0) {
++					av_dict_copy(&audio_stream->metadata, updates, 0);
++					audio_stream->event_flags |= AVSTREAM_EVENT_FLAG_METADATA_UPDATED;
++				}
++				av_dict_free(&updates);
++			}
++			if ((format_context->event_flags & AVFMT_EVENT_FLAG_METADATA_UPDATED) || (audio_stream->event_flags & AVSTREAM_EVENT_FLAG_METADATA_UPDATED)) {
++				_collect_audio_metadata();
++			}
++		}
+ 
+ 		AVCodecContext *codec_ctx = nullptr;
+ 		if (from_external_audio) {
+--- a/video_decoder.h
++++ b/video_decoder.h
+@@ -435,6 +435,7 @@
+ 	AVFormatContext *_audio_context() const { return audio_format_context != nullptr ? audio_format_context : format_context; }
+ 	void _open_external_audio();
+ 	void _collect_container_metadata();
++	void _collect_audio_metadata();
+ 	void _check_frame_metadata(const AVFrame *p_frame);
+ 	bool _handle_multiview(Ref<FFmpegFrame> &r_frame, double &r_frame_time);
+ 	Ref<FFmpegFrame> _combine_views(const Ref<FFmpegFrame> &p_left, const Ref<FFmpegFrame> &p_right);

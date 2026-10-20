@@ -11,7 +11,7 @@ const DENO_DOWNLOAD_URL := "https://github.com/denoland/deno/releases/latest/dow
 const WINDOWS_DENO_DOWNLOAD_URL := "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip"
 const FORMAT := "bv*+ba/b"
 const JOB_TIMEOUT_MSEC := 45000
-const DIRECT_EXTENSIONS := ["mp4", "mkv", "webm", "mov", "m4v", "ts", "m3u8", "mpd", "avi", "wmv", "flv", "mpg", "mpeg", "jpg", "jpeg", "png", "webp"]
+const DIRECT_EXTENSIONS := ["mp4", "mkv", "webm", "mov", "m4v", "ts", "m3u8", "mpd", "avi", "wmv", "flv", "mpg", "mpeg", "jpg", "jpeg", "png", "webp"] + VPXPlayer.AUDIO_EXTENSIONS
 const RESOLVE_SCRIPT := "if [ -n \"$6\" ]; then exec nice -n 5 \"$1\" -J --ignore-config --no-playlist --socket-timeout 15 --retries 1 --js-runtimes \"$6\" -f \"$2\" \"$3\" > \"$4\" 2> \"$5\"; else exec nice -n 5 \"$1\" -J --ignore-config --no-playlist --socket-timeout 15 --retries 1 -f \"$2\" \"$3\" > \"$4\" 2> \"$5\"; fi"
 
 var tool_path := ""
@@ -20,6 +20,8 @@ var download_stage := "tool"
 var jobs := {}
 var download: HTTPRequest
 var install_message := ""
+var link_probe: HTTPRequest
+var probe_serial := 0
 
 
 func _ready() -> void:
@@ -74,6 +76,56 @@ static func canonical_url(url: String) -> String:
 		if param.get_slice("=", 0) not in ["list", "index", "start_radio", "pp"]:
 			kept.append(param)
 	return query[0] + ("?" + "&".join(kept) if not kept.is_empty() else "") + ("#" + parts[1] if parts.size() > 1 else "")
+
+
+func probe_stream(url: String) -> Dictionary:
+	if is_youtube(url):
+		return {}
+	var serial := probe_serial
+	for method in [HTTPClient.METHOD_HEAD, HTTPClient.METHOD_GET]:
+		var request := HTTPRequest.new()
+		request.timeout = 8.0
+		request.max_redirects = 5
+		request.body_size_limit = 1
+		add_child(request)
+		link_probe = request
+		var response := {}
+		request.request_completed.connect(func(result: int, code: int, headers: PackedStringArray, _body: PackedByteArray) -> void:
+			response.merge({"result": result, "code": code, "headers": headers}))
+		if request.request(url, [], method) != OK:
+			request.queue_free()
+			link_probe = null
+			return {}
+		while response.is_empty() and serial == probe_serial:
+			await get_tree().process_frame
+		if serial != probe_serial:
+			return {}
+		link_probe = null
+		request.queue_free()
+		var code := int(response["code"])
+		if method == HTTPClient.METHOD_HEAD and code in [405, 501]:
+			continue
+		if code < 200 or code >= 300:
+			return {}
+		return stream_headers(response["headers"])
+	return {}
+
+
+static func stream_headers(headers: PackedStringArray) -> Dictionary:
+	var content_type := ""
+	var title := ""
+	for header: String in headers:
+		var key := header.get_slice(":", 0).strip_edges().to_lower()
+		var value := header.substr(header.find(":") + 1).strip_edges()
+		if key == "content-type":
+			content_type = value.get_slice(";", 0).strip_edges().to_lower()
+		elif key == "icy-name":
+			title = value
+	var playlist := content_type in ["audio/mpegurl", "audio/x-mpegurl", "application/vnd.apple.mpegurl", "application/x-mpegurl", "application/dash+xml"]
+	var audio := (content_type.begins_with("audio/") and not playlist) or content_type in ["application/ogg", "application/flac", "application/x-flac"]
+	if audio or playlist or content_type.begins_with("video/"):
+		return {"direct": true, "audio_only": audio, "title": title}
+	return {}
 
 
 static func playlist_only(url: String) -> bool:
@@ -314,6 +366,11 @@ func _supported_runtime(runtime: String, path: String) -> bool:
 
 
 func cancel() -> void:
+	probe_serial += 1
+	if is_instance_valid(link_probe):
+		link_probe.cancel_request()
+		link_probe.queue_free()
+		link_probe = null
 	for pid: int in jobs:
 		if OS.is_process_running(pid):
 			OS.kill(pid)
