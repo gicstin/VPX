@@ -24,9 +24,9 @@ func run() -> void:
 	settings.visualizer_quality = 1
 	settings.visualizer_auto_change = false
 	settings.visualizer_starred_only = false
-	check(settings.VISUALIZER_PRESETS.size() == 80 and settings.VISUALIZER_PRESET_MAX == 79, "catalog excludes all removed filled MilkDrop presets")
-	check(settings.VISUALIZER_PRESETS[-2] == "PM · Geiss Nautilus" and settings.VISUALIZER_PRESETS[-1] == "PM · Geiss Cosmic Dust 2", "retained classic MilkDrop presets keep their indices")
-	check(settings.VISUALIZER_STUDIO_GUIDES.size() == settings.VISUALIZER_PRESETS.size() - settings.VISUALIZER_STUDIO_START, "preset guides match the reduced catalog")
+	check(settings.VISUALIZER_PRESETS.size() == 92 and settings.VISUALIZER_PRESET_MAX == 91, "catalog includes six distinct projectM scenes")
+	check(settings.VISUALIZER_PRESETS[78] == "PM · Geiss Nautilus" and settings.VISUALIZER_PRESETS[79] == "PM · Geiss Cosmic Dust 2", "retained classic MilkDrop presets keep their indices")
+	check(settings.VISUALIZER_STUDIO_GUIDES.size() == settings.VISUALIZER_PRESETS.size() - settings.VISUALIZER_STUDIO_START, "preset guides match the catalog")
 	var field: Node = load("res://scripts/resonance_field.gd").new()
 	root.add_child(field)
 	field.set_process(false)
@@ -43,7 +43,10 @@ func run() -> void:
 		check(field.response_profile == profile, name + " selects its own tuning")
 		field.clock = 2.0
 		field._process(1.0 / 60.0)
-		for material in field.materials:
+		for kind in field.materials.size():
+			if field.layers[kind].multimesh.visible_instance_count == 0:
+				continue
+			var material: ShaderMaterial = field.materials[kind]
 			check(is_equal_approx(float(material.get_shader_parameter("intensity")), clampf(original.x * profile.x, 0.0, 1.5)), name + " applies profile intensity")
 		check(is_equal_approx(float(field.sky_material.get_shader_parameter("intensity")), clampf(original.x * profile.x, 0.0, 1.5)), name + " sky matches geometry intensity")
 		check(is_equal_approx(float(field.sky_material.get_shader_parameter("clock")), 2.0 * clampf(original.z * profile.z, 0.0, 1.0)), name + " sky uses the tuned motion clock")
@@ -64,8 +67,8 @@ func run() -> void:
 	check(is_equal_approx(float(field.materials[0].get_shader_parameter("motion")), 1.0), "motion stays within limits")
 	settings.apply("visualizer_preset", 22)
 	check(field.response_profile == values.get(settings.VISUALIZER_PRESETS[22], Vector3.ZERO), "switching replaces previous profile")
-	settings.apply("visualizer_preset", 85)
-	check(settings.visualizer_preset == 79 and field.preset_index == 79, "removed saved selection clamps to a retained preset")
+	settings.apply("visualizer_preset", 999)
+	check(settings.visualizer_preset == settings.VISUALIZER_PRESET_MAX and field.preset_index == settings.VISUALIZER_PRESET_MAX, "out-of-range selection clamps to the last preset")
 	field.cycle_preset()
 	check(field.preset_index == 0 and field.response_profile == values.get(settings.VISUALIZER_PRESETS[0], Vector3.ZERO), "preset cycling wraps with the correct response profile")
 	print("VISUALIZER_PROFILES checks=%d failures=%d" % [checks, failures])

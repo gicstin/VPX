@@ -991,6 +991,7 @@ theme_override_constants/separation = 14
 unique_name_in_owner = true
 layout_mode = 2
 custom_minimum_size = Vector2(96, 54)
+size_flags_vertical = 4
 expand_mode = 1
 
 [node name="NowText" type="VBoxContainer" parent="Sheet/Margin/Layout/PlayerBar/BarRows/NowRow"]

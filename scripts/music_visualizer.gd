@@ -152,7 +152,7 @@ func _reset() -> void:
 func _process(delta: float) -> void:
 	var musical := player.playback != null and (player.is_music_mode() or (player.is_image() and not player.music_path.is_empty()))
 	var immersive := player.is_immersive_visualizer_active()
-	var wanted: bool = (Settings.music_visualizer or immersive) and musical
+	var wanted: bool = (Settings.music_visualizer and musical) or immersive
 	if wanted != analysing:
 		analysing = wanted
 		if bound_playback != null and native_analysis:
@@ -249,38 +249,76 @@ func _sample_waveform() -> void:
 		return
 	var frames := capture_effect.get_buffer(available)
 	var rate := AudioServer.get_mix_rate()
+	_capture_frames(frames, rate)
+	if Settings.music_visualizer and Settings.music_visualizer_mode == OSCILLOSCOPE:
+		_update_scope(rate, frames.size() / rate)
+	_update_waveform()
+
+
+func _capture_frames(frames: PackedVector2Array, rate: float) -> void:
+	if frames.is_empty():
+		return
+	var power := audio_power
+	var phase := wave_phase
+	var dc := wave_dc
+	var low := wave_low
+	var filtered := wave_filtered
+	var smooth := wave_smooth
+	var bass := wave_bass
+	var scope_filter := scope_low
+	var tone := scope_tone
+	var trigger := mono_low
+	var display := mono_smooth
+	var mono_index := mono_position
+	var wave_index := wave_position
+	var wave_step := WAVE_RATE / rate
+	var mono_size := mono.size()
 	var low_blend := 1.0 - exp(-TAU * 180.0 / rate)
 	var dc_blend := 1.0 - exp(-TAU * 25.0 / rate)
 	var scope_blend := 1.0 - exp(-TAU * 1600.0 / rate)
 	var trigger_blend := 1.0 - exp(-TAU * 300.0 / rate)
 	var display_blend := 1.0 - exp(-TAU * 3000.0 / rate)
 	var power_blend := 1.0 - exp(-1.0 / 256.0)
-	for frame in frames:
-		audio_power = audio_power.lerp(Vector3(frame.x * frame.x, frame.y * frame.y, frame.x * frame.y), power_blend)
-		wave_phase += WAVE_RATE / rate
-		wave_dc = wave_dc.lerp(frame, dc_blend)
-		wave_low = wave_low.lerp(frame - wave_dc, low_blend)
-		wave_filtered = wave_filtered.lerp(wave_low, low_blend)
-		wave_smooth = wave_smooth.lerp(wave_filtered, low_blend)
-		wave_bass = wave_bass.lerp(wave_smooth, low_blend)
-		scope_low = scope_low.lerp(frame - wave_dc, scope_blend)
-		scope_tone = scope_tone.lerp(scope_low, scope_blend)
-		var mixed := (frame.x + frame.y - wave_dc.x - wave_dc.y) * 0.5
-		mono_low = lerpf(mono_low, mixed, trigger_blend)
-		mono_smooth = lerpf(mono_smooth, mixed, display_blend)
-		mono[mono_position] = mono_smooth
-		mono_trigger[mono_position] = mono_low
-		mono_position = (mono_position + 1) % mono.size()
-		if wave_phase >= 1.0:
-			wave_phase -= 1.0
-			wave_left[wave_position] = wave_bass.x
-			wave_right[wave_position] = wave_bass.y
-			scope_left[wave_position] = scope_tone.x
-			scope_right[wave_position] = scope_tone.y
-			wave_position = (wave_position + 1) % WAVE_HISTORY
-	if Settings.music_visualizer and Settings.music_visualizer_mode == OSCILLOSCOPE:
-		_update_scope(rate, frames.size() / rate)
-	_update_waveform()
+	for frame: Vector2 in frames:
+		power = power.lerp(Vector3(frame.x * frame.x, frame.y * frame.y, frame.x * frame.y), power_blend)
+		phase += wave_step
+		dc = dc.lerp(frame, dc_blend)
+		low = low.lerp(frame - dc, low_blend)
+		filtered = filtered.lerp(low, low_blend)
+		smooth = smooth.lerp(filtered, low_blend)
+		bass = bass.lerp(smooth, low_blend)
+		scope_filter = scope_filter.lerp(frame - dc, scope_blend)
+		tone = tone.lerp(scope_filter, scope_blend)
+		var mixed := (frame.x + frame.y - dc.x - dc.y) * 0.5
+		trigger = lerpf(trigger, mixed, trigger_blend)
+		display = lerpf(display, mixed, display_blend)
+		mono[mono_index] = display
+		mono_trigger[mono_index] = trigger
+		mono_index += 1
+		if mono_index == mono_size:
+			mono_index = 0
+		if phase >= 1.0:
+			phase -= 1.0
+			wave_left[wave_index] = bass.x
+			wave_right[wave_index] = bass.y
+			scope_left[wave_index] = tone.x
+			scope_right[wave_index] = tone.y
+			wave_index += 1
+			if wave_index == WAVE_HISTORY:
+				wave_index = 0
+	audio_power = power
+	wave_phase = phase
+	wave_dc = dc
+	wave_low = low
+	wave_filtered = filtered
+	wave_smooth = smooth
+	wave_bass = bass
+	scope_low = scope_filter
+	scope_tone = tone
+	mono_low = trigger
+	mono_smooth = display
+	mono_position = mono_index
+	wave_position = wave_index
 
 
 func _update_waveform() -> void:
@@ -306,13 +344,14 @@ func _analysis_delay() -> float:
 
 
 func _update_scope(rate: float, delta: float) -> void:
+	var history := mono.size()
 	var window := int(SCOPE_WINDOW * rate)
 	var delay := int(_analysis_delay() * rate)
 	var start := mono_position - delay - window
 	var trigger := start
 	for offset in int(SCOPE_SEARCH * rate):
 		var index := start - offset
-		if mono_trigger[posmod(index - 1, mono.size())] < 0.0 and mono_trigger[posmod(index, mono.size())] >= 0.0:
+		if mono_trigger[posmod(index - 1, history)] < 0.0 and mono_trigger[posmod(index, history)] >= 0.0:
 			trigger = index
 			break
 	var peak := 0.0
@@ -323,7 +362,7 @@ func _update_scope(rate: float, delta: float) -> void:
 		var to := maxi(trigger + (point + 1) * window / SCOPE_POINTS, from + 1)
 		var total := 0.0
 		for index in range(from, to):
-			total += mono[posmod(index, mono.size())]
+			total += mono[posmod(index, history)]
 		wave[point] = total / (to - from)
 		peak = maxf(peak, absf(wave[point]))
 	var wanted_gain := clampf(0.8 / maxf(peak, 0.0001), 1.0, 10.0)
@@ -368,8 +407,9 @@ func _sample_fallback(reset_age := true) -> void:
 	while analysis_history.size() > 128 or (analysis_history.size() > 1 and now - float(analysis_history[0]["time"]) > 0.65):
 		analysis_history.pop_front()
 	var selected := {}
+	var selected_time := now - _analysis_delay()
 	for i in range(analysis_history.size() - 1, -1, -1):
-		if float(analysis_history[i]["time"]) <= now - _analysis_delay():
+		if float(analysis_history[i]["time"]) <= selected_time:
 			selected = analysis_history[i]
 			break
 	var power: Vector3 = selected.get("power", Vector3.ZERO)
@@ -393,24 +433,39 @@ func _sample_fallback(reset_age := true) -> void:
 		data[i] = clampf((linear_to_db(maxf(magnitude.x, 0.000001)) + 60.0) / 60.0, 0.0, 1.0)
 		data[BANDS + i] = clampf((linear_to_db(maxf(magnitude.y, 0.000001)) + 60.0) / 60.0, 0.0, 1.0)
 		targets[i] = clampf((linear_to_db(maxf((magnitude.x + magnitude.y) * 0.5, 0.000001)) + 60.0) / 60.0, 0.0, 1.0)
-		if field == null or not field.active:
-			continue
-		var pan := (magnitude.y * magnitude.y - magnitude.x * magnitude.x) / maxf(0.000000000001, magnitude.length_squared())
-		var direction := Vector3(pan, 0, -sqrt(maxf(0.0, 1.0 - pan * pan)))
-		var diffuse := (1.0 - correlation) * 0.35
-		for cell in 48:
-			var index := (cell + 2) * BANDS + i
-			if spatial:
-				var native_peak := maxf(native_data[i], native_data[BANDS + i])
-				data[index] = clampf(native_data[index] + maxf(data[i], data[BANDS + i]) - native_peak, 0.0, 1.0) if native_data[index] > 0.0 else 0.0
-			else:
-				var dot := maxf(0.0, fallback_axes[cell].dot(direction))
-				var weight := pow(dot, 10.0) * (1.0 - diffuse) + dot * dot * diffuse
-				data[index] = clampf((linear_to_db(maxf(maxf(magnitude.x, magnitude.y) * weight, 0.000001)) + 60.0) / 60.0, 0.0, 1.0)
 	if reset_age:
 		sample_age = 0.0
 	if field != null and field.active:
+		_fill_directions(data, magnitudes, correlation, native_data if spatial else PackedFloat32Array())
 		field.feed(data, features)
+
+
+func _fill_directions(data: PackedFloat32Array, magnitudes: PackedVector2Array, correlation: float, spatial_data := PackedFloat32Array()) -> void:
+	if not spatial_data.is_empty():
+		for band in BANDS:
+			var native_peak := maxf(spatial_data[band], spatial_data[BANDS + band])
+			var peak := maxf(data[band], data[BANDS + band])
+			for cell in 48:
+				var index := (cell + 2) * BANDS + band
+				data[index] = clampf(spatial_data[index] + peak - native_peak, 0.0, 1.0) if spatial_data[index] > 0.0 else 0.0
+		return
+	var diffuse := (1.0 - correlation) * 0.35
+	for band in BANDS:
+		var magnitude := magnitudes[band]
+		var peak := maxf(magnitude.x, magnitude.y)
+		if peak <= 0.000001:
+			continue
+		var pan := (magnitude.y * magnitude.y - magnitude.x * magnitude.x) / maxf(0.000000000001, magnitude.length_squared())
+		var direction := Vector3(pan, 0, -sqrt(maxf(0.0, 1.0 - pan * pan)))
+		for cell in 32:
+			var dot := fallback_axes[cell].dot(direction)
+			if dot <= 0.0:
+				continue
+			var weight := pow(dot, 10.0) * (1.0 - diffuse) + dot * dot * diffuse
+			var value := clampf((linear_to_db(maxf(peak * weight, 0.000001)) + 60.0) / 60.0, 0.0, 1.0)
+			data[(cell + 2) * BANDS + band] = value
+			if cell < 16:
+				data[(cell + 34) * BANDS + band] = value
 
 
 func _exit_tree() -> void:
@@ -436,6 +491,9 @@ class SpectrumCanvas extends Control:
 	var oscilloscope := false
 	var title := ""
 	var embedded := false
+	var scope_indices := PackedInt32Array()
+	var gradient_state: Array = []
+	var gradients := {}
 	var background := VpxTheme.flat(VpxTheme.OVERLAY, 18, 12, 10)
 	var font := ThemeDB.fallback_font
 
@@ -479,18 +537,41 @@ class SpectrumCanvas extends Control:
 		for i in wave.size():
 			points.append(Vector2(area.position.x + float(i) * area.size.x / (wave.size() - 1), middle - wave[i] * half))
 		var colors := _gradient(points, area, 1.0)
-		for i in points.size() - 1:
-			var shade := PackedColorArray([Color(colors[i], 0.4), Color(colors[i + 1], 0.4), Color(colors[i + 1], 0.0), Color(colors[i], 0.0)])
-			draw_primitive(PackedVector2Array([points[i], points[i + 1], Vector2(points[i + 1].x, middle), Vector2(points[i].x, middle)]), shade, PackedVector2Array())
+		var fill := PackedVector2Array()
+		var shades := PackedColorArray()
+		fill.resize(points.size() * 2)
+		shades.resize(fill.size())
+		for i in points.size():
+			fill[i * 2] = points[i]
+			fill[i * 2 + 1] = Vector2(points[i].x, middle)
+			shades[i * 2] = Color(colors[i], 0.4)
+			shades[i * 2 + 1] = Color(colors[i], 0.0)
+		if scope_indices.size() != (points.size() - 1) * 6:
+			scope_indices.resize((points.size() - 1) * 6)
+			for i in points.size() - 1:
+				var vertex := i * 2
+				scope_indices[i * 6] = vertex
+				scope_indices[i * 6 + 1] = vertex + 2
+				scope_indices[i * 6 + 2] = vertex + 3
+				scope_indices[i * 6 + 3] = vertex
+				scope_indices[i * 6 + 4] = vertex + 3
+				scope_indices[i * 6 + 5] = vertex + 1
+		RenderingServer.canvas_item_add_triangle_array(get_canvas_item(), scope_indices, fill, shades)
 		draw_polyline_colors(points, _gradient(points, area, 0.14), 8.0, true)
 		draw_polyline_colors(points, _gradient(points, area, 0.3), 4.0, true)
 		draw_polyline_colors(points, colors, 2.0, true)
 
 	func _gradient(points: PackedVector2Array, area: Rect2, alpha: float) -> PackedColorArray:
-		var colors := PackedColorArray()
-		for point in points:
-			colors.append(Color(VpxTheme.ACCENT.lerp(VpxTheme.SPECTRUM_END, clampf((point.x - area.position.x) / area.size.x, 0.0, 1.0)), alpha))
-		return colors
+		var state := [area, points.size(), oscilloscope, VpxTheme.ACCENT, VpxTheme.SPECTRUM_END]
+		if gradient_state != state:
+			gradient_state = state
+			gradients.clear()
+		if not gradients.has(alpha):
+			var colors := PackedColorArray()
+			for point in points:
+				colors.append(Color(VpxTheme.ACCENT.lerp(VpxTheme.SPECTRUM_END, clampf((point.x - area.position.x) / area.size.x, 0.0, 1.0)), alpha))
+			gradients[alpha] = colors
+		return gradients[alpha].duplicate()
 
 	static func _smooth(points: PackedVector2Array) -> PackedVector2Array:
 		var result := PackedVector2Array()

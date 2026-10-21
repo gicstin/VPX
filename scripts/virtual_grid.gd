@@ -13,6 +13,8 @@ var build: Callable
 var release: Callable
 var cell_height: Callable
 var built := {}
+var _complete_window := Vector2i(-1, -1)
+var _retained_focus: Control
 
 
 func setup(p_scroll: ScrollContainer, p_columns: int, p_h_separation: int, p_v_separation: int, p_cell_height: Callable, p_build: Callable, p_release: Callable) -> void:
@@ -29,6 +31,7 @@ func setup(p_scroll: ScrollContainer, p_columns: int, p_h_separation: int, p_v_s
 
 
 func set_items(p_items: PackedStringArray) -> void:
+	_complete_window = Vector2i(-1, -1)
 	for index: int in built.keys():
 		if index >= p_items.size() or p_items[index] != items[index]:
 			_drop(index)
@@ -69,15 +72,23 @@ func sync() -> void:
 	if items.is_empty() or not is_visible_in_tree():
 		return
 	var window := _window()
+	if window == _complete_window and (_retained_focus == null or _retained_focus.has_focus()):
+		return
+	_complete_window = Vector2i(-1, -1)
+	_retained_focus = null
 	for index: int in built.keys():
-		if (index < window.x or index >= window.y) and not built[index].has_focus():
-			_drop(index)
+		if index < window.x or index >= window.y:
+			if built[index].has_focus():
+				_retained_focus = built[index]
+			else:
+				_drop(index)
 	var complete := true
 	for index in range(window.x, window.y):
 		if not built.has(index):
 			complete = false
 			break
 	if complete:
+		_complete_window = window
 		return
 	var started := Time.get_ticks_usec()
 	for index in _build_order(window):
@@ -101,6 +112,7 @@ func control_at(index: int) -> Control:
 	if index < 0 or index >= items.size():
 		return null
 	if not built.has(index):
+		_complete_window = Vector2i(-1, -1)
 		var control: Control = build.call(items[index], self)
 		built[index] = control
 		_place(index, control)
@@ -174,6 +186,7 @@ func _place(index: int, control: Control) -> void:
 
 
 func _relayout() -> void:
+	_complete_window = Vector2i(-1, -1)
 	_update_height()
 	for index: int in built:
 		_place(index, built[index])
@@ -181,6 +194,9 @@ func _relayout() -> void:
 
 func _drop(index: int) -> void:
 	var control: Control = built[index]
+	_complete_window = Vector2i(-1, -1)
+	if control == _retained_focus:
+		_retained_focus = null
 	built.erase(index)
 	release.call(items[index], control)
 	remove_child(control)

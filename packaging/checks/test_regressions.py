@@ -61,7 +61,7 @@ class MediaHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Location", "/radio")
             self.send_header("Content-Length", "0")
             self.end_headers()
-        elif self.path == "/radio":
+        elif self.path in ["/radio", "/radio-clock"]:
             self.send_response(200)
             self.send_header("Content-Type", "application/ogg")
             self.send_header("Icy-Name", "VPX Test Radio")
@@ -271,7 +271,7 @@ class RegressionTests(unittest.TestCase):
         environment = dict(os.environ, XDG_DATA_HOME=str(self.directory / mode))
         for name in ["VPX_DECODE", "VPX_DECODE_SETTING", "VPX_MODE_SESSION", "VPX_WANT_XR"]:
             environment.pop(name, None)
-        script = "interaction_safety.gd" if mode == "interaction_safety" else "regressions.gd"
+        script = f"{mode}.gd" if mode in ["interaction_safety", "keyboard_input"] else "regressions.gd"
         command = [self.godot, "--headless", "--path", str(ROOT), "--xr-mode", "off", "--audio-driver", "Dummy", "--script", str(ROOT / "packaging/checks" / script), "--", mode, f"http://127.0.0.1:{server.server_port}", str(self.media), "--desktop"]
         if mode == "core":
             command.extend(["--decode", "sw"])
@@ -307,11 +307,17 @@ class RegressionTests(unittest.TestCase):
     def test_interaction_safety(self):
         self.run_case("interaction_safety")
 
+    def test_keyboard_input(self):
+        self.run_case("keyboard_input")
+
     def test_remote_open_transport(self):
         self.run_case("remote_open")
 
     def test_online_radio(self):
         self.run_case("online_radio")
+
+    def test_online_source_navigation(self):
+        self.run_case("online_navigation")
 
     def test_radio_audio_clock(self):
         self.run_case("radio_clock")

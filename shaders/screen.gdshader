@@ -20,6 +20,7 @@ uniform float cut_similarity = 0.08;
 uniform float cut_feather = 0.08;
 uniform float edge_fade = 0.04;
 uniform float menu_dim = 1.0;
+uniform float visualizer_media_dim = 1.0;
 uniform int alpha_mask = 0;
 uniform float mask_threshold = 0.5;
 uniform float mask_trim = 0.0;
@@ -470,6 +471,7 @@ void fragment()
 	}
 	if (dither)
 		color = dither_linear(color, FRAGCOORD.xy);
+	color *= visualizer_media_dim;
 	float alpha = cover * video_alpha * key_alpha(raw);
 	if (background_mode == 1)
 	{

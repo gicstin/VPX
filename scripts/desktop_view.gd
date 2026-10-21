@@ -32,6 +32,7 @@ var preview_label: Label
 var previews: SeekPreviews
 var preview_time := -1.0
 var menu_pressed := false
+var menu_hovered := false
 var press_position := Vector2.ZERO
 var video_pressed := false
 var menu_click_pressed := false
@@ -61,6 +62,7 @@ func _ready() -> void:
 		if previews.request_owner == self and preview_panel.visible and path == player.current_path:
 			_show_preview_frame())
 	_build_seek_preview()
+	get_window().mouse_exited.connect(func() -> void: _set_menu_hover(false))
 	Settings.changed.connect(func() -> void:
 		if not Settings.seek_previews:
 			_hide_seek_preview())
@@ -113,6 +115,8 @@ func _process(delta: float) -> void:
 	if window.x < 1.0 or window.y < 1.0:
 		return
 	_layout_menu(window)
+	if not panel.visible:
+		_set_menu_hover(false)
 	_layout_osd(window)
 	_fit_camera(window)
 	_update_cursor(delta)
@@ -157,14 +161,14 @@ func _layout_osd(window: Vector2) -> void:
 
 
 func _is_flat() -> bool:
-	if main.resonance_field != null and main.resonance_field.active:
+	if main.resonance_field != null and main.resonance_field.active and not player.is_visualizer_overlay_active():
 		return false
 	return Settings.projection == Settings.ProjectionMode.FLAT
 
 
 func _fit_camera(window: Vector2) -> void:
 	if not _is_flat():
-		var zoom: float = Settings.visualizer_zoom if main.resonance_field != null and main.resonance_field.active else 1.0
+		var zoom: float = Settings.visualizer_zoom if main.resonance_field != null and main.resonance_field.active and not player.is_visualizer_overlay_active() else 1.0
 		camera.fov = rad_to_deg(2.0 * atan(tan(deg_to_rad(sphere_fov) * 0.5) / zoom))
 		return
 	var quad := screen.mesh as QuadMesh
@@ -212,6 +216,7 @@ func handle_input(event: InputEvent) -> bool:
 func _menu_input(mouse: InputEventMouse) -> bool:
 	var button := mouse as InputEventMouseButton
 	var inside := menu_rect.get_rect().has_point(mouse.position)
+	_set_menu_hover(inside)
 	if button != null and button.pressed and not inside and not menu_pressed:
 		if button.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
 			panel.close()
@@ -228,8 +233,27 @@ func _menu_input(mouse: InputEventMouse) -> bool:
 		motion.relative *= canvas / rect.size
 	if PopupDismiss.outside_press(ui_viewport, forwarded):
 		return true
+	var opens_popup := button != null and button.pressed and button.button_index == MOUSE_BUTTON_RIGHT and ui_viewport.get_embedded_subwindows().is_empty()
 	ui_viewport.push_input(forwarded, true)
+	if opens_popup:
+		for window in ui_viewport.get_embedded_subwindows():
+			var popup := window as Popup
+			if popup != null and popup.visible:
+				var release := forwarded.duplicate() as InputEventMouseButton
+				release.pressed = false
+				release.button_mask &= ~MOUSE_BUTTON_MASK_RIGHT
+				popup.popup_hide.connect(ui_viewport.push_input.bind(release, true), CONNECT_DEFERRED | CONNECT_ONE_SHOT)
 	return true
+
+
+func _set_menu_hover(inside: bool) -> void:
+	if menu_hovered == inside:
+		return
+	menu_hovered = inside
+	if inside:
+		ui_viewport.notify_mouse_entered()
+	else:
+		ui_viewport.notify_mouse_exited()
 
 
 func _video_input(mouse: InputEventMouse) -> bool:

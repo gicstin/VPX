@@ -6,6 +6,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-10-21
+
+### Added
+
+- Mark currently playing files and online sources with a play icon on gallery grid thumbnails, including background music, without polling or extra file reads.
+- Add one-click Off, Subtle, Balanced and Vivid visualizer mixes directly to the desktop and VR mini player while music plays over images or panoramas.
+- Restore immersive sound visualizer overlays over videos, images and panoramas, with saved visual opacity, backdrop dimming, atmosphere controls and Subtle, Balanced and Vivid mixes.
+
+### Changed
+
+- Skip settled spectrum smoothing and unchanged texture uploads, reduce audio-capture and oscilloscope work, and speed up panorama face parsing, with reference-equivalence and performance checks.
+- Reduce music-player refresh work and visualizer analysis cost by caching unchanged picker and favourite state, reusing audio timing, and avoiding redundant directional calculations.
+- Batch oscilloscope shading and cache visualizer colour gradients while preserving waveform appearance, resizing and palette updates.
+- Reduce library grid idle work, cache date and size sort keys, and group panorama visibility decisions per cube set, with repeatable performance and regression checks.
+- Collapse the mini player by clicking its album-art area, with an audio-icon fallback when artwork is missing, replacing the dedicated collapse button.
+
+### Fixed
+
+- Smooth 360° visualizer joins by closing waveform and spectral ribbon endpoints, matching loop colours and making sky patterns continuous across longitude seams.
+- Fade the mini player as one composited panel so idle buttons, icons and labels retain consistent contrast.
+- Remove the thick inset around collapsed album art and clip artwork to rounded corners in both music-player sizes.
+- Make Next and Previous cycle through memorised online sources, preserving navigation order while opened-link history updates.
+- Restore button clicks and the normal pointer after pasting through a text field's right-click menu, and after dismissing that menu.
+- Preserve music and online-radio album art proportions in a square thumbnail in the main player bar.
+- Notify the desktop UI viewport when the mouse enters or leaves, restoring mouse motion over virtual keyboard keys and clearing stale hover when the menu closes.
+
 ## [0.0.4] - 2026-10-20
 
 ### Added

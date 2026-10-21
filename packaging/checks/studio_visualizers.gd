@@ -77,7 +77,12 @@ func run() -> void:
 	field.set_process(false)
 	field.set_active(true)
 	var previous: Image
-	for index in range(settings.VISUALIZER_STUDIO_START, settings.VISUALIZER_PRESETS.size()):
+	var start: int = settings.VISUALIZER_STUDIO_START
+	var args := OS.get_cmdline_user_args()
+	var from := args.find("--from")
+	if from >= 0 and from + 1 < args.size():
+		start = clampi(int(args[from + 1]), start, settings.VISUALIZER_PRESETS.size() - 1)
+	for index in range(start, settings.VISUALIZER_PRESETS.size()):
 		settings.apply("visualizer_preset", index)
 		var title: String = settings.VISUALIZER_PRESETS[index]
 		check(field.find_children("*", "Label3D", true, false).is_empty(), title + " has no permanent labels")

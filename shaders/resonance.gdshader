@@ -1,6 +1,8 @@
 shader_type spatial;
 render_mode unshaded, blend_add, depth_draw_never, cull_disabled, shadows_disabled, fog_disabled;
 
+#include "res://shaders/visualizer_loop.gdshaderinc"
+
 uniform sampler2D spectrum_texture : filter_linear, repeat_disable;
 uniform sampler2D wave_texture : filter_linear, repeat_disable;
 uniform sampler2D history_texture : filter_linear, repeat_enable;
@@ -90,7 +92,7 @@ SourceVertex source_vertex(vec3 vertex, float instance_id, float seed, float ban
 	if (shape == 3) {
 		vec4 current = source_history(channel, 0.0);
 		result.response = current.a;
-		float wave = textureLod(wave_texture, vec2(mix(0.5 / 256.0, 255.5 / 256.0, result.along), (channel + 0.5) * 0.5), 0.0).r;
+		float wave = loop_sample(wave_texture, result.along, (channel + 0.5) * 0.5, 256.0);
 		float radius = 0.16 + index * 0.11 + clamp(wave, -0.5, 0.5) * 0.06 * intensity * pow(sin(result.along * PI), 2.0);
 		radius += vertex.y * (0.018 + min(result.response, 1.0) * 0.018);
 		point = origin + (lateral * cos(az) + up * sin(az)) * radius;
@@ -115,7 +117,7 @@ SourceVertex source_vertex(vec3 vertex, float instance_id, float seed, float ban
 		vec3 vertical = up * cos(tilt) + forward * sin(tilt);
 		float width = 0.018 + min(result.response, 1.0) * 0.035 * intensity;
 		radius += vertex.y * width;
-		float wave = textureLod(wave_texture, vec2(mix(0.5 / 256.0, 255.5 / 256.0, result.along), (channel + 0.5) * 0.5), 0.0).r;
+		float wave = loop_sample(wave_texture, result.along, (channel + 0.5) * 0.5, 256.0);
 		radius += wave * 0.035 * intensity * exp(-distance);
 		point = origin + forward * distance * 0.65 + (lateral * cos(az) + vertical * sin(az)) * radius;
 		result.spark = result.response * smoothstep(0.0, 0.04, travel) * (1.0 - smoothstep(0.5, 1.0, travel));

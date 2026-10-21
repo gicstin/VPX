@@ -37,6 +37,7 @@ var res_badge: PanelContainer
 var res_label: Label
 var duration_badge: PanelContainer
 var duration_label: Label
+var playing_badge: PanelContainer
 var progress: ProgressBar
 var title_label: Label
 var meta_label: Label
@@ -74,6 +75,7 @@ func set_cover(p_cover: Dictionary) -> void:
 		remove_child(child)
 		child.queue_free()
 	frame = null
+	playing_badge = null
 	thumb = null
 	placeholder = null
 	progress = null
@@ -109,6 +111,22 @@ static func pretty_name(file_path: String) -> String:
 
 func media_path() -> String:
 	return cover if is_dir else path
+
+
+func set_playing(active: bool) -> void:
+	if layout != Layout.CARD:
+		return
+	if playing_badge == null:
+		if not active:
+			return
+		playing_badge = PanelContainer.new()
+		playing_badge.theme_type_variation = &"Badge"
+		playing_badge.mouse_filter = MOUSE_FILTER_IGNORE
+		playing_badge.custom_minimum_size = Vector2(38, 34)
+		playing_badge.add_child(_icon_rect("play", 22, VpxTheme.ACCENT_HOVER))
+		frame.add_child(playing_badge)
+		_pin(playing_badge, Vector2(10, -14), false, true)
+	playing_badge.visible = active
 
 
 func _on_pressed() -> void:

@@ -350,6 +350,7 @@ func _ready() -> void:
 	player.music_metadata_changed.connect(_refresh_now_playing)
 	player.music_changed.connect(func() -> void:
 		_refresh_now_playing()
+		_highlight_current()
 		_refresh_marks()
 		_refresh_audio_info()
 		if not player.music_path.is_empty():
@@ -612,6 +613,13 @@ func _build_media_page() -> void:
 	Rows.toggle(audio, "Dialogue boost", &"dialogue_boost")
 	Rows.choice(audio, "Loudness", &"audio_filter", PackedStringArray(["Off", "Even out", "Night mode"]))
 	audio_info_label = Rows.hint(audio, "")
+	var visuals := Rows.section(page, "Immersive sound visuals")
+	var scene_picker := preload("res://scripts/visualizer_picker.gd").new()
+	scene_picker.name = "SoundVisualizer"
+	scene_picker.setting = &"visualizer_preset"
+	scene_picker.options = PackedStringArray(Settings.VISUALIZER_PRESETS)
+	scene_picker.scene_selected.connect(func() -> void: player.enter_immersive_music())
+	visuals.add_child(scene_picker)
 	var subtitles := Rows.section(page, "Subtitles")
 	Rows.choice(subtitles, "Show subtitles", &"subtitle_auto", PackedStringArray(["Forced only", "Foreign audio", "Always"]))
 	Rows.dropdown(subtitles, "Subtitle language", &"subtitle_language", Languages.names())
@@ -1661,7 +1669,7 @@ func _image_stats() -> String:
 
 func _on_opened(path: String) -> void:
 	var entry := _entry_for(path)
-	if entry.is_empty() or (player._audio_only_playing() and VPXPlayer._network_path(path)):
+	if entry.is_empty() or VPXPlayer._network_path(path):
 		_request_playlist(path)
 	elif Settings.shuffle and shuffle.members.has(entry):
 		shuffle.visit(entry)
@@ -1701,6 +1709,9 @@ func _refresh_now_playing() -> void:
 	var texture := MediaInfo.thumbnail(now_path)
 	if player.is_music_mode() and player.radio.artwork != null:
 		texture = player.radio.artwork
+	now_thumb.custom_minimum_size = Vector2(54, 54) if player.is_music_mode() else Vector2(96, 54)
+	now_thumb.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED if player.is_music_mode() else TextureRect.STRETCH_SCALE
+	(now_thumb.material as ShaderMaterial).set_shader_parameter("size", now_thumb.custom_minimum_size)
 	now_thumb.texture = texture
 	now_thumb.visible = texture != null
 	_refresh_format_badge()
@@ -1905,9 +1916,14 @@ func _neighbor_images(path: String) -> PackedStringArray:
 
 func _highlight_current() -> void:
 	for path: String in cards:
-		var card: Button = cards[path]
-		if card.toggle_mode:
-			card.set_pressed_no_signal(card.media_path() == player.current_path)
+		_sync_card_playback(cards[path])
+
+
+func _sync_card_playback(card: Button) -> void:
+	var media: String = card.media_path()
+	if card.toggle_mode:
+		card.set_pressed_no_signal(media == player.current_path)
+	card.set_playing(not media.is_empty() and (media == player.current_path or media == player.music_path))
 
 
 func _refresh_cards() -> void:
@@ -1950,13 +1966,18 @@ func _stop_music_under_picture() -> void:
 
 func _request_playlist(path: String) -> void:
 	var audio_over_image := player.is_image() and player.music_path == path
+	if VPXPlayer._network_path(path):
+		var audio := player._audio_only_playing()
+		var files := _link_playlist(path, music_playlist if audio else playlist)
+		if not audio_over_image:
+			_set_playlist(files, path)
+		if audio:
+			music_playlist = files
+			music_playlist_index = LibraryScanner.index_of(files)
+			music_shuffle.sync(files, path)
+		return
 	if not audio_over_image:
 		_set_playlist(PackedStringArray([path]), path)
-	if player._audio_only_playing() and VPXPlayer._network_path(path):
-		music_playlist = PackedStringArray([path])
-		music_playlist_index = LibraryScanner.index_of(music_playlist)
-		music_shuffle.sync(music_playlist, path)
-		return
 	if Settings.library_flat_view and Settings.library_source == Settings.LibrarySource.FOLDER and path in listing:
 		var audio := path.get_extension().to_lower() in VPXPlayer.AUDIO_EXTENSIONS
 		var image := PanoramaFiles.is_image(path)
@@ -1966,6 +1987,20 @@ func _request_playlist(path: String) -> void:
 		return
 	if not path.contains("://"):
 		scanner.playlist(path, PanoramaFiles.is_image(path), Settings.library_sort, _scan_filter())
+
+
+func _link_playlist(current: String, previous: PackedStringArray) -> PackedStringArray:
+	var links := Library.recent_links()
+	if current not in links:
+		links.append(current)
+	var files := PackedStringArray()
+	for path: String in previous:
+		if path in links and path not in files:
+			files.append(path)
+	for path: String in links:
+		if path not in files:
+			files.append(path)
+	return files
 
 
 func _set_playlist(files: PackedStringArray, current: String) -> void:
@@ -2035,7 +2070,7 @@ func _on_cover_found(path: String, cover: Dictionary) -> void:
 	var card: Button = cards[path]
 	card.set_cover(cover)
 	_track_cover(path, card)
-	card.set_pressed_no_signal(card.media_path() == player.current_path)
+	_sync_card_playback(card)
 
 
 func open_directory(path: String) -> void:
@@ -2595,7 +2630,7 @@ func _build_card(key: String, parent: VirtualGrid) -> Control:
 	if is_dir and scanned and not folder_covers.has(key):
 		scanner.cover(key)
 	_track_cover(key, card)
-	card.set_pressed_no_signal(card.media_path() == player.current_path)
+	_sync_card_playback(card)
 	return card
 
 

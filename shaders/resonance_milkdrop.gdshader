@@ -1,6 +1,8 @@
 shader_type spatial;
 render_mode unshaded, blend_add, depth_draw_never, cull_disabled, shadows_disabled, fog_disabled;
 
+#include "res://shaders/visualizer_loop.gdshaderinc"
+
 uniform sampler2D spectrum_texture : filter_linear, repeat_disable;
 uniform sampler2D wave_texture : filter_linear, repeat_disable;
 uniform sampler2D spectral_history_texture : filter_linear, repeat_disable;
@@ -103,8 +105,11 @@ void vertex() {
 	float channel = mod(id, 2.0);
 	float age = floor(id * 0.5) / max(1.0, float(instance_count) * 0.5 - 1.0);
 	float u = VERTEX.x;
-	float response = energy(u, channel, age * 2.6);
-	float wave = textureLod(wave_texture, vec2(mix(0.5 / 256.0, 255.5 / 256.0, u), (channel + 0.5) * 0.5), 0.0).r;
+	float response = energy(fract(u), channel, age * 2.6);
+	if (loop_weight(u) < 1.0) {
+		response = loop_join(response, energy(0.0, channel, age * 2.6), energy(1.0, channel, age * 2.6), u);
+	}
+	float wave = loop_sample(wave_texture, u, (channel + 0.5) * 0.5, 256.0);
 	tint = wave_colour(t - age * 2.6) * mix(vec3(0.35, 0.9, 1.0), vec3(1.0, 0.45, 0.7), channel);
 	edge = VERTEX.y;
 	light = (0.025 + response * 1.6) * exp(-age * 1.8);
@@ -123,7 +128,6 @@ void vertex() {
 	} else {
 		if (shape == 2) {
 			age = floor(id * 0.5) / max(1.0, float(instance_count) * 0.5 - 1.0);
-			response = energy(u, channel, age * 2.6);
 			wave = 0.0;
 			light = (0.01 + response * 0.35) * exp(-age * 1.8);
 		}

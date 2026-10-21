@@ -22,15 +22,17 @@ static func is_image(path: String) -> bool:
 
 static func face_of(path: String) -> Dictionary:
 	var base := path.get_file().get_basename()
-	for regex in [face_regex, letter_regex]:
-		var found: RegExMatch = regex.search(base)
-		if found != null:
-			return {
-				"prefix": found.get_string("prefix"),
-				"face": FACE_NAMES[found.get_string("face").to_lower()],
-				"suffix": found.get_string("suffix") if regex == face_regex else "",
-				"extension": path.get_extension().to_lower(),
-			}
+	var found := face_regex.search(base)
+	var letter := found == null
+	if letter:
+		found = letter_regex.search(base)
+	if found != null:
+		return {
+			"prefix": found.get_string(1),
+			"face": FACE_NAMES[found.get_string(2).to_lower()],
+			"suffix": "" if letter else found.get_string(3),
+			"extension": path.get_extension().to_lower(),
+		}
 	return {}
 
 
@@ -92,29 +94,28 @@ static func visible_images(_directory: String, names: Array[String]) -> Array[St
 		if face.is_empty():
 			plain_names.append(name)
 		else:
-			faces[name] = face
+			faces[name] = face["face"]
 			var key := _set_key(face)
 			if not sets.has(key):
-				sets[key] = {"faces": {}}
+				sets[key] = {"prefix": face["prefix"], "faces": {}, "names": []}
 			sets[key]["faces"][face["face"]] = name
+			sets[key]["names"].append(name)
 	if sets.is_empty():
 		return names.duplicate()
 	for name in plain_names:
 		if is_image(name) or face_of(name).is_empty():
 			_add_prefixes(name.get_basename(), plain_prefixes)
+	var hidden := {}
+	for entry: Dictionary in sets.values():
+		if entry["faces"].size() < CUBE_ORDER.size():
+			continue
+		var hide_front := plain_prefixes.has(entry["prefix"])
+		for name: String in entry["names"]:
+			if hide_front or faces[name] != "front":
+				hidden[name] = true
 	var shown: Array[String] = []
 	for name in names:
-		if not faces.has(name):
-			shown.append(name)
-			continue
-		var face: Dictionary = faces[name]
-		var entry: Dictionary = sets.get(_set_key(face), {})
-		if entry.get("faces", {}).size() < CUBE_ORDER.size():
-			shown.append(name)
-			continue
-		if face["face"] != "front":
-			continue
-		if not plain_prefixes.has(face["prefix"]):
+		if not hidden.has(name):
 			shown.append(name)
 	return shown
 

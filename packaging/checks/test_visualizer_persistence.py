@@ -21,7 +21,7 @@ class VisualizerPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="vpx-preset-check-") as directory:
             environment = isolated_environment(directory)
             command = [godot, "--headless", "--path", str(ROOT), "--xr-mode", "off", "--audio-driver", "Dummy", "--script", "res://packaging/checks/visualizer_persistence.gd", "--"]
-            for phase, preset in [("select", 73), ("restore", 73), ("cycle", 74), ("restore", 74), ("disable", 74), ("disabled", 74)]:
+            for phase, preset in [("select", 73), ("restore", 73), ("cycle", 74), ("restore", 74), ("disable", 74), ("disabled", 74), ("select", 90), ("restore", 90), ("cycle", 91), ("restore", 91), ("disable", 91), ("disabled", 91)]:
                 result = subprocess.run(command + [phase, str(preset)], env=environment, capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertNotIn("SCRIPT ERROR", result.stderr)
@@ -30,7 +30,7 @@ class VisualizerPersistenceTests(unittest.TestCase):
                 settings_path = next(Path(directory).rglob("settings.cfg"))
             saved = settings_path.read_bytes()
             environment.pop("VPX_CHECK_DATA_ROOT")
-            for script in ["checks/music_visualizer.gd", "checks/studio_visualizers.gd", "checks/visualizer_channels.gd", "checks/visualizer_volume.gd", "checks/visualizer_music.gd", "checks/visualizer_response.gd", "checks/visualizer_calibration.gd", "checks/visualizer_profiles.gd", "checks/visualizer_zoom.gd", "generate_visualizer_previews.gd"]:
+            for script in ["checks/music_visualizer.gd", "checks/studio_visualizers.gd", "checks/live_visualizers.gd", "checks/projectm_visualizers.gd", "checks/visualizer_wrap.gd", "checks/visualizer_channels.gd", "checks/visualizer_volume.gd", "checks/visualizer_music.gd", "checks/visualizer_response.gd", "checks/visualizer_calibration.gd", "checks/visualizer_profiles.gd", "checks/visualizer_zoom.gd", "generate_visualizer_previews.gd"]:
                 rejected = command[:command.index("--script")] + ["--script", "res://packaging/" + script]
                 result = subprocess.run(rejected, env=environment, capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)

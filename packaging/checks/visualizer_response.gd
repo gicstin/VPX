@@ -483,7 +483,8 @@ func benchmark(index: int) -> void:
 	var vertices := 0
 	for layer in field.layers:
 		var mesh: Mesh = layer.multimesh.mesh
-		vertices += mesh.surface_get_array_len(0) * layer.multimesh.visible_instance_count
+		var positions: PackedVector3Array = mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+		vertices += positions.size() * layer.multimesh.visible_instance_count
 	var previous := 304 * 514 + 5200 * 6
 	print("BENCHMARK %s size=%s vertices=%d reduction=%.1f%% gpu_median=%.3fms gpu_p95=%.3fms" % [settings.VISUALIZER_PRESETS[index], root.size, vertices, 100.0 * (1.0 - float(vertices) / previous), gpu[gpu.size() / 2], gpu[int(gpu.size() * 0.95)]])
 	check(vertices < previous / 2, "%s cuts vertex work by over half" % settings.VISUALIZER_PRESETS[index])

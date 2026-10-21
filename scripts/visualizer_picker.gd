@@ -17,6 +17,10 @@ var tiles: Array[Button] = []
 var favorite_buttons: Array[Button] = []
 var starred_filter: Button
 var empty_favorites: Label
+var overlay_toggle: CheckButton
+var mix_controls: VBoxContainer
+var pulled_state: Array = []
+var pulled_favorites := PackedStringArray()
 
 
 func _ready() -> void:
@@ -69,6 +73,17 @@ func _build() -> void:
 		controls_button.text = "Controls ▴" if on else "Controls ▾"
 		gallery.set_deferred("scroll_vertical", 0))
 	actions.add_child(controls_button)
+	overlay_toggle = CheckButton.new()
+	overlay_toggle.text = "Overlay on video / image / panorama"
+	overlay_toggle.custom_minimum_size.y = 44
+	overlay_toggle.focus_mode = FOCUS_NONE
+	overlay_toggle.tooltip_text = "Keep media visible. Visuals follow video sound or music playing over a photo or panorama."
+	overlay_toggle.toggled.connect(func(on: bool) -> void:
+		Settings.apply("visualizer_overlay", on)
+		if on:
+			Settings.apply("immersive_music_visualizer", true)
+		gallery.set_deferred("scroll_vertical", 0))
+	menu.add_child(overlay_toggle)
 	tuning = VBoxContainer.new()
 	tuning.visible = false
 	tuning.add_theme_constant_override("separation", 6)
@@ -89,6 +104,20 @@ func _build() -> void:
 	var scene_list := VBoxContainer.new()
 	scene_list.size_flags_horizontal = SIZE_EXPAND_FILL
 	gallery.add_child(scene_list)
+	mix_controls = VBoxContainer.new()
+	mix_controls.add_theme_constant_override("separation", 6)
+	scene_list.add_child(mix_controls)
+	var mix_title := Label.new()
+	mix_title.text = "MEDIA MIX"
+	mix_controls.add_child(mix_title)
+	var mixes := preload("res://scripts/visualizer_mix.gd").new()
+	mix_controls.add_child(mixes)
+	_adjustment(mix_controls, "Visual opacity", &"visualizer_overlay_opacity", 0.0, 1.0, 0.01, 100.0, "%")
+	_adjustment(mix_controls, "Backdrop dim", &"visualizer_background_dim", 0.0, 1.0, 0.01, 100.0, "%")
+	_adjustment(mix_controls, "Atmosphere", &"visualizer_atmosphere", 0.0, 1.0, 0.01, 100.0, "%")
+	adjustments[&"visualizer_overlay_opacity"].tooltip_text = "0% hides the visual layer; 100% gives full-strength visuals"
+	adjustments[&"visualizer_background_dim"].tooltip_text = "Darken media behind the visuals without changing picture settings"
+	adjustments[&"visualizer_atmosphere"].tooltip_text = "Blend the scene's sky into the backdrop; 0% keeps the media clear"
 	scene_list.add_child(tuning)
 	_option(tuning, "Quality", &"visualizer_quality", PackedStringArray(["Automatic", "Performance", "Balanced", "High"]))
 	_adjustment(tuning, "Timing", &"visualizer_sync", -0.25, Settings.visualizer_advance_limit(), 0.005, 1000.0, " ms")
@@ -271,12 +300,20 @@ func _toggle(parent: VBoxContainer, title: String, key: StringName) -> void:
 func _pull() -> void:
 	var index := clampi(int(read()), 0, options.size() - 1)
 	var enabled := Settings.immersive_music_visualizer
+	var state := [index, enabled, Settings.visualizer_overlay, Settings.visualizer_starred_only]
+	if external_button != null:
+		selected.set_pressed_no_signal(enabled)
+	if state == pulled_state and pulled_favorites == Settings.visualizer_favorites:
+		tiles[index].set_pressed_no_signal(enabled)
+		return
+	pulled_state = state
+	pulled_favorites = Settings.visualizer_favorites.duplicate()
 	var label := options[index] if enabled else "Disabled"
 	if external_button == null:
 		selected.text = label + " ▾"
-	else:
-		selected.set_pressed_no_signal(enabled)
-	selected.tooltip_text = "Immersive music visualizer · " + label + " · Choose a scene or Disable Visualisation"
+	selected.tooltip_text = "Immersive sound visualizer · " + label + (" · Overlay on media" if Settings.visualizer_overlay else "") + " · Choose a scene or Disable Visualisation"
+	overlay_toggle.set_pressed_no_signal(Settings.visualizer_overlay)
+	mix_controls.visible = Settings.visualizer_overlay
 	disabled_button.set_pressed_no_signal(not enabled)
 	starred_filter.set_pressed_no_signal(Settings.visualizer_starred_only)
 	starred_filter.text = "★" if Settings.visualizer_starred_only else "☆"
@@ -312,7 +349,7 @@ func _toggle_gallery() -> void:
 	await get_tree().process_frame
 	if is_instance_valid(gallery) and gallery.visible:
 		var tile := tiles[clampi(int(read()), 0, tiles.size() - 1)]
-		if Settings.immersive_music_visualizer and tile.visible:
+		if Settings.immersive_music_visualizer and tile.visible and not Settings.visualizer_overlay:
 			gallery.ensure_control_visible(tile)
 		else:
 			gallery.scroll_vertical = 0

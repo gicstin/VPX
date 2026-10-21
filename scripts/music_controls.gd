@@ -1,4 +1,4 @@
-extends PanelContainer
+extends Control
 
 signal collapsed_changed
 
@@ -9,9 +9,11 @@ const OPACITY_RATE := 14.0
 
 var player: VPXPlayer
 var ui: Control
+var fade_group: CanvasGroup
+var panel: PanelContainer
 var rows: VBoxContainer
 var header: HBoxContainer
-var collapse_button: Button
+var cover_button: Button
 var preview_button: Button
 var preview_image: TextureRect
 var preview_path := ""
@@ -31,6 +33,7 @@ var immersive_button: Button
 var previous_style_button: Button
 var next_style_button: Button
 var scene_picker: Dropdown
+var quick_mix: HBoxContainer
 var play_button: Button
 var favorite_button: Button
 var back_button: Button
@@ -39,25 +42,31 @@ var seeking := false
 var refreshing := false
 var grabbed := false
 var adjusting_volume := false
+var favorite_state := -1
 
 
 func _init() -> void:
-	modulate.a = IDLE_OPACITY
 	theme = VpxTheme.build()
-	add_theme_stylebox_override("panel", VpxTheme.flat(VpxTheme.OVERLAY, 18, 24, 16))
+	fade_group = CanvasGroup.new()
+	fade_group.self_modulate.a = IDLE_OPACITY
+	add_child(fade_group)
+	panel = PanelContainer.new()
+	panel.theme = theme
+	panel.add_theme_stylebox_override("panel", VpxTheme.flat(VpxTheme.OVERLAY, 18, 24, 16))
+	fade_group.add_child(panel)
+	theme_changed.connect(func() -> void: panel.theme = theme)
+	panel.minimum_size_changed.connect(update_minimum_size)
+	resized.connect(func() -> void: panel.size = size)
 	rows = VBoxContainer.new()
 	rows.add_theme_constant_override("separation", 8)
-	add_child(rows)
+	panel.add_child(rows)
 	header = HBoxContainer.new()
 	header.add_theme_constant_override("separation", 8)
 	rows.add_child(header)
-	cover_image = TextureRect.new()
-	cover_image.custom_minimum_size = Vector2(88, 88)
-	cover_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	cover_image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	cover_image.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	cover_image.visible = false
-	header.add_child(cover_image)
+	cover_button = _icon_button(header, "audio", func() -> void: set_collapsed(true), 48)
+	cover_button.custom_minimum_size = Vector2(88, 88)
+	cover_button.tooltip_text = "Collapse music player"
+	cover_image = _artwork_image(cover_button, 14)
 	var metadata := VBoxContainer.new()
 	metadata.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	metadata.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -80,8 +89,6 @@ func _init() -> void:
 	favorite_button = _favorite_button(header)
 	volume_button = _icon_button(header, "volume", func() -> void: volume_row.visible = not volume_row.visible)
 	volume_button.toggle_mode = true
-	collapse_button = _icon_button(header, "chevron_down", func() -> void: set_collapsed(true))
-	collapse_button.tooltip_text = "Collapse music player"
 	volume_row = HBoxContainer.new()
 	volume_row.add_theme_constant_override("separation", 10)
 	volume_row.visible = false
@@ -141,21 +148,22 @@ func _init() -> void:
 	next_style_button = _icon_button(controls, "chevron_right", func() -> void: _cycle_style(1))
 	next_style_button.tooltip_text = "Next immersive visualizer style"
 	next_style_button.visible = false
+	quick_mix = preload("res://scripts/visualizer_mix.gd").new()
+	quick_mix.activate_overlay = true
+	quick_mix.visible = false
+	rows.add_child(quick_mix)
 	scene_picker = preload("res://scripts/visualizer_picker.gd").new()
 	scene_picker.scene_selected.connect(func() -> void: player.enter_immersive_music())
 	scene_picker.external_button = immersive_button
 	scene_picker.setting = &"visualizer_preset"
 	scene_picker.options = PackedStringArray(Settings.VISUALIZER_PRESETS)
 	rows.add_child(scene_picker)
-	preview_button = _icon_button(self, "audio", func() -> void: set_collapsed(false), 48)
-	preview_button.custom_minimum_size = Vector2.ONE * (PREVIEW_SIZE - 16.0)
+	preview_button = _icon_button(panel, "audio", func() -> void: set_collapsed(false), 48)
+	preview_button.custom_minimum_size = Vector2.ONE * PREVIEW_SIZE
 	preview_button.visible = false
-	preview_image = TextureRect.new()
-	preview_image.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	preview_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	preview_image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	preview_image.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	preview_button.add_child(preview_image)
+	for state in ["normal", "hover", "pressed", "hover_pressed", "disabled"]:
+		preview_button.add_theme_stylebox_override(state, VpxTheme.flat(VpxTheme.TRANSPARENT, 18, 0, 0))
+	preview_image = _artwork_image(preview_button, 18)
 
 
 func _process(delta: float) -> void:
@@ -163,11 +171,15 @@ func _process(delta: float) -> void:
 		adjusting_volume = false
 		return
 	var hovered := get_viewport().gui_get_hovered_control()
-	var active := grabbed or seeking or adjusting_volume or (hovered != null and (hovered == self or is_ancestor_of(hovered)))
+	var active: bool = grabbed or seeking or adjusting_volume or scene_picker.menu.visible or (hovered != null and (hovered == self or is_ancestor_of(hovered)))
 	var target := 1.0 if active else IDLE_OPACITY
-	modulate.a = lerpf(modulate.a, target, 1.0 - exp(-delta * OPACITY_RATE))
-	if absf(modulate.a - target) < 0.004:
-		modulate.a = target
+	fade_group.self_modulate.a = lerpf(fade_group.self_modulate.a, target, 1.0 - exp(-delta * OPACITY_RATE))
+	if absf(fade_group.self_modulate.a - target) < 0.004:
+		fade_group.self_modulate.a = target
+
+
+func _get_minimum_size() -> Vector2:
+	return panel.get_combined_minimum_size() if panel != null else Vector2.ZERO
 
 
 func wanted_size() -> Vector2:
@@ -192,11 +204,9 @@ func refresh() -> void:
 	details_label.text = " · ".join(details)
 	details_label.tooltip_text = details_label.text
 	details_label.visible = not details.is_empty()
-	cover_image.texture = player.radio.artwork if radio_active else null
-	cover_image.visible = cover_image.texture != null
 	_refresh_volume()
-	if collapsed:
-		_refresh_preview()
+	_refresh_artwork()
+	quick_mix.visible = player.is_image() and player._audio_only_playing()
 	spectrum_view.visible = Settings.music_visualizer
 	if not player._audio_only_playing():
 		scene_picker.close()
@@ -233,7 +243,7 @@ func set_collapsed(value: bool) -> void:
 	seeking = false
 	rows.visible = not collapsed
 	preview_button.visible = collapsed
-	add_theme_stylebox_override("panel", VpxTheme.flat(VpxTheme.OVERLAY, 18, 8 if collapsed else 24, 8 if collapsed else 16))
+	panel.add_theme_stylebox_override("panel", VpxTheme.flat(VpxTheme.OVERLAY, 18, 0 if collapsed else 24, 0 if collapsed else 16))
 	custom_minimum_size = Vector2.ONE * PREVIEW_SIZE if collapsed else Vector2(WIDTH, 0.0)
 	refresh()
 	collapsed_changed.emit()
@@ -248,7 +258,7 @@ func track(direction: int) -> void:
 		ui.play_music_neighbor(direction)
 
 
-func _refresh_preview() -> void:
+func _refresh_artwork() -> void:
 	var path := music_path()
 	if preview_path != path:
 		preview_path = path
@@ -256,6 +266,10 @@ func _refresh_preview() -> void:
 	var texture := player.radio.artwork if player.radio.path == path else null
 	if texture == null:
 		texture = MediaInfo.thumbnail(path)
+	cover_image.texture = texture
+	cover_button.icon = VpxTheme.icon("audio", 48) if texture == null else null
+	if not collapsed:
+		return
 	if texture == null and Settings.music_visualizer:
 		texture = spectrum_view.texture
 	preview_image.texture = texture
@@ -290,6 +304,9 @@ func _refresh_favorite() -> void:
 	favorite_button.disabled = path.is_empty()
 	favorite_button.set_pressed_no_signal(not path.is_empty() and Library.is_favorite(path))
 	var on := favorite_button.button_pressed
+	if favorite_state == int(on):
+		return
+	favorite_state = int(on)
 	favorite_button.icon = VpxTheme.icon("star" if on else "star_outline")
 	var color := VpxTheme.FAVORITE if on else VpxTheme.MUTED
 	for role in ["icon_normal_color", "icon_pressed_color", "icon_hover_pressed_color", "icon_focus_color"]:
@@ -324,6 +341,21 @@ func _favorite_button(parent: Control) -> Button:
 		_refresh_favorite())
 	parent.add_child(button)
 	return button
+
+
+func _artwork_image(button: Button, radius: int) -> TextureRect:
+	var image := TextureRect.new()
+	image.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	image.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var material := ShaderMaterial.new()
+	material.shader = preload("res://shaders/rounded_artwork.gdshader")
+	material.set_shader_parameter("corner_radius", float(radius))
+	image.material = material
+	image.resized.connect(func() -> void: material.set_shader_parameter("bounds", image.size))
+	button.add_child(image)
+	return image
 
 
 func _icon_button(parent: Control, icon_name: String, action: Callable, size := VpxTheme.ICON_SIZE) -> Button:

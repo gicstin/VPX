@@ -616,7 +616,7 @@ func apply_audio_processing() -> void:
 	playback.set_dialogue_boost(1.0 if Settings.dialogue_boost else 0.0)
 	playback.set_audio_filter(Settings.audio_filter)
 	if playback.has_method("set_visualizer_enabled"):
-		playback.set_visualizer_enabled((Settings.music_visualizer or is_immersive_visualizer_active()) and (is_music_mode() or not music_path.is_empty()))
+		playback.set_visualizer_enabled((Settings.music_visualizer and _audio_only_playing()) or is_immersive_visualizer_active())
 
 
 func _request_auto_crop() -> void:
@@ -878,11 +878,17 @@ func is_music_mode() -> bool:
 
 
 func is_immersive_visualizer_active() -> bool:
-	return Settings.immersive_music_visualizer and is_music_mode()
+	return Settings.immersive_music_visualizer and (is_music_mode() or is_visualizer_overlay_active())
+
+
+func is_visualizer_overlay_active() -> bool:
+	if not Settings.immersive_music_visualizer or not Settings.visualizer_overlay or playback == null or is_music_mode():
+		return false
+	return _audio_only_playing() if is_image() else playback.get_audio_track() >= 0
 
 
 func enter_immersive_music() -> void:
-	if not _audio_only_playing() or not is_image():
+	if Settings.visualizer_overlay or not _audio_only_playing() or not is_image():
 		return
 	cancel_open()
 	current_path = music_path

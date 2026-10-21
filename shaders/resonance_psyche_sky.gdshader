@@ -44,7 +44,7 @@ void fragment() {
 	sky += mood(0.2) * horizon * (1.0 + bass * 1.2 + release * 3.0);
 	if (psyche_style == 0 || psyche_style == 2 || psyche_style == 7) {
 		sky += vec3(0.85, 0.9, 1.0) * stars(d, 120.0) * (0.04 + treble * 0.08) * smoothstep(-0.05, 0.2, d.y);
-		float galaxy = exp(-abs(d.y - 0.35 - sin(az * 0.7) * 0.15) * 7.0);
+		float galaxy = exp(-abs(d.y - 0.35 - sin(az) * 0.15) * 7.0);
 		sky += mix(vec3(0.012, 0.008, 0.03), vec3(0.03, 0.014, 0.008), warmth) * 0.12 * galaxy * (0.4 + mids * 0.6 + release);
 	} else if (psyche_style == 3) {
 		sky += vec3(0.002, 0.003, 0.005) * exp(-length(vec2(az, d.y - 0.1)) * 3.0) * (0.4 + breath * 0.4);

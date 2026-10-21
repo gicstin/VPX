@@ -17,6 +17,14 @@ const PSYCHE_COUNTS := [Vector4i(127, 900, 24, 24), Vector4i(191, 1400, 32, 32),
 const PSYCHE_LIMITS := [Vector4i(160, 2000, 6, 20), Vector4i(255, 1400, 10, 0), Vector4i(55, 1600, 7, 48), Vector4i(96, 1400, 24, 4), Vector4i(128, 1400, 6, 0), Vector4i(47, 2000, 48, 48), Vector4i(72, 1728, 6, 0), Vector4i(96, 1400, 5, 0)]
 const PSYCHE_SEGMENTS := [96, 8, 192, 96, 64, 32, 48, 96]
 const PSYCHE_START := 68
+const LIVE_START := 80
+const PROJECTM_START := 86
+const PROJECTM_COUNTS := [Vector4i(48, 480, 12, 0), Vector4i(72, 900, 18, 0), Vector4i(96, 1500, 24, 0)]
+const PROJECTM_SHADER := preload("res://shaders/resonance_projectm.gdshader")
+const PROJECTM_SKY_SHADER := preload("res://shaders/resonance_projectm_sky.gdshader")
+const LIVE_COUNTS := [Vector4i(48, 900, 12, 4), Vector4i(72, 1700, 20, 6), Vector4i(96, 2800, 28, 8)]
+const LIVE_SKY_SHADER := preload("res://shaders/resonance_live_sky.gdshader")
+const LIVE_SHADER := preload("res://shaders/resonance_live.gdshader")
 const MILKDROP_START := 76
 const MILKDROP_COUNTS := [Vector4i(32, 700, 8, 0), Vector4i(48, 1400, 12, 0), Vector4i(64, 2000, 16, 0)]
 const MILKDROP_SHADER := preload("res://shaders/resonance_milkdrop.gdshader")
@@ -81,6 +89,8 @@ var desired_presence := 0.0
 var image: Image
 var spectrum_targets := PackedFloat32Array()
 var spectrum_levels := PackedFloat32Array()
+var spectrum_settled := true
+var spectrum_settled_delta := INF
 var source_count := 2
 var channel_targets: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
 var channel_levels: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
@@ -94,8 +104,14 @@ var spectral_history_position := 0
 var spectral_history_elapsed := 0.0
 var spectral_history_duration := 0.0
 var scene_opacity := 1.0
+var compositing_overlay := false
+var overlay_shaders: Dictionary = {}
+var live_particle_mesh: QuadMesh
+var particle_mesh: ArrayMesh
+var live_mesh: ArrayMesh
 var strip_mesh: ArrayMesh
 var surface_mesh: ArrayMesh
+var projectm_sun_mesh: SphereMesh
 var psyche_meshes: Array[ArrayMesh] = []
 var ring_mesh: ArrayMesh
 var psyche_bass := 0.0
@@ -135,16 +151,25 @@ func _ready() -> void:
 	sky.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(sky)
 	strip_mesh = _strip(256)
+	live_mesh = _strip(160)
+	particle_mesh = _octahedron()
+	live_particle_mesh = QuadMesh.new()
+	live_particle_mesh.size = Vector2(2, 2)
 	ring_mesh = _strip(64)
 	for segments in PSYCHE_SEGMENTS:
 		psyche_meshes.append(_strip(segments))
 	surface_mesh = _surface(48, 192)
+	projectm_sun_mesh = SphereMesh.new()
+	projectm_sun_mesh.radius = 1.0
+	projectm_sun_mesh.height = 2.0
+	projectm_sun_mesh.radial_segments = 64
+	projectm_sun_mesh.rings = 32
 	for kind in 4:
 		var layer := MultiMeshInstance3D.new()
 		var instances := MultiMesh.new()
 		instances.transform_format = MultiMesh.TRANSFORM_3D
 		instances.use_custom_data = true
-		instances.mesh = _octahedron() if kind == 1 else strip_mesh
+		instances.mesh = particle_mesh if kind == 1 else strip_mesh
 		instances.instance_count = maxi(maxi(maxi(COUNTS[2][kind], DEPTH_COUNTS[2][kind]), maxi(PULSE_COUNTS[2][kind], STEREO_COUNTS[2][kind])), PSYCHE_COUNTS[2][kind])
 		instances.custom_aabb = AABB(Vector3.ONE * -40.0, Vector3.ONE * 80.0)
 		var rng := RandomNumberGenerator.new()
@@ -178,6 +203,7 @@ func _settings_changed() -> void:
 	if Settings.visualizer_quality > 0:
 		quality = Settings.visualizer_quality - 1
 	_apply_quality()
+	_apply_compositing()
 
 
 func cycle_preset() -> void:
@@ -188,10 +214,12 @@ func cycle_preset() -> void:
 func _apply_preset() -> void:
 	response_profile = RESPONSE_PROFILES.VALUES.get(Settings.VISUALIZER_PRESETS[preset_index], Vector3.ONE)
 	var pulse := preset_index >= PULSE_START and preset_index < STEREO_START
-	var milkdrop := preset_index >= MILKDROP_START
-	var psyche := preset_index >= PSYCHE_START and not milkdrop
-	var image_scene := preset_index >= STEREO_START and not psyche and not milkdrop
-	var shader := MILKDROP_SHADER if milkdrop else LEGACY_SHADER if preset_index < 3 else (PSYCHE_SHADER if psyche else (STEREO_SHADER if image_scene else (PULSE_SHADER if pulse else (DEPTH_SHADER if preset_index >= 7 else SHADER))))
+	var projectm_scene := preset_index >= PROJECTM_START
+	var live_scene := preset_index >= LIVE_START and preset_index < PROJECTM_START
+	var milkdrop := preset_index >= MILKDROP_START and preset_index < LIVE_START
+	var psyche := preset_index >= PSYCHE_START and preset_index < MILKDROP_START
+	var image_scene := preset_index >= STEREO_START and preset_index < PSYCHE_START
+	var shader := PROJECTM_SHADER if projectm_scene else LIVE_SHADER if live_scene else MILKDROP_SHADER if milkdrop else LEGACY_SHADER if preset_index < 3 else (PSYCHE_SHADER if psyche else (STEREO_SHADER if image_scene else (PULSE_SHADER if pulse else (DEPTH_SHADER if preset_index >= 7 else SHADER))))
 	for kind in materials.size():
 		var material := materials[kind]
 		material.shader = shader
@@ -204,24 +232,74 @@ func _apply_preset() -> void:
 		material.set_shader_parameter("pulse_style", maxi(0, preset_index - PULSE_START))
 		material.set_shader_parameter("stereo_style", maxi(0, preset_index - STEREO_START))
 		material.set_shader_parameter("psyche_style", maxi(0, preset_index - PSYCHE_START))
+		material.set_shader_parameter("live_style", maxi(0, preset_index - LIVE_START))
+		material.set_shader_parameter("projectm_style", maxi(0, preset_index - PROJECTM_START))
 		material.set_shader_parameter("milkdrop_style", maxi(0, preset_index - MILKDROP_START))
 		stereo.bind(material)
+	layers[1].multimesh.mesh = live_particle_mesh if live_scene else particle_mesh
 	for kind in [0, 2, 3]:
-		layers[kind].multimesh.mesh = (psyche_meshes[preset_index - PSYCHE_START] if kind == 0 else ring_mesh) if psyche else (surface_mesh if kind == 2 and preset_index >= 7 and preset_index < PULSE_START else strip_mesh)
-	sky_material.shader = PSYCHE_SKY_SHADER if milkdrop else LEGACY_SKY_SHADER if preset_index < 3 else (PSYCHE_SKY_SHADER if psyche else (STEREO_SKY_SHADER if image_scene else (PULSE_SKY_SHADER if pulse else SKY_SHADER)))
+		layers[kind].multimesh.mesh = (live_mesh if kind == 0 else ring_mesh) if live_scene else (psyche_meshes[preset_index - PSYCHE_START] if kind == 0 else ring_mesh) if psyche else (surface_mesh if kind == 2 and preset_index >= 7 and preset_index < PULSE_START else strip_mesh)
+	if projectm_scene:
+		layers[3].multimesh.mesh = projectm_sun_mesh if preset_index == PROJECTM_START + 4 else surface_mesh
+	sky_material.shader = PROJECTM_SKY_SHADER if projectm_scene else LIVE_SKY_SHADER if live_scene else PSYCHE_SKY_SHADER if milkdrop else LEGACY_SKY_SHADER if preset_index < 3 else (PSYCHE_SKY_SHADER if psyche else (STEREO_SKY_SHADER if image_scene else (PULSE_SKY_SHADER if pulse else SKY_SHADER)))
+	sky_material.set_shader_parameter("live_style", maxi(0, preset_index - LIVE_START))
+	sky_material.set_shader_parameter("projectm_style", maxi(0, preset_index - PROJECTM_START))
 	sky_material.set_shader_parameter("pulse_style", maxi(0, preset_index - PULSE_START))
 	sky_material.set_shader_parameter("stereo_style", maxi(0, preset_index - STEREO_START))
-	sky_material.set_shader_parameter("psyche_style", 1 if milkdrop else maxi(0, preset_index - PSYCHE_START))
+	sky_material.set_shader_parameter("psyche_style", 0 if live_scene else 1 if milkdrop else maxi(0, preset_index - PSYCHE_START))
 	stereo.bind(sky_material)
 	sky_material.set_shader_parameter("spectrum_texture", texture)
 	scene_opacity = 0.0
+	_apply_compositing(true)
+
+
+func _overlay_shader(source: Shader, atmosphere: bool) -> Shader:
+	if overlay_shaders.has(source):
+		return overlay_shaders[source]
+	var shader := Shader.new()
+	var code := source.code.replace("render_mode unshaded,", "render_mode unshaded, depth_test_disabled,")
+	if atmosphere:
+		code = code.replace("cull_front,", "depth_draw_never, cull_front,")
+		code = code.replace("shader_type spatial;", "shader_type spatial;\nuniform float overlay_opacity = 1.0;")
+		var end := code.rfind("}")
+		code = code.insert(end, "\tALPHA = overlay_opacity;\n")
+	shader.code = code
+	overlay_shaders[source] = shader
+	return shader
+
+
+func _apply_compositing(force := false) -> void:
+	var overlay := player != null and player.is_visualizer_overlay_active()
+	if overlay == compositing_overlay and not force:
+		return
+	compositing_overlay = overlay
+	for material in materials:
+		if overlay:
+			material.shader = _overlay_shader(material.shader, false)
+		else:
+			for source: Shader in overlay_shaders:
+				if material.shader == overlay_shaders[source]:
+					material.shader = source
+		material.render_priority = -14 if overlay else 0
+	if overlay:
+		sky_material.shader = _overlay_shader(sky_material.shader, true)
+	else:
+		for source: Shader in overlay_shaders:
+			if sky_material.shader == overlay_shaders[source]:
+				sky_material.shader = source
+	sky_material.render_priority = -15 if overlay else 0
 
 
 func _apply_quality() -> void:
-	var counts: Array = MILKDROP_COUNTS if preset_index >= MILKDROP_START else LEGACY_COUNTS if preset_index < 3 else (PSYCHE_COUNTS if preset_index >= PSYCHE_START else (STEREO_COUNTS if preset_index >= STEREO_START else (PULSE_COUNTS if preset_index >= PULSE_START else (DEPTH_COUNTS if preset_index >= 7 else COUNTS))))
+	var counts: Array = PROJECTM_COUNTS if preset_index >= PROJECTM_START else LIVE_COUNTS if preset_index >= LIVE_START else MILKDROP_COUNTS if preset_index >= MILKDROP_START else LEGACY_COUNTS if preset_index < 3 else (PSYCHE_COUNTS if preset_index >= PSYCHE_START else (STEREO_COUNTS if preset_index >= STEREO_START else (PULSE_COUNTS if preset_index >= PULSE_START else (DEPTH_COUNTS if preset_index >= 7 else COUNTS))))
 	for kind in layers.size():
 		var count: int = counts[clampi(quality, 0, 2)][kind]
-		if preset_index >= MILKDROP_START:
+		if preset_index >= PROJECTM_START:
+			if kind == 3:
+				count = 1 if preset_index in [PROJECTM_START + 3, PROJECTM_START + 4] else 0
+			elif kind == 2 and preset_index == PROJECTM_START + 5:
+				count = 0
+		elif preset_index >= MILKDROP_START and preset_index < LIVE_START:
 			if kind == 1 and preset_index != MILKDROP_START + 3:
 				count = 0
 		elif preset_index >= PSYCHE_START and preset_index < MILKDROP_START:
@@ -257,7 +335,9 @@ func feed(data: PackedFloat32Array, features: Dictionary) -> void:
 	if data.size() != BANDS * ROWS:
 		return
 	has_audio = true
-	spectrum_targets = data.duplicate()
+	if spectrum_targets != data:
+		spectrum_targets = data.duplicate()
+		spectrum_settled = false
 	var channels := int(features.get("channels", 2))
 	var spatial := bool(features.get("spatial", Settings.spatial_audio))
 	source_count = 0
@@ -353,6 +433,8 @@ func reset() -> void:
 
 func _clear_spectrum() -> void:
 	has_audio = false
+	spectrum_settled = true
+	spectrum_settled_delta = INF
 	spectrum_targets.fill(0.0)
 	spectrum_levels.fill(0.0)
 	var empty := PackedByteArray()
@@ -404,6 +486,7 @@ func _process(delta: float) -> void:
 	visible = active
 	if not active:
 		return
+	_apply_compositing()
 	_update_zoom()
 	var response_intensity := clampf(Settings.visualizer_intensity * response_profile.x, 0.0, 1.5)
 	var response_sensitivity := clampf(Settings.visualizer_sensitivity * response_profile.y, 0.5, 4.0)
@@ -440,7 +523,10 @@ func _process(delta: float) -> void:
 	scene_opacity = lerpf(scene_opacity, 1.0, 1.0 - exp(-delta * 8.0))
 	var dim := (0.2 if menu != null and menu.visible else 1.0) * scene_opacity
 	var palette := clock * 0.0025 + preset.dot(Vector3(0.0, 0.17, 0.38))
-	for material in materials:
+	for kind in materials.size():
+		if layers[kind].multimesh.visible_instance_count == 0:
+			continue
+		var material := materials[kind]
 		material.set_shader_parameter("source_count", source_count if preset_index == 6 else 0)
 		material.set_shader_parameter("spectral_history_head", spectral_history_position - 1)
 		material.set_shader_parameter("spectral_history_fraction", spectral_history_elapsed * SPECTRAL_HISTORY_RATE)
@@ -468,7 +554,7 @@ func _process(delta: float) -> void:
 		material.set_shader_parameter("correlation", correlation)
 		material.set_shader_parameter("palette", palette)
 		material.set_shader_parameter("preset", preset)
-		material.set_shader_parameter("dim", dim)
+		material.set_shader_parameter("dim", dim * (Settings.visualizer_overlay_opacity if compositing_overlay else 1.0))
 		stereo.apply(material)
 		affect.apply(material)
 	sky_material.set_shader_parameter("source_count", source_count if preset_index >= 6 else 0)
@@ -487,6 +573,8 @@ func _process(delta: float) -> void:
 	sky_material.set_shader_parameter("sensitivity", response_sensitivity)
 	sky_material.set_shader_parameter("intensity", response_intensity)
 	sky_material.set_shader_parameter("dim", dim)
+	if compositing_overlay:
+		sky_material.set_shader_parameter("overlay_opacity", Settings.visualizer_atmosphere * Settings.visualizer_overlay_opacity)
 	stereo.apply(sky_material)
 	affect.apply(sky_material)
 	_auto_quality(delta)
@@ -494,7 +582,7 @@ func _process(delta: float) -> void:
 
 func _update_zoom() -> void:
 	var transform := Transform3D.IDENTITY
-	if vr_zoom and camera != null and not is_equal_approx(Settings.visualizer_zoom, 1.0):
+	if (vr_zoom or compositing_overlay) and camera != null and not is_equal_approx(Settings.visualizer_zoom, 1.0):
 		var view := global_basis.inverse() * camera.global_basis.orthonormalized()
 		var depth := view * Basis.from_scale(Vector3(1.0, 1.0, 1.0 / Settings.visualizer_zoom)) * view.inverse()
 		var origin := to_local(camera.global_position)
@@ -507,15 +595,19 @@ func _update_zoom() -> void:
 
 
 func _smooth_spectrum(delta: float) -> void:
+	if (spectrum_settled and delta <= spectrum_settled_delta) or delta == 0.0:
+		return
 	var attack := 1.0 - exp(-delta * 45.0)
 	var release := 1.0 - exp(-delta * 14.0)
 	var changed := false
 	for i in spectrum_levels.size():
-		var value := lerpf(spectrum_levels[i], spectrum_targets[i], attack if spectrum_targets[i] > spectrum_levels[i] else release)
-		if value < 0.00001:
-			value = 0.0
-		changed = changed or value != spectrum_levels[i]
-		spectrum_levels[i] = value
+		var previous := spectrum_levels[i]
+		var target := spectrum_targets[i]
+		var value := lerpf(previous, target, attack if target > previous else release)
+		spectrum_levels[i] = 0.0 if value < 0.00001 else value
+		changed = changed or spectrum_levels[i] != previous
+	spectrum_settled = not changed
+	spectrum_settled_delta = delta
 	if changed:
 		image.set_data(BANDS, ROWS, false, Image.FORMAT_RF, spectrum_levels.to_byte_array())
 		texture.update(image)

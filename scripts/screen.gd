@@ -95,6 +95,7 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	material.set_shader_parameter("visualizer_media_dim", 1.0 - Settings.visualizer_background_dim if player.is_visualizer_overlay_active() else 1.0)
 	_update_zoom(delta)
 	if Settings.projection != Settings.ProjectionMode.FLAT and is_instance_valid(view_origin):
 		global_position = view_origin.global_position
@@ -110,7 +111,7 @@ func _process(delta: float) -> void:
 	var playback := player.playback
 	var texture := player.get_video_texture()
 	var has_video := playback != null and texture != null and texture.get_height() > 0
-	var immersive_music := player.is_immersive_visualizer_active()
+	var immersive_music := player.is_immersive_visualizer_active() and not player.is_visualizer_overlay_active()
 	visible = has_video and not hidden_by_layer and not immersive_music
 	if not has_video:
 		return

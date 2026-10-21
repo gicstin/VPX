@@ -50,7 +50,7 @@ func _run() -> void:
 		_playlist_cases()
 		_decoder_cases()
 		await _remote_case()
-	elif mode in ["remote_open", "replacement_end", "local_cancel", "local_read", "online_radio", "radio_clock", "radio_jitter", "radio_opus", "link_history", "radio_metadata"]:
+	elif mode in ["remote_open", "replacement_end", "local_cancel", "local_read", "online_radio", "online_navigation", "radio_clock", "radio_jitter", "radio_opus", "link_history", "radio_metadata"]:
 		main = load("res://scenes/main.tscn").instantiate()
 		root.add_child(main)
 		for i in 15:
@@ -68,6 +68,8 @@ func _run() -> void:
 				await _link_history_case()
 			"online_radio":
 				await _online_radio_case()
+			"online_navigation":
+				await _online_navigation_case()
 			"remote_open":
 				await _remote_open_case()
 			"replacement_end":
@@ -266,6 +268,41 @@ func _online_radio_case() -> void:
 	await create_timer(0.1).timeout
 	await main.ui.open_media(fixture.path_join("short.wav"))
 	check(main.player.music_path == fixture.path_join("short.wav") and main.ui.resolving_path.is_empty(), "replacement cancels pending stream detection")
+
+
+func _online_navigation_case() -> void:
+	var library := root.get_node("Library")
+	var settings := root.get_node("Settings")
+	var address := endpoint.replace("127.0.0.1", "localhost.")
+	var sources := PackedStringArray([address + "/radio", address + "/radio-get", address + "/radio-clock"])
+	for i in sources.size():
+		library.set_pref(sources[i], "link_opened", 3.0 - i)
+	settings.shuffle = false
+	await main.ui.open_media(sources[0])
+	check(main.player.is_live() and main.ui.music_playlist == sources and main.ui.playlist == sources, "live radio uses memorised links for both transport playlists")
+	for index in [1, 2, 0, 1]:
+		main.ui.get_node("%NextButton").pressed.emit()
+		check(await wait_for(func() -> bool: return main.player.current_path == sources[index] and main.player.load_state.get("status") == "ready", 5.0), "next reaches memorised source %d" % index)
+		check(main.ui.music_playlist == sources, "recent-link updates preserve cycling order")
+	for index in [0, 2, 1]:
+		main.ui.get_node("%PrevButton").pressed.emit()
+		check(await wait_for(func() -> bool: return main.player.current_path == sources[index] and main.player.load_state.get("status") == "ready", 5.0), "previous reaches memorised source %d" % index)
+	settings.shuffle = true
+	var before: String = main.player.current_path
+	check(main.ui.play_music_neighbor(1), "shuffle selects another saved source")
+	check(await wait_for(func() -> bool: return main.player.current_path != before and main.player.load_state.get("status") == "ready", 5.0), "shuffle opens another source")
+	check(main.ui.play_music_neighbor(-1), "shuffle previous source is available")
+	check(await wait_for(func() -> bool: return main.player.current_path == before and main.player.load_state.get("status") == "ready", 5.0), "shuffle previous returns to prior station")
+	settings.shuffle = false
+	check(await main.player.open(fixture.path_join("photo.png")), "photo opens over station navigation")
+	main.photo_bar.root.track(1)
+	check(await wait_for(func() -> bool: return main.player.music_path == sources[2] and main.player.load_state.get("status") == "ready", 5.0), "mini-player next switches saved radio under photo")
+	check(main.player.is_image() and main.player.current_path == fixture.path_join("photo.png"), "station navigation retains photo")
+	main.photo_bar.root.track(-1)
+	check(await wait_for(func() -> bool: return main.player.music_path == sources[1] and main.player.load_state.get("status") == "ready", 5.0), "mini-player previous switches saved radio under photo")
+	check(await main.player.open(fixture.path_join("short.wav")), "local track replaces station")
+	check(await wait_for(func() -> bool: return fixture.path_join("short.wav") in main.ui.music_playlist, 3.0), "local track navigation restores local playlist")
+	check(sources[0] not in main.ui.music_playlist, "local playlist excludes online sources")
 
 
 func _playlist_cases() -> void:

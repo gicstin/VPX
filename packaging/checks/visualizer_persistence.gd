@@ -14,6 +14,10 @@ func run() -> void:
 	var args := OS.get_cmdline_user_args()
 	var expected := int(args[1])
 	if args[0] == "select":
+		settings.apply("visualizer_overlay", true)
+		settings.apply("visualizer_overlay_opacity", 0.42)
+		settings.apply("visualizer_background_dim", 0.3)
+		settings.apply("visualizer_atmosphere", 0.2)
 		settings.apply("visualizer_zoom", 1.8)
 		settings.apply("visualizer_preset", expected)
 		settings.apply("immersive_music_visualizer", true)
@@ -22,6 +26,10 @@ func run() -> void:
 	elif args[0] == "disable":
 		settings.apply("immersive_music_visualizer", false)
 	else:
+		if not settings.visualizer_overlay or not is_equal_approx(settings.visualizer_overlay_opacity, 0.42) or not is_equal_approx(settings.visualizer_background_dim, 0.3) or not is_equal_approx(settings.visualizer_atmosphere, 0.2):
+			printerr("FAIL: overlay mix lost across restart")
+			quit(1)
+			return
 		if not is_equal_approx(settings.visualizer_zoom, 1.8):
 			printerr("FAIL: visualizer zoom lost across restart")
 			quit(1)

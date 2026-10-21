@@ -342,20 +342,25 @@ func _paths(state: Dictionary, entries: Array[String]) -> PackedStringArray:
 
 
 func _sort(paths: Array[String], keys: Dictionary, by_key: bool, by_file: bool) -> void:
-	if by_key:
-		paths.sort_custom(func(a: String, b: String) -> bool:
-			var key_a: Variant = keys[a]
-			var key_b: Variant = keys[b]
-			return a.naturalnocasecmp_to(b) < 0 if key_a == key_b else key_a > key_b)
-	elif by_file:
+	if paths.size() < 2:
+		return
+	if by_key or by_file:
 		var names := PackedStringArray()
 		var order: Array[int] = []
 		names.resize(paths.size())
 		order.resize(paths.size())
 		for i in paths.size():
-			names[i] = paths[i].get_file()
+			names[i] = paths[i] if by_key else paths[i].get_file()
 			order[i] = i
-		order.sort_custom(func(a: int, b: int) -> bool: return names[a].naturalnocasecmp_to(names[b]) < 0)
+		if by_key:
+			var values: Array = []
+			values.resize(paths.size())
+			for i in paths.size():
+				values[i] = keys[paths[i]]
+			order.sort_custom(func(a: int, b: int) -> bool:
+				return names[a].naturalnocasecmp_to(names[b]) < 0 if values[a] == values[b] else values[a] > values[b])
+		else:
+			order.sort_custom(func(a: int, b: int) -> bool: return names[a].naturalnocasecmp_to(names[b]) < 0)
 		var original := paths.duplicate()
 		for i in paths.size():
 			paths[i] = original[order[i]]

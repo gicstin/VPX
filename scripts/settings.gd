@@ -24,7 +24,7 @@ enum AudioFilter { OFF, LEVEL, NIGHT }
 enum Deband { OFF, LOW, MEDIUM, HIGH }
 
 const CONFIG_PATH := "user://settings.cfg"
-const VISUALIZER_PRESET_MAX := 79
+const VISUALIZER_PRESET_MAX := 91
 const VISUALIZER_PRESETS := [
 	"Resonance Field", "Resonant Architecture", "Particle Cosmos",
 	"Bass Strings", "Wave Architecture", "Aurora Cosmos", "Stereo Speakers",
@@ -45,7 +45,11 @@ const VISUALIZER_PRESETS := [
 	"Celestial Orrery", "Abyssal Garden", "Prism Sanctuary", "Solar Crucible",
 	"Awe Horizon", "Fractal Canopy", "Phyllotaxis Bloom", "Heartbeat Tide",
 	"Frisson Aurora", "Synesthesia", "Groove Lattice", "Tension Vortex",
-	"PM · Geiss Swirl 1", "PM · Geiss Starfish 1", "PM · Geiss Nautilus", "PM · Geiss Cosmic Dust 2"
+	"PM · Geiss Swirl 1", "PM · Geiss Starfish 1", "PM · Geiss Nautilus", "PM · Geiss Cosmic Dust 2",
+	"Aftershock", "Chromatic Riptide", "Prismatic Overdrive",
+	"Velvet Supernova", "Liquid Voltage", "Event Horizon",
+	"PM · Interwoven", "PM · Tokamak", "PM · Lattice",
+	"PM · Rolling Oceans", "PM · Solarized Space", "PM · Ether Storm"
 ]
 const VISUALIZER_ZOOM_MIN := 0.5
 const VISUALIZER_ZOOM_MAX := 3.0
@@ -79,6 +83,18 @@ const VISUALIZER_STUDIO_GUIDES := [
 	"Native 3D adaptation of Geiss — Starfish 1 · Fivefold angular zoom equation · Expanding stereo waveform petals",
 	"Native 3D adaptation of Geiss — Nautilus · Rotation-driven zoom equation · Coiled waveform shell with bass warp",
 	"Native 3D adaptation of Geiss — Cosmic Dust 2 · Moving centre and colour equations · Stereo dust streams and orbital trails",
+	"Bass blows open concentric pressure waves · Percussion fractures the edges · Stereo waveform rings carry the sound into depth",
+	"Flowing colour sheets surround you · Vocals bend the currents · Bass drives rolling crests · Treble sheds sparks",
+	"Immersive prismatic light architecture · Transients open the facets · Bass punches through the structure · Stereo steers the light",
+	"Swirling clouds and luminous ejecta · Bass throws the nebula outward · Percussion ignites the dust · Quiet passages settle into darkness",
+	"Liquid light above and below · Bass sends waves through the surface · Vocals sculpt the flow · Treble lifts droplets",
+	"Spiralling light through deep space · Bass opens the passage · Energy accelerates the flow · Waveforms ripple through the tunnel",
+	"From Krash — Interwoven (Nightmare Weft Mix) · Three drifting light wefts surround you · Stereo waveform bends the threads · Percussion lifts the weave",
+	"From Flexi, Geiss and Rovastar — chaos layered tokamak · Magnetic coils encircle you · Bass expands the reactor · Treble energises the field particles",
+	"From shifter — lattice · Angular crystal cells fill the room · Spectrum grows the edges · Stereo separates the facets · Beats fracture the grid",
+	"From Rovastar and Telek — Altars of Madness (Rolling Oceans Mix) · Rolling spectral sea beneath a wide horizon · Bass raises swells · Waveform ripples the water",
+	"From Rovastar — Solarized Space · A solar globe and tilted planetary orbits · Bass expands the sun · Stereo waveform sculpts the orbital trails",
+	"From Zylot — Ether Storm · Opposing vertical currents and falling sparks · Upper and lower flows shear in opposite directions · Percussion disturbs the storm",
 ]
 const SCREEN_PLACEMENT_VERSION := 1
 const SCREEN_DISTANCE := 3.0
@@ -140,6 +156,10 @@ var compositor_layer := false
 var music_visualizer := true
 var music_visualizer_mode := 0
 var immersive_music_visualizer := true
+var visualizer_overlay := false
+var visualizer_overlay_opacity := 0.65
+var visualizer_background_dim := 0.15
+var visualizer_atmosphere := 0.15
 var visualizer_preset := 0
 var visualizer_favorites := PackedStringArray()
 var visualizer_starred_only := false
@@ -332,6 +352,9 @@ func _validate_visualizer() -> void:
 	visualizer_sensitivity = clampf(visualizer_sensitivity, 0.5, 4.0) if is_finite(visualizer_sensitivity) else 1.75
 	visualizer_motion = clampf(visualizer_motion, 0.0, 1.0) if is_finite(visualizer_motion) else 0.6
 	visualizer_zoom = clampf(visualizer_zoom, VISUALIZER_ZOOM_MIN, VISUALIZER_ZOOM_MAX) if is_finite(visualizer_zoom) else 1.0
+	for key in [&"visualizer_overlay_opacity", &"visualizer_background_dim", &"visualizer_atmosphere"]:
+		var amount: float = get(key)
+		set(key, clampf(amount, 0.0, 1.0) if is_finite(amount) else defaults.get(key, 0.15))
 	visualizer_sync = clampf(visualizer_sync, -0.25, visualizer_advance_limit()) if is_finite(visualizer_sync) else 0.0
 
 
@@ -348,10 +371,10 @@ func apply(property: StringName, value: Variant) -> void:
 		if not (value is float or value is int) or not is_finite(float(value)):
 			return
 		value = clampf(float(value), 0.8, 1.25) if property == &"ui_size" else clampf(float(value), 1.0, 1.5)
-	if property in [&"music_visualizer_mode", &"visualizer_preset", &"visualizer_quality", &"visualizer_grab_mode", &"visualizer_intensity", &"visualizer_sensitivity", &"visualizer_motion", &"visualizer_zoom", &"visualizer_sync"]:
+	if property in [&"music_visualizer_mode", &"visualizer_preset", &"visualizer_quality", &"visualizer_grab_mode", &"visualizer_intensity", &"visualizer_sensitivity", &"visualizer_motion", &"visualizer_zoom", &"visualizer_sync", &"visualizer_overlay_opacity", &"visualizer_background_dim", &"visualizer_atmosphere"]:
 		if not (value is int or value is float) or not is_finite(float(value)):
 			return
-		var limits := {&"music_visualizer_mode": Vector2(0, 2), &"visualizer_preset": Vector2(0, VISUALIZER_PRESET_MAX), &"visualizer_quality": Vector2(0, 3), &"visualizer_grab_mode": Vector2(0, 2), &"visualizer_intensity": Vector2(0, 1.5), &"visualizer_sensitivity": Vector2(0.5, 4), &"visualizer_motion": Vector2(0, 1), &"visualizer_zoom": Vector2(VISUALIZER_ZOOM_MIN, VISUALIZER_ZOOM_MAX), &"visualizer_sync": Vector2(-0.25, 0.25)}
+		var limits := {&"music_visualizer_mode": Vector2(0, 2), &"visualizer_preset": Vector2(0, VISUALIZER_PRESET_MAX), &"visualizer_quality": Vector2(0, 3), &"visualizer_grab_mode": Vector2(0, 2), &"visualizer_intensity": Vector2(0, 1.5), &"visualizer_sensitivity": Vector2(0.5, 4), &"visualizer_motion": Vector2(0, 1), &"visualizer_zoom": Vector2(VISUALIZER_ZOOM_MIN, VISUALIZER_ZOOM_MAX), &"visualizer_sync": Vector2(-0.25, 0.25), &"visualizer_overlay_opacity": Vector2(0, 1), &"visualizer_background_dim": Vector2(0, 1), &"visualizer_atmosphere": Vector2(0, 1)}
 		if property == &"visualizer_sync":
 			limits[property].y = visualizer_advance_limit()
 		value = clampf(float(value), limits[property].x, limits[property].y)
@@ -624,7 +647,7 @@ func _persisted() -> PackedStringArray:
 		"stereo_depth", "stereo_vertical", "picture_zoom", "single_eye", "flat_image_repeat", "photo_pan_x", "photo_pan_y",
 		"auto_crop", "deband", "dither", "compositor_layer", "spatial_audio", "dialogue_boost", "audio_filter",
 		"remote_control", "flat_video_pan", "music_visualizer", "audio_stretch_quality", "accent_color", "ui_size", "text_size",
-		"music_visualizer_mode", "immersive_music_visualizer", "visualizer_preset", "visualizer_favorites", "visualizer_starred_only", "visualizer_quality", "visualizer_intensity", "visualizer_sensitivity", "visualizer_motion", "visualizer_zoom", "visualizer_sync", "visualizer_auto_change", "visualizer_grab_mode",
+		"music_visualizer_mode", "immersive_music_visualizer", "visualizer_overlay", "visualizer_overlay_opacity", "visualizer_background_dim", "visualizer_atmosphere", "visualizer_preset", "visualizer_favorites", "visualizer_starred_only", "visualizer_quality", "visualizer_intensity", "visualizer_sensitivity", "visualizer_motion", "visualizer_zoom", "visualizer_sync", "visualizer_auto_change", "visualizer_grab_mode",
 	])
 
 
