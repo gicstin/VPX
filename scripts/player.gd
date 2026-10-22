@@ -109,19 +109,24 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	for task in source_tasks.duplicate():
+	for i in range(source_tasks.size() - 1, -1, -1):
+		var task := source_tasks[i]
 		if WorkerThreadPool.is_task_completed(task):
 			WorkerThreadPool.wait_for_task_completion(task)
-			source_tasks.erase(task)
-	if not discarded_streams.is_empty():
-		discarded_streams = discarded_streams.filter(func(video: FFmpegVideoStream) -> bool: return video.get_open_status() == 1)
-	retired_streams = retired_streams.filter(func(video: FFmpegVideoStream) -> bool: return not video.get_playback().is_io_stopped())
+			source_tasks.remove_at(i)
+	for i in range(discarded_streams.size() - 1, -1, -1):
+		if discarded_streams[i].get_open_status() != 1:
+			discarded_streams.remove_at(i)
+	for i in range(retired_streams.size() - 1, -1, -1):
+		if retired_streams[i].get_playback().is_io_stopped():
+			retired_streams.remove_at(i)
 	if image_loader != null:
 		_poll_image()
 	elif not prefetched.is_empty():
 		_poll_prefetch()
-	if not discarded_loaders.is_empty():
-		discarded_loaders = discarded_loaders.filter(func(loader: VPXPanorama) -> bool: return not loader.is_decoded())
+	for i in range(discarded_loaders.size() - 1, -1, -1):
+		if discarded_loaders[i].is_decoded():
+			discarded_loaders.remove_at(i)
 	if paused and playback != null and not current_path.is_empty():
 		playback.pump_paused(delta)
 	_monitor_stream(delta)

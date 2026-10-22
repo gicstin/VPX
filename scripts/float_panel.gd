@@ -82,11 +82,12 @@ func dismiss() -> void:
 func _process(delta: float) -> void:
 	if not visible:
 		return
-	var rate := FADE_IN_RATE if target_opacity > opacity else FADE_OUT_RATE
-	opacity = lerpf(opacity, target_opacity, 1.0 - exp(-delta * rate))
-	if absf(opacity - target_opacity) < FADE_SNAP:
-		opacity = target_opacity
-	_apply_opacity()
+	if opacity != target_opacity:
+		var rate := FADE_IN_RATE if target_opacity > opacity else FADE_OUT_RATE
+		opacity = lerpf(opacity, target_opacity, 1.0 - exp(-delta * rate))
+		if absf(opacity - target_opacity) < FADE_SNAP:
+			opacity = target_opacity
+		_apply_opacity()
 	if opacity <= 0.0 and target_opacity <= 0.0:
 		visible = false
 		viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED

@@ -70,6 +70,7 @@ var hidden_by_layer := false
 var auto_swapped := false
 var flat_desktop := false
 var menu_dim_value := 1.0
+var media_dim_value := -1.0
 
 
 func _ready() -> void:
@@ -95,7 +96,10 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	material.set_shader_parameter("visualizer_media_dim", 1.0 - Settings.visualizer_background_dim if player.is_visualizer_overlay_active() else 1.0)
+	var media_dim := 1.0 - Settings.visualizer_background_dim if player.is_visualizer_overlay_active() else 1.0
+	if media_dim != media_dim_value:
+		media_dim_value = media_dim
+		material.set_shader_parameter("visualizer_media_dim", media_dim)
 	_update_zoom(delta)
 	if Settings.projection != Settings.ProjectionMode.FLAT and is_instance_valid(view_origin):
 		global_position = view_origin.global_position
@@ -126,10 +130,10 @@ func _process(delta: float) -> void:
 		_track_video_frame(playback, float(state.get("time_msec", 0.0)))
 		bound_playback = playback
 		bound_serial = serial
+		material.set_shader_parameter("frame_seed", float(bound_serial % 997) * 0.618)
 		if _geometry_key() != geometry_key:
 			refresh()
 	probe.tick(delta, bound_serial >= 0)
-	material.set_shader_parameter("frame_seed", float(bound_serial % 997) * 0.618)
 
 
 func _geometry_key() -> String:

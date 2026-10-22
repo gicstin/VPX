@@ -28,6 +28,7 @@ var cover_count := 0
 var single := false
 var guard := Callable()
 var plain := false
+var online_quality := {}
 var frame: Control
 var thumb: TextureRect
 var placeholder: TextureRect
@@ -217,6 +218,9 @@ func _build_row() -> void:
 	meta_label.clip_text = true
 	meta_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	text.add_child(meta_label)
+	res_badge = _badge(&"Badge", row)
+	res_badge.size_flags_vertical = SIZE_SHRINK_CENTER
+	res_label = res_badge.get_child(0)
 	side_label = _label(&"Caption")
 	side_label.size_flags_vertical = SIZE_SHRINK_CENTER
 	row.add_child(side_label)
@@ -284,6 +288,7 @@ func refresh() -> void:
 	var resolution := VPXPlayer.resolution_label(width, height) if width > 0 else ""
 	var length := MediaInfo.duration_text(duration) if duration > 0.0 else ""
 	var status := _status_text(media, duration, resume_at)
+	var quality := _quality_text(media)
 	if is_dir and not single:
 		format = "%d items" % cover_count
 		resolution = ""
@@ -291,7 +296,7 @@ func refresh() -> void:
 		status = ""
 	if layout == Layout.CARD:
 		_set_badge(format_badge, format_label, format)
-		_set_badge(res_badge, res_label, resolution)
+		_set_badge(res_badge, res_label, quality if not quality.is_empty() else resolution)
 		_set_badge(duration_badge, duration_label, length)
 		var parts := PackedStringArray()
 		if not context.is_empty():
@@ -302,6 +307,8 @@ func refresh() -> void:
 			parts.append("Folder" if is_dir and not single else _size_text(media))
 		meta_label.text = "  ·  ".join(parts)
 	else:
+		if res_badge != null:
+			_set_badge(res_badge, res_label, quality)
 		var parts := PackedStringArray()
 		for part in [context, format, resolution, status if not status.is_empty() else ("" if is_dir and not single else _size_text(media))]:
 			if not part.is_empty():
@@ -315,6 +322,22 @@ func refresh() -> void:
 		progress.value = clampf(resume_at / maxf(duration, 1.0), 0.0, 1.0)
 	if info.has("failed") and thumb != null:
 		placeholder.modulate = Color(VpxTheme.FAINT, 0.6)
+
+
+func _quality_text(media: String) -> String:
+	if not (media.begins_with("https://") or media.begins_with("http://")):
+		return ""
+	var source: Variant = online_quality if not online_quality.is_empty() else Library.get_pref(media, "radio_station", {})
+	if not source is Dictionary:
+		return ""
+	var parts := PackedStringArray()
+	var codec := str(source.get("codec", "")).strip_edges().to_upper()
+	if codec not in ["", "UNKNOWN", "NULL", "<NULL>"]:
+		parts.append(codec)
+	var bitrate := int(source.get("bitrate", 0))
+	if bitrate > 0:
+		parts.append("%d kbps" % bitrate)
+	return " · ".join(parts)
 
 
 func _format_text(media: String, info: Dictionary, image: bool) -> String:
@@ -387,7 +410,7 @@ func _thumb_frame(frame_size: Vector2, icon_size: int) -> Control:
 	background.add_theme_stylebox_override("panel", VpxTheme.flat(VpxTheme.FIELD, int(THUMB_RADIUS), 0, 0))
 	background.set_anchors_preset(PRESET_FULL_RECT)
 	box.add_child(background)
-	var placeholder_icon := "folder" if is_dir and not single else ("photo" if PanoramaFiles.is_image(media_path()) else "film")
+	var placeholder_icon := icon_name if icon_name != "folder" else "folder" if is_dir and not single else ("photo" if PanoramaFiles.is_image(media_path()) else "film")
 	placeholder = _icon_rect(placeholder_icon, icon_size, VpxTheme.FAINT)
 	placeholder.set_anchors_preset(PRESET_CENTER)
 	placeholder.offset_left = -icon_size * 0.5
@@ -422,14 +445,14 @@ func _thumb_frame(frame_size: Vector2, icon_size: int) -> Control:
 	return box
 
 
-func _badge(variation: StringName) -> PanelContainer:
+func _badge(variation: StringName, parent: Control = null) -> PanelContainer:
 	var badge := PanelContainer.new()
 	badge.theme_type_variation = variation
 	badge.mouse_filter = MOUSE_FILTER_IGNORE
 	var label := _label(&"AccentBadgeLabel" if variation == &"AccentBadge" else &"BadgeLabel")
 	badge.add_child(label)
 	badge.visible = false
-	frame.add_child(badge)
+	(parent if parent != null else frame).add_child(badge)
 	return badge
 
 

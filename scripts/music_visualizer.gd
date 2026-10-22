@@ -202,14 +202,19 @@ func _process(delta: float) -> void:
 			if native_analysis:
 				_sample_native()
 			_sample_fallback(not native_analysis)
-	for i in BANDS:
-		var blend := 1.0 - exp(-delta * (60.0 if targets[i] > levels[i] else 10.0))
-		levels[i] = lerpf(levels[i], targets[i], blend)
+	_smooth_levels(delta)
 	spectrum.levels = levels
 	spectrum.oscilloscope = Settings.music_visualizer_mode == OSCILLOSCOPE
 	spectrum.title = (player.music_path if not player.music_path.is_empty() else player.current_path).get_file().get_basename()
 	if enabled:
 		spectrum.queue_redraw()
+
+
+func _smooth_levels(delta: float) -> void:
+	var attack := 1.0 - exp(-delta * 60.0)
+	var release := 1.0 - exp(-delta * 10.0)
+	for i in BANDS:
+		levels[i] = lerpf(levels[i], targets[i], attack if targets[i] > levels[i] else release)
 
 
 func _reset_waveform() -> void:
@@ -525,12 +530,10 @@ class SpectrumCanvas extends Control:
 		draw_polygon(fill, fill_colors)
 		draw_polyline_colors(points, _gradient(points, area, 0.18), 6.0, true)
 		draw_polyline_colors(points, colors, 2.2, true)
-		draw_line(Vector2(area.position.x, base + 1.0), Vector2(area.end.x, base + 1.0), Color(VpxTheme.ACCENT, 0.25), 1.0, true)
 
 	func _draw_scope(area: Rect2) -> void:
 		var middle := area.get_center().y
 		var half := area.size.y * 0.5
-		draw_line(Vector2(area.position.x, middle), Vector2(area.end.x, middle), Color(VpxTheme.ACCENT, 0.3), 1.0, true)
 		if wave.size() < 2:
 			return
 		var points := PackedVector2Array()

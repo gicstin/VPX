@@ -95,7 +95,12 @@ func error_pixel() -> Color:
 func closed_layers(index: int) -> Array[int]:
 	if index == 6:
 		return [0, 2, 3]
-	if index >= field.PROJECTM_START:
+	if index >= field.IMMERSIVE_START:
+		match index - field.IMMERSIVE_START:
+			0, 3, 6, 7, 9: return [0, 2]
+			1: return [0]
+			5: return [2]
+	elif index >= field.PROJECTM_START:
 		match index - field.PROJECTM_START:
 			0, 2: return [2]
 			1, 4: return [0, 2]

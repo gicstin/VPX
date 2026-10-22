@@ -102,6 +102,8 @@ func _process(delta: float) -> void:
 			if chunk[0] == OK:
 				buffers[i].append_array(chunk[1])
 				_drain(i)
+	if clients.is_empty():
+		return
 	status_timer += delta
 	var status := _status()
 	var text := "%s|%s|%s" % [status.get("path", ""), status.get("playerState", -1), status.get("playbackSpeed", 1.0)]

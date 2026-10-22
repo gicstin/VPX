@@ -30,10 +30,10 @@ const PAGE_TITLES := {"Angles": "Position", "System": "General"}
 const PAGE_ICONS := {"Format": "format", "Picture": "picture", "Angles": "angles", "Passthrough": "passthrough", "Controls": "controls", "System": "system"}
 const QUICK_AUDIO_TAB := 3
 const QUICK_SUBTITLE_TAB := 4
-const SOURCES := [["Folder", "folder"], ["Recent", "recent"], ["Favourites", "star_outline"], ["Places", "drive"], ["Network", "network"]]
+const SOURCES := [["Folder", "folder"], ["Recent", "recent"], ["Favourites", "star_outline"], ["Places", "drive"], ["Network", "network"], ["Discover", "audio"]]
 const SORTS := ["Name", "Newest", "Largest"]
 const END_ACTIONS := [["stop_end", "Stop at end"], ["repeat", "Repeat"], ["playlist", "Play next"]]
-const SOURCE_TITLES := ["", "Recently played", "Favourites", "Places", "Network"]
+const SOURCE_TITLES := ["", "Recently played", "Favourites", "Places", "Network", "Discover radio & streams"]
 const FILTERS := ["All", "2D", "3D", "180°", "360°", "Photos"]
 const SEARCH_DELAY := 0.35
 const SEARCH_MAX_FOLDERS := 600
@@ -144,6 +144,9 @@ var saved_path_info := {}
 var places_cache: Array = []
 var playlist: PackedStringArray = []
 var music_playlist: PackedStringArray = []
+var radio_queue := PackedStringArray()
+var radio_queue_stations := {}
+var radio_queue_active := false
 var listing: PackedStringArray = []
 var cards := {}
 var item_meta := {}
@@ -203,6 +206,7 @@ var flat_view_button: Button
 var keyboard: Keyboard
 var settings_search: Control
 var network: Network
+var discovery: Control
 var filter_group := ButtonGroup.new()
 var filter_buttons: Array[Button] = []
 var search_button: Button
@@ -327,6 +331,7 @@ func _ready() -> void:
 	_build_library_bar()
 	_build_filter_row()
 	_build_network()
+	_build_discovery()
 	recovery = preload("res://scripts/playback_recovery.gd").new()
 	recovery.ui = self
 	recovery.player = player
@@ -544,7 +549,7 @@ func _build_scroll_bars() -> void:
 	gutter.size_flags_horizontal = SIZE_EXPAND_FILL
 	gutter.add_theme_constant_override("margin_right", int(SCROLL_RESERVE))
 	file_scroll.add_child(gutter)
-	file_list.reparent(gutter, false)
+	file_list.get_parent().reparent(gutter, false)
 	for scroll: ScrollContainer in [page_scroll, file_scroll]:
 		var bar := scroll.get_v_scroll_bar()
 		bar.custom_minimum_size.x = SCROLL_RESERVE
@@ -778,6 +783,8 @@ func opening_media() -> bool:
 
 
 func open_media(path: String, extra := {}) -> void:
+	if radio_queue_active and path not in radio_queue and not PanoramaFiles.is_image(path):
+		_clear_radio_queue()
 	cancel_disc_open()
 	recovery.mount_source = ""
 	network.cancel_mount()
@@ -793,7 +800,12 @@ func open_media(path: String, extra := {}) -> void:
 	if path.get_extension().to_lower() == "iso":
 		await _open_disc(path, extra)
 		return
-	if not WebVideo.needs_resolve(path):
+	var station: Variant = radio_queue_stations.get(path, Library.get_pref(path, "radio_station", {}))
+	if station is Dictionary and not station.is_empty():
+		discovery.Directory.remember(station)
+		extra = extra.duplicate()
+		extra.merge({"stream": path, "audio_only": true, "title": station.get("name", "")}, false)
+	if extra.has("stream") or not WebVideo.needs_resolve(path):
 		await player.open(path, extra)
 		return
 	recovery.begin(path, extra)
@@ -1053,6 +1065,27 @@ func _build_network() -> void:
 			settings_search.field.grab_focus())
 
 
+func _build_discovery() -> void:
+	discovery = preload("res://scripts/radio_discovery.gd").new()
+	discovery.visible = false
+	var content := VBoxContainer.new()
+	content.size_flags_horizontal = SIZE_EXPAND_FILL
+	content.add_theme_constant_override("separation", 12)
+	file_scroll.remove_child(file_list)
+	file_scroll.add_child(content)
+	content.add_child(discovery)
+	content.add_child(file_list)
+	discovery.keyboard_requested.connect(func(text: String) -> void:
+		keyboard_purpose = "radio_search"
+		keyboard.open("Find a radio station", text, "Station name"))
+	discovery.link_requested.connect(_ask_link)
+	discovery.results_changed.connect(func() -> void:
+		if Settings.library_source == Settings.LibrarySource.DISCOVER:
+			var scroll := file_scroll.scroll_vertical if not discovery.directory.stations.is_empty() else 0
+			refresh_directory()
+			file_scroll.set_deferred("scroll_vertical", scroll))
+
+
 func _build_settings_search() -> void:
 	settings_search = preload("res://scripts/settings_search.gd").new()
 	add_child(settings_search)
@@ -1112,6 +1145,9 @@ func _refresh_marks() -> void:
 
 
 func _open_search() -> void:
+	if Settings.library_source == Settings.LibrarySource.DISCOVER:
+		discovery.keyboard_requested.emit(discovery.field.text)
+		return
 	keyboard_purpose = "search"
 	query_before_edit = Settings.library_query
 	keyboard.open("Search %s" % _search_scope(), Settings.library_query, "Part of a name", true)
@@ -1158,6 +1194,8 @@ func _on_keyboard_submitted(text: String) -> void:
 		"profile_rename":
 			Settings.profiles.rename_current(text)
 			Settings.changed.emit()
+		"radio_search":
+			discovery.set_search(text)
 		"link":
 			_open_link(text)
 		"server":
@@ -1168,6 +1206,7 @@ func _open_link(text: String) -> void:
 	var url := _normalized_url(text)
 	if url.is_empty():
 		return
+	_clear_radio_queue()
 	if Network.plays_directly(url, VIDEO_EXTENSIONS):
 		_set_playlist(PackedStringArray([url]), url)
 		open_media(url)
@@ -1350,6 +1389,11 @@ func _sync() -> void:
 	_refresh_query_chip()
 	%GridButton.set_pressed_no_signal(Settings.library_view == Settings.LibraryView.GRID)
 	%ListButton.set_pressed_no_signal(Settings.library_view == Settings.LibraryView.LIST)
+	var discovering := Settings.library_source == Settings.LibrarySource.DISCOVER
+	discovery.visible = discovering
+	search_button.get_parent().visible = not discovering
+	sort_button.visible = not discovering
+	up_button.visible = not discovering
 	flat_view_button.visible = Settings.library_source == Settings.LibrarySource.FOLDER
 	flat_view_button.set_pressed_no_signal(Settings.library_flat_view)
 	sort_button.select(clampi(Settings.library_sort, 0, SORTS.size() - 1))
@@ -1802,7 +1846,7 @@ func play_music_neighbor(direction: int) -> bool:
 		return false
 	var current := player.music_path if not player.music_path.is_empty() else player.current_path
 	if Settings.shuffle:
-		if not music_shuffle.members.has(current) and not current.is_empty():
+		if not radio_queue_active and not music_shuffle.members.has(current) and not current.is_empty():
 			music_shuffle.visit(current)
 		var target := music_shuffle.next() if direction > 0 else music_shuffle.previous()
 		if target.is_empty():
@@ -1824,7 +1868,7 @@ func _play_media_neighbor(direction: int) -> bool:
 	pending_direction = direction
 	var current := _entry_for(player.current_path)
 	if Settings.shuffle:
-		if not shuffle.members.has(current) and not current.is_empty():
+		if not radio_queue_active and not shuffle.members.has(current) and not current.is_empty():
 			shuffle.visit(current)
 		var target := shuffle.next() if direction > 0 else shuffle.previous()
 		if target.is_empty():
@@ -1976,6 +2020,8 @@ func _request_playlist(path: String) -> void:
 			music_playlist_index = LibraryScanner.index_of(files)
 			music_shuffle.sync(files, path)
 		return
+	if not PanoramaFiles.is_image(path):
+		_clear_radio_queue()
 	if not audio_over_image:
 		_set_playlist(PackedStringArray([path]), path)
 	if Settings.library_flat_view and Settings.library_source == Settings.LibrarySource.FOLDER and path in listing:
@@ -1990,6 +2036,8 @@ func _request_playlist(path: String) -> void:
 
 
 func _link_playlist(current: String, previous: PackedStringArray) -> PackedStringArray:
+	if radio_queue_active and (current in radio_queue or Settings.library_source == Settings.LibrarySource.DISCOVER):
+		return radio_queue.duplicate()
 	var links := Library.recent_links()
 	if current not in links:
 		links.append(current)
@@ -2001,6 +2049,25 @@ func _link_playlist(current: String, previous: PackedStringArray) -> PackedStrin
 		if path not in files:
 			files.append(path)
 	return files
+
+
+func _clear_radio_queue() -> void:
+	radio_queue_active = false
+	radio_queue = PackedStringArray()
+	radio_queue_stations.clear()
+
+
+func _capture_radio_queue() -> void:
+	radio_queue = listing.duplicate()
+	radio_queue_stations.clear()
+	for path in radio_queue:
+		radio_queue_stations[path] = item_meta.get(path, {}).get("station", {}).duplicate()
+	var current := player.music_path if not player.music_path.is_empty() else player.current_path
+	if not player.is_image():
+		_set_playlist(radio_queue, current)
+	music_playlist = radio_queue.duplicate()
+	music_playlist_index = LibraryScanner.index_of(music_playlist)
+	music_shuffle.sync(music_playlist, current)
 
 
 func _set_playlist(files: PackedStringArray, current: String) -> void:
@@ -2087,6 +2154,9 @@ func open_directory(path: String) -> void:
 func _select_source(source: int) -> void:
 	if Settings.library_source == source:
 		return
+	if source != Settings.LibrarySource.DISCOVER and discovery.directory.busy:
+		discovery.directory.cancel()
+		discovery.directory.started = false
 	Settings.apply("library_source", source)
 	refresh_directory()
 
@@ -2130,6 +2200,8 @@ func refresh_directory(check_paths := true) -> void:
 			_list_places(check_paths)
 		Settings.LibrarySource.NETWORK:
 			_list_network()
+		Settings.LibrarySource.DISCOVER:
+			_list_discovery()
 		_:
 			_start_scan()
 	_build_crumbs()
@@ -2427,6 +2499,47 @@ func _format_kind(path: String) -> int:
 	return LibraryScanner.format_kind(path, MediaInfo.cached(path), Library.get_pref(path, "format"))
 
 
+func _start_radio_discovery() -> void:
+	if Settings.library_source == Settings.LibrarySource.DISCOVER:
+		discovery.ensure_started()
+
+
+func _list_discovery() -> void:
+	_start_radio_discovery.call_deferred()
+	var directory_service: Node = discovery.directory
+	var stations: Array = directory_service.stations
+	if discovery.saved:
+		stations = []
+		for path in Library.favorite_paths():
+			var station: Variant = Library.get_pref(path, "radio_station", {})
+			if station is Dictionary and not station.is_empty():
+				stations.append(station)
+		stations.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["name"].naturalnocasecmp_to(b["name"]) < 0)
+	var hint := Label.new()
+	hint.theme_type_variation = &"Caption"
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.text = "Tap a station to listen · Star to save · Directory: Radio Browser"
+	if directory_service.has_more and not discovery.saved:
+		hint.text += " · Load more stations below"
+	if directory_service.busy:
+		hint.text = "Finding radio stations…"
+	elif not directory_service.error.is_empty() and not discovery.saved:
+		hint.text = directory_service.error
+	file_list.add_child(hint)
+	file_list.move_child(hint, 0)
+	for station: Dictionary in stations:
+		var path: String = station["url"]
+		_queue_item(path, false, station["name"], discovery.Directory.description(station), "audio")
+		item_meta[path]["station"] = station
+	count_label.text = "%d station%s" % [stations.size(), "" if stations.size() == 1 else "s"]
+	if stations.is_empty() and not directory_service.busy:
+		_add_hint("No saved stations yet. Tap the star on a station to keep it here and in Favourites." if discovery.saved else "No stations found. Try another name or clear the filters with Reset." if directory_service.error.is_empty() else "You can still open a stream URL or listen to saved stations.")
+	if not discovery.saved and not directory_service.busy and (directory_service.has_more or not directory_service.error.is_empty()):
+		var button := _action_button("Retry" if not directory_service.error.is_empty() else "Load more stations", "recent" if not directory_service.error.is_empty() else "plus")
+		button.pressed.connect(func() -> void: directory_service.search(discovery.query(), not directory_service.stations.is_empty()))
+		file_list.add_child(button)
+
+
 func _list_network() -> void:
 	if not dlna_stack.is_empty():
 		_list_media_server()
@@ -2608,6 +2721,8 @@ func _flush_items() -> void:
 	folder_grid.set_items(pending_folders)
 	media_grid.set_items(pending_media)
 	listing = pending_media
+	if radio_queue_active and Settings.library_source == Settings.LibrarySource.DISCOVER:
+		_capture_radio_queue()
 	pending_folders = PackedStringArray()
 	pending_media = PackedStringArray()
 	prioritize_timer = PRIORITIZE_DELAY
@@ -2623,13 +2738,22 @@ func _build_card(key: String, parent: VirtualGrid) -> Control:
 	if scanned and ((Settings.library_flat_view and Settings.library_source == Settings.LibrarySource.FOLDER) or not Settings.library_query.strip_edges().is_empty()):
 		context = _relative_dir(key.get_base_dir())
 	card.plain = _is_virtual(key)
+	card.online_quality = meta.get("station", {})
 	card.setup(key, is_dir, parent.layout, _click_allowed, meta.get("title", ""), context, meta.get("icon", ""), folder_covers.get(key, {}) if is_dir else {})
+	if meta.has("station"):
+		card.tooltip_text = meta["title"] + "\n" + meta["context"]
+		card.star.toggled.connect(func(on: bool) -> void:
+			if on and Library.is_favorite(key):
+				discovery.Directory.remember(meta["station"])
+			elif not on and discovery.saved and Settings.library_source == Settings.LibrarySource.DISCOVER:
+				_refresh_saved_listing.call_deferred())
 	card.activated.connect(_on_item_activated)
 	card.toggled.connect(func(_on: bool) -> void: _highlight_current())
 	cards[key] = card
 	if is_dir and scanned and not folder_covers.has(key):
 		scanner.cover(key)
-	_track_cover(key, card)
+	if not meta.has("station"):
+		_track_cover(key, card)
 	_sync_card_playback(card)
 	return card
 
@@ -2691,7 +2815,15 @@ func _on_item_activated(path: String, is_dir: bool) -> void:
 		_on_network_item(path)
 		return
 	if path.begins_with("http://") or path.begins_with("https://"):
-		_set_playlist(PackedStringArray([path]), path)
+		var station: Dictionary = item_meta.get(path, {}).get("station", {})
+		if not station.is_empty():
+			if Settings.library_source == Settings.LibrarySource.DISCOVER:
+				radio_queue_active = true
+				_capture_radio_queue()
+			discovery.Directory.remember(station)
+			discovery.directory.count_play(station)
+		if not radio_queue_active:
+			_set_playlist(PackedStringArray([path]), path)
 		open_media(path)
 		return
 	if network_titles.has(path):

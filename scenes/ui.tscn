@@ -125,14 +125,17 @@ theme_override_constants/v_separation = 8
 
 [node name="Sources" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar"]
 layout_mode = 2
+size_flags_horizontal = 3
 theme_type_variation = &"Segment"
 
-[node name="SourceRow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar/Sources"]
+[node name="SourceRow" type="HFlowContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar/Sources"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_constants/separation = 4
+theme_override_constants/h_separation = 4
+theme_override_constants/v_separation = 4
 
 [node name="BarSpacer" type="Control" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar"]
+visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 mouse_filter = 2
@@ -147,6 +150,7 @@ fit_to_longest_item = false
 
 [node name="Views" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar"]
 layout_mode = 2
+size_flags_vertical = 4
 theme_type_variation = &"Segment"
 
 [node name="ViewRow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar/Views"]

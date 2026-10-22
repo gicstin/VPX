@@ -17,14 +17,14 @@ enum StickAction { SCREEN_SIZE, BRIGHTNESS, GAMMA, SATURATION, SHARPNESS, VOLUME
 enum LibraryView { GRID, LIST }
 enum SubtitleAuto { OFF, FOREIGN, ALWAYS }
 enum LibrarySort { NAME, DATE, SIZE }
-enum LibrarySource { FOLDER, RECENT, FAVORITES, PLACES, NETWORK }
+enum LibrarySource { FOLDER, RECENT, FAVORITES, PLACES, NETWORK, DISCOVER }
 enum SleepTimer { OFF, MIN_15, MIN_30, MIN_45, MIN_60, MIN_90, END_OF_VIDEO }
 enum LibraryFilter { ALL, FLAT_2D, FLAT_3D, VR_180, VR_360, PHOTOS }
 enum AudioFilter { OFF, LEVEL, NIGHT }
 enum Deband { OFF, LOW, MEDIUM, HIGH }
 
 const CONFIG_PATH := "user://settings.cfg"
-const VISUALIZER_PRESET_MAX := 91
+const VISUALIZER_PRESET_MAX := 109
 const VISUALIZER_PRESETS := [
 	"Resonance Field", "Resonant Architecture", "Particle Cosmos",
 	"Bass Strings", "Wave Architecture", "Aurora Cosmos", "Stereo Speakers",
@@ -49,7 +49,13 @@ const VISUALIZER_PRESETS := [
 	"Aftershock", "Chromatic Riptide", "Prismatic Overdrive",
 	"Velvet Supernova", "Liquid Voltage", "Event Horizon",
 	"PM · Interwoven", "PM · Tokamak", "PM · Lattice",
-	"PM · Rolling Oceans", "PM · Solarized Space", "PM · Ether Storm"
+	"PM · Rolling Oceans", "PM · Solarized Space", "PM · Ether Storm",
+	"PM · Clockwork Halo", "PM · Jellyfish Jam", "PM · Glass Serpents",
+	"PM · Hexa Vault", "PM · Peacock Pavilion", "PM · Folded Infinity",
+	"PM · Sierpinski Shrine", "PM · Chladni Plates", "PM · Prism Shards",
+	"PM · Spirograph Choir",
+	"Spectrogram Atlas", "Vocal Detail", "Bass Observatory", "Transient Scanner",
+	"Stereo Balance Hall", "Noise Floor Vault", "Harmonic Ridgeway", "Spectral Panorama"
 ]
 const VISUALIZER_ZOOM_MIN := 0.5
 const VISUALIZER_ZOOM_MAX := 3.0
@@ -95,6 +101,24 @@ const VISUALIZER_STUDIO_GUIDES := [
 	"From Rovastar and Telek — Altars of Madness (Rolling Oceans Mix) · Rolling spectral sea beneath a wide horizon · Bass raises swells · Waveform ripples the water",
 	"From Rovastar — Solarized Space · A solar globe and tilted planetary orbits · Bass expands the sun · Stereo waveform sculpts the orbital trails",
 	"From Zylot — Ether Storm · Opposing vertical currents and falling sparks · Upper and lower flows shear in opposite directions · Percussion disturbs the storm",
+	"Inspired by martin — open machinery hazard · Counter-rotating toothed halos · Bass expands the gears · Stereo waveform cuts the teeth",
+	"Inspired by Flexi — jellyfish jam · Pulsing translucent bells and trailing tentacles · Bass pumps the bells · Treble lights drifting plankton",
+	"Inspired by shifter — glassworms multi · Iridescent tubular creatures weave around you · Waveform flexes their bodies · Percussion sends light along their spines",
+	"Inspired by suksma / yin — Organic circuits · Staggered hexagonal vaults · Spectrum opens each cell · Stereo and percussion animate the honeycomb",
+	"Inspired by TonyMilkdrop / Flexi — Dawning The Peacocks · Four feathered fans with luminous eyes · Bass spreads the plumage · Stereo ripples the vanes",
+	"Inspired by EVET — The Ringer · Suspended Möbius bands with a continuous half twist · Waveform folds the surfaces · Bass opens the loops",
+	"Inspired by Flexi — disruptor / rule 90 · Four recursive tetrahedral shrines · Frequency lights the nested cells · Percussion separates the fractal tiers",
+	"Inspired by amandio c — interference pattern · Suspended vibrating membranes · Stereo waveform drives standing waves · Spectral energy reveals the nodal lines",
+	"Inspired by amandio c — embrace 07 · Floating triangular glass sails · Percussion splays the shards · Stereo waveform folds their facets",
+	"Inspired by EVET — Fractronica · Spatial hypotrochoid choirs with depth trails · Bass changes the lobes · Stereo waveform ripples the tubular paths",
+	"Full-band stereo inspection · Left → right: 30 Hz → 18 kHz logarithmic bands · Cyan upper = L / Rose lower = R · Top of each panel = now, bottom = 3.8 s ago · Dark → gold: −60 → 0 dB · Repeated around you",
+	"Vocal and dialogue detail · Bottom → top: 120 Hz → 8 kHz · Cyan left wall = L / Rose right wall = R · Near → far = 3.8 s history · Brightness = −60 → 0 dB · Inspect formants and sibilance",
+	"Low-end inspection · Centre → edges: 30 → 300 Hz · Cyan left bank = L / Rose right bank = R · Near → far = 3.8 s history · Height and colour = −60 → 0 dB · Inspect bass decay and rumble",
+	"Attack and percussion inspection · Left → right: 30 Hz → 18 kHz · Cyan upper = L / Rose lower = R · Near → far = 3.8 s history · Gold = positive level change over 67 ms, up to +18 dB · Steady tones stay dark",
+	"Channel balance by frequency · Left → right: 30 Hz → 18 kHz · Near → far = 3.8 s history · Cyan below = L louder / Rose above = R louder · Centre = equal magnitude · Height = R minus L, −24 → +24 dB · Magnitudes only, not phase",
+	"Quiet-tail and noise inspection · Left → right: 30 Hz → 18 kHz · Cyan upper = L / Rose lower = R · Top = now, bottom = 3.8 s ago · Expanded −60 → −24 dB colour range · Gold saturates above −24 dB · Display floor is −60 dB",
+	"Harmonic and resonance inspection · Centre → edges: 30 Hz → 18 kHz · Cyan left terrain = L / Rose right terrain = R · Near → far = 3.8 s history · Height = −60 → 0 dB · Contours every 10 dB · Native 48 frequency bands",
+	"360° spectral history terraces · Each quadrant repeats 30 Hz → 18 kHz from left to right · Cyan upper terrace = L / Rose lower terrace = R · Inner edge = now, outer edge = 3.8 s ago · Height and colour = −60 → 0 dB",
 ]
 const SCREEN_PLACEMENT_VERSION := 1
 const SCREEN_DISTANCE := 3.0

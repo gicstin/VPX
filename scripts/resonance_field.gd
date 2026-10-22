@@ -18,6 +18,15 @@ const PSYCHE_LIMITS := [Vector4i(160, 2000, 6, 20), Vector4i(255, 1400, 10, 0), 
 const PSYCHE_SEGMENTS := [96, 8, 192, 96, 64, 32, 48, 96]
 const PSYCHE_START := 68
 const LIVE_START := 80
+const SPECTROGRAM_START := 102
+const SPECTROGRAM_COUNTS := [Vector4i(8, 0, 192, 0), Vector4i(8, 0, 384, 0), Vector4i(8, 0, 384, 0)]
+const SPECTROGRAM_SHADER := preload("res://shaders/resonance_spectrogram.gdshader")
+const SPECTROGRAM_SKY_SHADER := preload("res://shaders/resonance_spectrogram_sky.gdshader")
+const IMMERSIVE_START := 92
+const IMMERSIVE_COUNTS := [Vector4i(64, 240, 96, 0), Vector4i(64, 480, 144, 0), Vector4i(64, 900, 192, 0)]
+const IMMERSIVE_LIMITS := [Vector2i(18, 36), Vector2i(12, 96), Vector2i(12, 48), Vector2i(54, 108), Vector2i(28, 56), Vector2i(8, 16), Vector2i(64, 128), Vector2i(8, 32), Vector2i(48, 96), Vector2i(16, 64)]
+const IMMERSIVE_SHADER := preload("res://shaders/resonance_immersive.gdshader")
+const IMMERSIVE_SKY_SHADER := preload("res://shaders/resonance_immersive_sky.gdshader")
 const PROJECTM_START := 86
 const PROJECTM_COUNTS := [Vector4i(48, 480, 12, 0), Vector4i(72, 900, 18, 0), Vector4i(96, 1500, 24, 0)]
 const PROJECTM_SHADER := preload("res://shaders/resonance_projectm.gdshader")
@@ -99,6 +108,7 @@ var history_texture: ImageTexture
 var history_position := 0
 var history_elapsed := 0.0
 var spectral_history_image: Image
+var spectral_history_row: Image
 var spectral_history_texture: ImageTexture
 var spectral_history_position := 0
 var spectral_history_elapsed := 0.0
@@ -111,6 +121,8 @@ var particle_mesh: ArrayMesh
 var live_mesh: ArrayMesh
 var strip_mesh: ArrayMesh
 var surface_mesh: ArrayMesh
+var spectrogram_meshes: Array[ArrayMesh] = []
+var immersive_mesh: ArrayMesh
 var projectm_sun_mesh: SphereMesh
 var psyche_meshes: Array[ArrayMesh] = []
 var ring_mesh: ArrayMesh
@@ -134,6 +146,7 @@ func _ready() -> void:
 	spectral_history_image = Image.create_empty(BANDS, HISTORY_SAMPLES * 2, false, Image.FORMAT_RF)
 	spectral_history_image.fill(Color(0, 0, 0, 0))
 	spectral_history_texture = ImageTexture.create_from_image(spectral_history_image)
+	spectral_history_row = Image.create_empty(BANDS, 2, false, Image.FORMAT_RF)
 	var wave_empty := PackedByteArray()
 	wave_empty.resize(WAVE_SAMPLES * 2 * 4)
 	wave_image = Image.create_from_data(WAVE_SAMPLES, 2, false, Image.FORMAT_RF, wave_empty)
@@ -159,6 +172,9 @@ func _ready() -> void:
 	for segments in PSYCHE_SEGMENTS:
 		psyche_meshes.append(_strip(segments))
 	surface_mesh = _surface(48, 192)
+	immersive_mesh = _surface(128, 12)
+	spectrogram_meshes.resize(3)
+	spectrogram_meshes[1] = surface_mesh
 	projectm_sun_mesh = SphereMesh.new()
 	projectm_sun_mesh.radius = 1.0
 	projectm_sun_mesh.height = 2.0
@@ -170,7 +186,7 @@ func _ready() -> void:
 		instances.transform_format = MultiMesh.TRANSFORM_3D
 		instances.use_custom_data = true
 		instances.mesh = particle_mesh if kind == 1 else strip_mesh
-		instances.instance_count = maxi(maxi(maxi(COUNTS[2][kind], DEPTH_COUNTS[2][kind]), maxi(PULSE_COUNTS[2][kind], STEREO_COUNTS[2][kind])), PSYCHE_COUNTS[2][kind])
+		instances.instance_count = maxi(SPECTROGRAM_COUNTS[2][kind], maxi(IMMERSIVE_COUNTS[2][kind], maxi(maxi(maxi(COUNTS[2][kind], DEPTH_COUNTS[2][kind]), maxi(PULSE_COUNTS[2][kind], STEREO_COUNTS[2][kind])), PSYCHE_COUNTS[2][kind])))
 		instances.custom_aabb = AABB(Vector3.ONE * -40.0, Vector3.ONE * 80.0)
 		var rng := RandomNumberGenerator.new()
 		rng.seed = 0x52534E43 + kind
@@ -214,12 +230,14 @@ func cycle_preset() -> void:
 func _apply_preset() -> void:
 	response_profile = RESPONSE_PROFILES.VALUES.get(Settings.VISUALIZER_PRESETS[preset_index], Vector3.ONE)
 	var pulse := preset_index >= PULSE_START and preset_index < STEREO_START
-	var projectm_scene := preset_index >= PROJECTM_START
+	var spectrogram_scene := preset_index >= SPECTROGRAM_START
+	var immersive_scene := preset_index >= IMMERSIVE_START and preset_index < SPECTROGRAM_START
+	var projectm_scene := preset_index >= PROJECTM_START and preset_index < IMMERSIVE_START
 	var live_scene := preset_index >= LIVE_START and preset_index < PROJECTM_START
 	var milkdrop := preset_index >= MILKDROP_START and preset_index < LIVE_START
 	var psyche := preset_index >= PSYCHE_START and preset_index < MILKDROP_START
 	var image_scene := preset_index >= STEREO_START and preset_index < PSYCHE_START
-	var shader := PROJECTM_SHADER if projectm_scene else LIVE_SHADER if live_scene else MILKDROP_SHADER if milkdrop else LEGACY_SHADER if preset_index < 3 else (PSYCHE_SHADER if psyche else (STEREO_SHADER if image_scene else (PULSE_SHADER if pulse else (DEPTH_SHADER if preset_index >= 7 else SHADER))))
+	var shader := SPECTROGRAM_SHADER if spectrogram_scene else IMMERSIVE_SHADER if immersive_scene else PROJECTM_SHADER if projectm_scene else LIVE_SHADER if live_scene else MILKDROP_SHADER if milkdrop else LEGACY_SHADER if preset_index < 3 else (PSYCHE_SHADER if psyche else (STEREO_SHADER if image_scene else (PULSE_SHADER if pulse else (DEPTH_SHADER if preset_index >= 7 else SHADER))))
 	for kind in materials.size():
 		var material := materials[kind]
 		material.shader = shader
@@ -234,16 +252,27 @@ func _apply_preset() -> void:
 		material.set_shader_parameter("psyche_style", maxi(0, preset_index - PSYCHE_START))
 		material.set_shader_parameter("live_style", maxi(0, preset_index - LIVE_START))
 		material.set_shader_parameter("projectm_style", maxi(0, preset_index - PROJECTM_START))
+		material.set_shader_parameter("spectrogram_style", maxi(0, preset_index - SPECTROGRAM_START))
+		material.set_shader_parameter("immersive_style", maxi(0, preset_index - IMMERSIVE_START))
+		material.set_shader_parameter("object_count", IMMERSIVE_LIMITS[preset_index - IMMERSIVE_START].x if immersive_scene else 0)
 		material.set_shader_parameter("milkdrop_style", maxi(0, preset_index - MILKDROP_START))
 		stereo.bind(material)
 	layers[1].multimesh.mesh = live_particle_mesh if live_scene else particle_mesh
 	for kind in [0, 2, 3]:
 		layers[kind].multimesh.mesh = (live_mesh if kind == 0 else ring_mesh) if live_scene else (psyche_meshes[preset_index - PSYCHE_START] if kind == 0 else ring_mesh) if psyche else (surface_mesh if kind == 2 and preset_index >= 7 and preset_index < PULSE_START else strip_mesh)
+	if spectrogram_scene:
+		layers[0].multimesh.mesh = _spectrogram_mesh()
+		layers[2].multimesh.mesh = live_mesh
+	if immersive_scene:
+		layers[0].multimesh.mesh = immersive_mesh
+		layers[2].multimesh.mesh = live_mesh
 	if projectm_scene:
 		layers[3].multimesh.mesh = projectm_sun_mesh if preset_index == PROJECTM_START + 4 else surface_mesh
-	sky_material.shader = PROJECTM_SKY_SHADER if projectm_scene else LIVE_SKY_SHADER if live_scene else PSYCHE_SKY_SHADER if milkdrop else LEGACY_SKY_SHADER if preset_index < 3 else (PSYCHE_SKY_SHADER if psyche else (STEREO_SKY_SHADER if image_scene else (PULSE_SKY_SHADER if pulse else SKY_SHADER)))
+	sky_material.shader = SPECTROGRAM_SKY_SHADER if spectrogram_scene else IMMERSIVE_SKY_SHADER if immersive_scene else PROJECTM_SKY_SHADER if projectm_scene else LIVE_SKY_SHADER if live_scene else PSYCHE_SKY_SHADER if milkdrop else LEGACY_SKY_SHADER if preset_index < 3 else (PSYCHE_SKY_SHADER if psyche else (STEREO_SKY_SHADER if image_scene else (PULSE_SKY_SHADER if pulse else SKY_SHADER)))
+	sky_material.set_shader_parameter("spectrogram_style", maxi(0, preset_index - SPECTROGRAM_START))
 	sky_material.set_shader_parameter("live_style", maxi(0, preset_index - LIVE_START))
 	sky_material.set_shader_parameter("projectm_style", maxi(0, preset_index - PROJECTM_START))
+	sky_material.set_shader_parameter("immersive_style", maxi(0, preset_index - IMMERSIVE_START))
 	sky_material.set_shader_parameter("pulse_style", maxi(0, preset_index - PULSE_START))
 	sky_material.set_shader_parameter("stereo_style", maxi(0, preset_index - STEREO_START))
 	sky_material.set_shader_parameter("psyche_style", 0 if live_scene else 1 if milkdrop else maxi(0, preset_index - PSYCHE_START))
@@ -290,11 +319,26 @@ func _apply_compositing(force := false) -> void:
 	sky_material.render_priority = -15 if overlay else 0
 
 
+func _spectrogram_mesh() -> ArrayMesh:
+	var tier := clampi(quality, 0, 2)
+	if spectrogram_meshes[tier] == null:
+		spectrogram_meshes[tier] = _surface(96 if tier == 2 else 48, 96 if tier == 0 else 192)
+	return spectrogram_meshes[tier]
+
+
 func _apply_quality() -> void:
-	var counts: Array = PROJECTM_COUNTS if preset_index >= PROJECTM_START else LIVE_COUNTS if preset_index >= LIVE_START else MILKDROP_COUNTS if preset_index >= MILKDROP_START else LEGACY_COUNTS if preset_index < 3 else (PSYCHE_COUNTS if preset_index >= PSYCHE_START else (STEREO_COUNTS if preset_index >= STEREO_START else (PULSE_COUNTS if preset_index >= PULSE_START else (DEPTH_COUNTS if preset_index >= 7 else COUNTS))))
+	if preset_index >= SPECTROGRAM_START:
+		layers[0].multimesh.mesh = _spectrogram_mesh()
+	var counts: Array = SPECTROGRAM_COUNTS if preset_index >= SPECTROGRAM_START else IMMERSIVE_COUNTS if preset_index >= IMMERSIVE_START else PROJECTM_COUNTS if preset_index >= PROJECTM_START else LIVE_COUNTS if preset_index >= LIVE_START else MILKDROP_COUNTS if preset_index >= MILKDROP_START else LEGACY_COUNTS if preset_index < 3 else (PSYCHE_COUNTS if preset_index >= PSYCHE_START else (STEREO_COUNTS if preset_index >= STEREO_START else (PULSE_COUNTS if preset_index >= PULSE_START else (DEPTH_COUNTS if preset_index >= 7 else COUNTS))))
 	for kind in layers.size():
 		var count: int = counts[clampi(quality, 0, 2)][kind]
-		if preset_index >= PROJECTM_START:
+		if preset_index >= SPECTROGRAM_START:
+			if preset_index == SPECTROGRAM_START + 4:
+				count /= 2
+		elif preset_index >= IMMERSIVE_START:
+			if kind == 0 or kind == 2:
+				count = mini(count, IMMERSIVE_LIMITS[preset_index - IMMERSIVE_START][0 if kind == 0 else 1])
+		elif preset_index >= PROJECTM_START:
 			if kind == 3:
 				count = 1 if preset_index in [PROJECTM_START + 3, PROJECTM_START + 4] else 0
 			elif kind == 2 and preset_index == PROJECTM_START + 5:
@@ -528,7 +572,7 @@ func _process(delta: float) -> void:
 			continue
 		var material := materials[kind]
 		material.set_shader_parameter("source_count", source_count if preset_index == 6 else 0)
-		material.set_shader_parameter("spectral_history_head", spectral_history_position - 1)
+		material.set_shader_parameter("spectral_history_head", posmod(spectral_history_position - 1, HISTORY_SAMPLES) if spectral_history_duration >= 1.0 / SPECTRAL_HISTORY_RATE else -1)
 		material.set_shader_parameter("spectral_history_fraction", spectral_history_elapsed * SPECTRAL_HISTORY_RATE)
 		material.set_shader_parameter("spectral_channel_count", 1 if source_count == 1 else 2)
 		material.set_shader_parameter("spectral_history_valid", minf(1.0, spectral_history_duration / 3.8))
@@ -614,11 +658,13 @@ func _smooth_spectrum(delta: float) -> void:
 
 
 func _update_history(delta: float) -> void:
-	var previous := channel_levels.duplicate()
+	var previous_left := channel_levels[0]
+	var previous_right := channel_levels[1]
+	var attack := 1.0 - exp(-delta * 45.0)
+	var release := 1.0 - exp(-delta * 14.0)
 	for channel in 2:
 		for domain in 3:
-			var speed := 45.0 if channel_targets[channel][domain] > channel_levels[channel][domain] else 14.0
-			channel_levels[channel][domain] = lerpf(channel_levels[channel][domain], channel_targets[channel][domain], 1.0 - exp(-delta * speed))
+			channel_levels[channel][domain] = lerpf(channel_levels[channel][domain], channel_targets[channel][domain], attack if channel_targets[channel][domain] > channel_levels[channel][domain] else release)
 	if not has_audio:
 		return
 	history_elapsed += delta
@@ -626,7 +672,8 @@ func _update_history(delta: float) -> void:
 	while history_elapsed >= 1.0 / HISTORY_RATE:
 		history_elapsed -= 1.0 / HISTORY_RATE
 		for channel in 2:
-			var energy: Vector3 = previous[channel].lerp(channel_levels[channel], clampf(1.0 - history_elapsed / maxf(delta, 0.00001), 0.0, 1.0))
+			var previous := previous_left if channel == 0 else previous_right
+			var energy: Vector3 = previous.lerp(channel_levels[channel], clampf(1.0 - history_elapsed / maxf(delta, 0.00001), 0.0, 1.0))
 			history_image.set_pixel(history_position, channel, Color(energy.x, energy.y, energy.z, maxf(energy.x, maxf(energy.y, energy.z))))
 		history_position = (history_position + 1) % HISTORY_SAMPLES
 		wrote = true
@@ -639,12 +686,14 @@ func _update_spectral_history(delta: float) -> void:
 		return
 	spectral_history_duration = minf(4.2, spectral_history_duration + delta)
 	spectral_history_elapsed += delta
+	if spectral_history_elapsed < 1.0 / SPECTRAL_HISTORY_RATE:
+		return
+	spectral_history_row.set_data(BANDS, 2, false, Image.FORMAT_RF, spectrum_levels.slice(0, BANDS * 2).to_byte_array())
 	var wrote := false
 	while spectral_history_elapsed >= 1.0 / SPECTRAL_HISTORY_RATE:
 		spectral_history_elapsed -= 1.0 / SPECTRAL_HISTORY_RATE
 		for channel in 2:
-			for band in BANDS:
-				spectral_history_image.set_pixel(band, channel * HISTORY_SAMPLES + spectral_history_position, Color(spectrum_levels[channel * BANDS + band], 0, 0, 0))
+			spectral_history_image.blit_rect(spectral_history_row, Rect2i(0, channel, BANDS, 1), Vector2i(0, channel * HISTORY_SAMPLES + spectral_history_position))
 		spectral_history_position = (spectral_history_position + 1) % HISTORY_SAMPLES
 		wrote = true
 	if wrote:

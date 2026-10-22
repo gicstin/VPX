@@ -554,6 +554,8 @@ static func format_kind(path: String, info: Dictionary, saved: Variant) -> int:
 
 
 static func words_match(text: String, words: PackedStringArray) -> bool:
+	if words.is_empty():
+		return true
 	var haystack := text.to_lower().replace("_", " ").replace(".", " ")
 	for word in words:
 		if not haystack.contains(word):

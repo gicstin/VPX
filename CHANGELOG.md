@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-10-22
+
+### Fixed
+
+- Include Ogg streams advertised as FLAC or Opus in their codec filters and quality badges instead of relying only on the directory's container label.
+
+### Changed
+
+- Batch visualizer spectral-history copies, reduce channel-history and stereo-analysis work, and skip remote playback-status polling without connected clients, with byte-equivalence, TCP and performance tests.
+- Reduce settled panel updates, repeated screen shader writes, spectrum smoothing work, playback cleanup allocations and empty library-search processing, with performance and regression tests.
+
+### Added
+
+- Add a discovery quality filter for bitrate presets and audio codecs, including FLAC, MP3, AAC, Opus and Ogg.
+- Show codec and bitrate quality badges on online-source cards and list rows, including discovered and saved radio stations.
+- Add online radio discovery with popular and trending stations, station search, genre, country and language filters, one-click playback, saved stations and direct stream links.
+
+
 ## [0.0.5] - 2026-10-21
 
 ### Added

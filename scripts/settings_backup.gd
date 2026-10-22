@@ -9,7 +9,7 @@ const LIMITS := {
 	"projection": [0, 5], "stereo": [0, 2], "alpha_mask": [0, 2], "background": [0, 3],
 	"decode_mode": [0, 2], "end_action": [0, 2], "playback_priority": [0, 1], "panorama_source": [0, 1],
 	"grip_action": [0, 15], "trigger_action": [0, 15], "chord_action": [0, 15], "library_view": [0, 1],
-	"library_sort": [0, 2], "library_source": [0, 4], "library_filter": [0, 5],
+	"library_sort": [0, 2], "library_source": [0, 5], "library_filter": [0, 5],
 	"audio_stretch_quality": [0, 1], "subtitle_auto": [0, 2], "subtitle_color": [0, 2], "sharpness_level": [0, 5], "audio_filter": [0, 2], "deband": [0, 3],
 	"screen_size": [20, 140], "screen_curve": [0, 1], "picture_zoom": [Settings.ZOOM_MIN, Settings.ZOOM_MAX], "flat_image_repeat": [0, 2],
 	"photo_pan_x": [-0.5, 0.5], "photo_pan_y": [-0.5, 0.5], "fisheye_fov": [90, 270], "equirect_fov": [90, 360],

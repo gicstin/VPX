@@ -24,7 +24,7 @@ func run() -> void:
 	settings.visualizer_quality = 1
 	settings.visualizer_auto_change = false
 	settings.visualizer_starred_only = false
-	check(settings.VISUALIZER_PRESETS.size() == 92 and settings.VISUALIZER_PRESET_MAX == 91, "catalog includes six distinct projectM scenes")
+	check(settings.VISUALIZER_PRESETS.size() == 110 and settings.VISUALIZER_PRESET_MAX == 109, "catalog includes eight immersive spectrogram scenes")
 	check(settings.VISUALIZER_PRESETS[78] == "PM · Geiss Nautilus" and settings.VISUALIZER_PRESETS[79] == "PM · Geiss Cosmic Dust 2", "retained classic MilkDrop presets keep their indices")
 	check(settings.VISUALIZER_STUDIO_GUIDES.size() == settings.VISUALIZER_PRESETS.size() - settings.VISUALIZER_STUDIO_START, "preset guides match the catalog")
 	var field: Node = load("res://scripts/resonance_field.gd").new()

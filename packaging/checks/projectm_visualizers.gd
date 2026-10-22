@@ -42,7 +42,7 @@ func run() -> void:
 		wave[sample] = sin(sample * 0.12) * 0.35
 		wave[256 + sample] = cos(sample * 0.12) * 0.35
 	var silhouettes: Array[Image] = []
-	for index in range(field.PROJECTM_START, settings.VISUALIZER_PRESETS.size()):
+	for index in range(field.PROJECTM_START, field.SPECTROGRAM_START):
 		settings.apply("visualizer_preset", index)
 		field.reset()
 		for frame in 120:

@@ -43,6 +43,7 @@ const SHAPES := {
 	"photo": "<rect x=\"3\" y=\"4.5\" width=\"18\" height=\"15\" rx=\"2.2\"/><circle cx=\"8.5\" cy=\"9.5\" r=\"1.7\"/><path d=\"M21 15.5l-5-5-9.5 9\"/>",
 	"film": "<rect x=\"3\" y=\"4.5\" width=\"18\" height=\"15\" rx=\"2.2\"/><path d=\"M7.5 4.5v15M16.5 4.5v15M3 9.5h4.5M3 14.5h4.5M16.5 9.5H21M16.5 14.5H21\"/>",
 	"search": "<circle cx=\"10.5\" cy=\"10.5\" r=\"6\"/><path d=\"M15 15l5 5\"/>",
+	"keyboard": "<rect x=\"2\" y=\"5\" width=\"20\" height=\"14\" rx=\"2\"/><path d=\"M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10\"/>",
 	"network": "<rect x=\"9\" y=\"3.5\" width=\"6\" height=\"5\" rx=\"1\"/><rect x=\"3\" y=\"15.5\" width=\"6\" height=\"5\" rx=\"1\"/><rect x=\"15\" y=\"15.5\" width=\"6\" height=\"5\" rx=\"1\"/><path d=\"M12 8.5v3.5M6 15.5V12h12v3.5\"/>",
 	"link": "<path d=\"M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1\"/><path d=\"M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1\"/>",
 	"download": "<path d=\"M12 4v11\"/><path d=\"M7 10.5l5 5 5-5\"/><path d=\"M5 19.5h14\"/>",

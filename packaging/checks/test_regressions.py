@@ -319,6 +319,9 @@ class RegressionTests(unittest.TestCase):
     def test_online_source_navigation(self):
         self.run_case("online_navigation")
 
+    def test_filtered_radio_navigation(self):
+        self.run_case("filtered_navigation")
+
     def test_radio_audio_clock(self):
         self.run_case("radio_clock")
 

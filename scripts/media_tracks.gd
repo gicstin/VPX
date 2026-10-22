@@ -30,10 +30,11 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	for task in subtitle_tasks.duplicate():
+	for i in range(subtitle_tasks.size() - 1, -1, -1):
+		var task := subtitle_tasks[i]
 		if WorkerThreadPool.is_task_completed(task):
 			WorkerThreadPool.wait_for_task_completion(task)
-			subtitle_tasks.erase(task)
+			subtitle_tasks.remove_at(i)
 
 
 func reset() -> void:

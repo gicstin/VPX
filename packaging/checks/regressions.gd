@@ -50,12 +50,14 @@ func _run() -> void:
 		_playlist_cases()
 		_decoder_cases()
 		await _remote_case()
-	elif mode in ["remote_open", "replacement_end", "local_cancel", "local_read", "online_radio", "online_navigation", "radio_clock", "radio_jitter", "radio_opus", "link_history", "radio_metadata"]:
+	elif mode in ["remote_open", "replacement_end", "local_cancel", "local_read", "online_radio", "online_navigation", "filtered_navigation", "radio_clock", "radio_jitter", "radio_opus", "link_history", "radio_metadata"]:
 		main = load("res://scenes/main.tscn").instantiate()
 		root.add_child(main)
 		for i in 15:
 			await process_frame
 		match mode:
+			"filtered_navigation":
+				await _filtered_navigation_case()
 			"radio_metadata":
 				await _radio_metadata_case()
 			"radio_opus":
@@ -303,6 +305,60 @@ func _online_navigation_case() -> void:
 	check(await main.player.open(fixture.path_join("short.wav")), "local track replaces station")
 	check(await wait_for(func() -> bool: return fixture.path_join("short.wav") in main.ui.music_playlist, 3.0), "local track navigation restores local playlist")
 	check(sources[0] not in main.ui.music_playlist, "local playlist excludes online sources")
+
+
+func _filtered_navigation_case() -> void:
+	var ui = main.ui
+	var directory = ui.discovery.directory
+	var library := root.get_node("Library")
+	var settings := root.get_node("Settings")
+	settings.shuffle = false
+	var first := endpoint + "/radio"
+	var second := endpoint + "/radio-get"
+	var outside := endpoint + "/radio-clock"
+	library.remember_link(outside)
+	directory.started = true
+	directory.stations.assign([
+		{"url": first, "name": "Filtered first", "codec": "FLAC", "bitrate": 0},
+		{"url": second, "name": "Filtered second", "codec": "FLAC", "bitrate": 0},
+	])
+	ui._select_source(settings.LibrarySource.DISCOVER)
+	ui._on_item_activated(first, false)
+	check(await wait_for(func() -> bool: return main.player.current_path == first and main.player.load_state.get("status") == "ready", 5.0), "filtered radio selection opens")
+	var filtered := PackedStringArray([first, second])
+	check(ui.music_playlist == filtered and ui.playlist == filtered, "filtered queue includes unplayed results and excludes opened-link history")
+	ui.get_node("%NextButton").pressed.emit()
+	check(await wait_for(func() -> bool: return main.player.current_path == second and main.player.load_state.get("status") == "ready", 5.0), "Next reaches the next unplayed filtered station")
+	check(main.player.source_title == "Filtered second" and main.player.load_options.get("audio_only", false), "unplayed station retains its name and direct audio options")
+	ui.get_node("%NextButton").pressed.emit()
+	check(await wait_for(func() -> bool: return main.player.current_path == first and main.player.load_state.get("status") == "ready", 5.0), "Next wraps within filtered results")
+	ui.get_node("%PrevButton").pressed.emit()
+	check(await wait_for(func() -> bool: return main.player.current_path == second and main.player.load_state.get("status") == "ready", 5.0), "Previous wraps within filtered results")
+	directory.stations.resize(1)
+	ui.refresh_directory()
+	settings.shuffle = true
+	check(ui.play_music_neighbor(1), "shuffle selects from changed filters when current station is excluded")
+	check(await wait_for(func() -> bool: return main.player.current_path == first and main.player.load_state.get("status") == "ready", 5.0), "shuffle stays within changed results")
+	check(not ui.play_music_neighbor(-1), "shuffle history cannot return to an excluded station")
+	settings.shuffle = false
+	directory.stations.clear()
+	ui.refresh_directory()
+	check(not ui.play_music_neighbor(1) and not ui.play_music_neighbor(-1), "empty filtered results cannot fall back to unrelated history")
+	directory.stations.assign([
+		{"url": first, "name": "Filtered first", "codec": "FLAC", "bitrate": 0},
+		{"url": second, "name": "Filtered second", "codec": "FLAC", "bitrate": 0},
+	])
+	ui.refresh_directory()
+	check(ui.music_playlist == filtered, "newly loaded results extend the active filtered queue")
+	check(await main.player.open(fixture.path_join("photo.png")), "photo opens over filtered radio")
+	main.photo_bar.root.track(1)
+	check(await wait_for(func() -> bool: return main.player.music_path == second and main.player.load_state.get("status") == "ready", 5.0), "mini-player Next follows filtered stations under a photo")
+	check(main.player.is_image() and ui.music_playlist == filtered, "filtered navigation retains the photo and queue")
+	ui._select_source(settings.LibrarySource.FAVORITES)
+	main.photo_bar.root.track(-1)
+	check(await wait_for(func() -> bool: return main.player.music_path == first and main.player.load_state.get("status") == "ready", 5.0), "filtered queue survives browsing another library source")
+	await ui.open_media(outside)
+	check(not ui.radio_queue_active and outside in ui.music_playlist, "explicitly opening another source restores normal online navigation")
 
 
 func _playlist_cases() -> void:

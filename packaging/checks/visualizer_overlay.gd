@@ -26,7 +26,8 @@ func frames(count := 12) -> void:
 
 
 func capture() -> Image:
-	await RenderingServer.frame_post_draw
+	await process_frame
+	RenderingServer.force_draw()
 	return root.get_texture().get_image()
 
 
@@ -125,7 +126,7 @@ func run() -> void:
 	settings.apply("visualizer_zoom", 1.8)
 	await frames()
 	check(is_equal_approx(main.camera.fov, lens), "overlay zoom leaves panorama field of view unchanged")
-	for preset in [0, 3, 7, 17, 22, 68, 76, 80, 86]:
+	for preset in [0, 3, 7, 17, 22, 68, 76, 80, 86] + range(92, settings.VISUALIZER_PRESETS.size()):
 		settings.apply("visualizer_preset", preset)
 		await frames(3)
 		check(main.resonance_field.materials[0].shader.code.contains("depth_test_disabled") and main.resonance_field.sky_material.shader.code.contains("ALPHA = overlay_opacity"), "overlay composites shader family %d" % preset)
@@ -218,7 +219,7 @@ func render_checks() -> void:
 	var bands := PackedFloat32Array()
 	bands.resize(48 * 50)
 	bands.fill(0.75)
-	for preset in [0, 3, 7, 17, 22, 68, 76, 80]:
+	for preset in [0, 3, 7, 17, 22, 68, 76, 80, 86] + range(92, settings.VISUALIZER_PRESETS.size()):
 		settings.apply("visualizer_preset", preset)
 		settings.apply("visualizer_overlay_opacity", 0.0)
 		main.resonance_field._process(0.1)

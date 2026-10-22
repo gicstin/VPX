@@ -197,10 +197,13 @@ func update(delta: float) -> void:
 			pans[band] = lerpf(pans[band], 0.0 if mono else _expand((right - left) / (right + left)), steer * clampf(levels[band] * 3.0, 0.2, 1.0))
 		sum += Vector2(left_levels[band], right_levels[band]) / BANDS
 	channel_balance = sum
+	var source_attack := 1.0 - exp(-delta * 20.0)
+	var source_release := 1.0 - exp(-delta * 5.0)
+	var flash_decay := exp(-delta * 8.0)
 	for slot in slots:
-		slot.level = lerpf(slot.level, slot.target, 1.0 - exp(-delta * (20.0 if slot.target > slot.level else 5.0)))
+		slot.level = lerpf(slot.level, slot.target, source_attack if slot.target > slot.level else source_release)
 		slot.burst.z = minf(9.0, slot.burst.z + delta)
-		slot.flash *= exp(-delta * 8.0)
+		slot.flash *= flash_decay
 		if slot.alive:
 			slot.age += delta
 		elif slot.level < 0.01:
@@ -266,12 +269,14 @@ func _write_rows() -> void:
 	var side := 0.0
 	var total := 0.0
 	var pan_sum := 0.0
+	var weights := 0.0
 	for band in BANDS:
 		var left := sqrt(_power(left_levels[band]))
 		var right := sqrt(_power(right_levels[band]))
 		side += absf(right - left)
 		total += right + left
 		var weight := _weight(levels[band])
+		weights += weight
 		band_ring.row[band] = Color(pans[band], levels[band], left_levels[band], right_levels[band])
 		if weight <= 0.0:
 			continue
@@ -283,9 +288,6 @@ func _write_rows() -> void:
 			energy[bin] += share
 			tone[bin] += share * band / float(BANDS - 1)
 	width = lerpf(width, side / maxf(total, 0.000001), 0.25)
-	var weights := 0.0
-	for band in BANDS:
-		weights += _weight(levels[band])
 	balance = lerpf(balance, pan_sum / weights if weights > 0.0 else 0.0, 0.2)
 	for bin in PAN_BINS:
 		field_ring.row[bin] = Color(energy[bin], tone[bin] / energy[bin] if energy[bin] > 0.0 else 0.5, 0.0, width)
