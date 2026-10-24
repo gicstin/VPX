@@ -50,12 +50,14 @@ func _run() -> void:
 		_playlist_cases()
 		_decoder_cases()
 		await _remote_case()
-	elif mode in ["remote_open", "replacement_end", "local_cancel", "local_read", "online_radio", "online_navigation", "filtered_navigation", "radio_clock", "radio_jitter", "radio_opus", "link_history", "radio_metadata"]:
+	elif mode in ["remote_open", "replacement_end", "local_cancel", "local_read", "online_radio", "secure_radio", "online_navigation", "filtered_navigation", "radio_clock", "radio_jitter", "radio_opus", "link_history", "radio_metadata"]:
 		main = load("res://scenes/main.tscn").instantiate()
 		root.add_child(main)
 		for i in 15:
 			await process_frame
 		match mode:
+			"secure_radio":
+				await _secure_radio_case()
 			"filtered_navigation":
 				await _filtered_navigation_case()
 			"radio_metadata":
@@ -221,6 +223,17 @@ func _link_history_case() -> void:
 	check(received == ["http://stream.radioparadise.com/flacm"], "mouse click on Done submits pasted link once")
 	main.ui.recovery.cancel()
 	check(library.recent_links().has("http://stream.radioparadise.com/flacm"), "submitted link is remembered even if opening is cancelled")
+
+
+func _secure_radio_case() -> void:
+	check(await main.player.open(endpoint + "/radio"), "HTTPS radio opens through the native decoder")
+	check(main.player.is_live() and main.player._audio_only_playing(), "HTTPS radio retains live audio playback")
+	check(await wait_for(func() -> bool: return main.player.stream_position > 0.5, 5.0), "HTTPS radio advances after decoding")
+	check(await main.player.open(endpoint + "/delayed-fast.mp4"), "HTTPS video opens through the native decoder")
+	check(await wait_for(func() -> bool: return main.player.stream_position > 0.5, 5.0), "HTTPS video advances after decoding")
+	var network = load("res://scripts/network.gd")
+	check(network.normalize_url("sftp://user@host/movie.mp4").get("ok", false), "SFTP links remain accepted")
+	check(not network.plays_directly("sftp://user@host/movie.mp4", ["mp4"]), "SFTP media uses the desktop share backend")
 
 
 func _online_radio_case() -> void:

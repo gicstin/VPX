@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import ssl
 import subprocess
 import tempfile
 import threading
@@ -236,6 +237,13 @@ class RegressionTests(unittest.TestCase):
 
     def run_case(self, mode):
         server = MediaServer(self.media)
+        if mode == "secure_radio":
+            certificate = self.media / "tls.pem"
+            key = self.media / "tls.key"
+            subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1", "-keyout", str(key), "-out", str(certificate)], check=True, capture_output=True, timeout=15)
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(certificate, key)
+            server.socket = context.wrap_socket(server.socket, server_side=True)
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
         feeder = None
@@ -269,10 +277,16 @@ class RegressionTests(unittest.TestCase):
             feeder = threading.Thread(target=release_pipe, daemon=True)
             feeder.start()
         environment = dict(os.environ, XDG_DATA_HOME=str(self.directory / mode))
+        if bundle := os.environ.get("VPX_CHECK_BUNDLE"):
+            environment["LD_LIBRARY_PATH"] = str(Path(bundle) / "usr/lib")
+            environment["PATH"] = str(Path(bundle) / "usr/bin") + os.pathsep + environment.get("PATH", "")
+        if mode == "secure_radio":
+            environment["SSL_CERT_FILE"] = str(certificate)
         for name in ["VPX_DECODE", "VPX_DECODE_SETTING", "VPX_MODE_SESSION", "VPX_WANT_XR"]:
             environment.pop(name, None)
         script = f"{mode}.gd" if mode in ["interaction_safety", "keyboard_input"] else "regressions.gd"
-        command = [self.godot, "--headless", "--path", str(ROOT), "--xr-mode", "off", "--audio-driver", "Dummy", "--script", str(ROOT / "packaging/checks" / script), "--", mode, f"http://127.0.0.1:{server.server_port}", str(self.media), "--desktop"]
+        scheme = "https" if mode == "secure_radio" else "http"
+        command = [self.godot, "--headless", "--path", str(ROOT), "--xr-mode", "off", "--audio-driver", "Dummy", "--script", str(ROOT / "packaging/checks" / script), "--", mode, f"{scheme}://127.0.0.1:{server.server_port}", str(self.media), "--desktop"]
         if mode == "core":
             command.extend(["--decode", "sw"])
         output_path = self.directory / f"{mode}.log"
@@ -315,6 +329,11 @@ class RegressionTests(unittest.TestCase):
 
     def test_online_radio(self):
         self.run_case("online_radio")
+
+    def test_secure_radio(self):
+        if not os.environ.get("VPX_CHECK_BUNDLE"):
+            self.skipTest("VPX_CHECK_BUNDLE required for packaged TLS playback")
+        self.run_case("secure_radio")
 
     def test_online_source_navigation(self):
         self.run_case("online_navigation")

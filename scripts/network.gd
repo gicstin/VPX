@@ -11,7 +11,7 @@ const SSDP_PORT := 1900
 const SEARCH_TARGET := "urn:schemas-upnp-org:service:ContentDirectory:1"
 const SEARCH_SECONDS := 3.0
 const BROWSE_LIMIT := 500
-const DIRECT_SCHEMES := ["http", "https", "ftp", "sftp", "rtsp", "rtmp", "rtmps", "srt", "udp", "rtp"]
+const DIRECT_SCHEMES := ["http", "https", "ftp", "rtsp", "rtmp", "rtmps", "srt", "udp", "rtp"]
 const SOAP_BROWSE := """<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:Browse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1"><ObjectID>%s</ObjectID><BrowseFlag>BrowseDirectChildren</BrowseFlag><Filter>*</Filter><StartingIndex>0</StartingIndex><RequestedCount>%d</RequestedCount><SortCriteria></SortCriteria></u:Browse></s:Body></s:Envelope>"""
 
@@ -54,7 +54,7 @@ static func normalize_url(text: String, share := false) -> Dictionary:
 	var split := url.find("://")
 	url = url.substr(0, split).to_lower() + url.substr(split)
 	var kind := scheme(url)
-	if kind not in DIRECT_SCHEMES + ["smb", "webdav", "webdavs", "dav", "davs", "nfs"]:
+	if kind not in DIRECT_SCHEMES + ["smb", "sftp", "webdav", "webdavs", "dav", "davs", "nfs"]:
 		return {"ok": false, "error": "Unsupported link protocol"}
 	var authority := url.substr(split + 3).get_slice("/", 0).get_slice("?", 0).get_slice("#", 0)
 	if authority.is_empty() or authority.contains(" ") or authority.ends_with("@"):

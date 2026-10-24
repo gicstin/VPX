@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-10-24
+
+### Fixed
+
+- Enable HTTPS, TLS, secure RTMP, SRT and DASH in Linux builds, and verify bundled network protocols, encrypted playback and redirects before packaging.
+- Open SFTP media through the desktop share backend instead of passing links to FFmpeg builds without SFTP support.
+
 ## [0.0.6] - 2026-10-22
 
 ### Fixed

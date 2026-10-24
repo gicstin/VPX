@@ -42,10 +42,10 @@ done
 step() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31merror: %s\033[0m\n' "$*" >&2; exit 1; }
 
-for tool in git curl tar make cmake cc c++ pkg-config python3 rsync objdump strip bzip2 xz "$GODOT"; do
+for tool in git curl tar make cmake cc c++ pkg-config python3 rsync objdump strip bzip2 xz openssl "$GODOT"; do
 	command -v "$tool" >/dev/null || die "missing tool: $tool"
 done
-for module in dav1d libva libva-drm libdrm openssl zlib vulkan libjpeg dvdread dvdnav libxml-2.0; do
+for module in dav1d libva libva-drm libdrm openssl srt zlib vulkan libjpeg dvdread dvdnav libxml-2.0; do
 	pkg-config --exists "$module" || die "missing development package: $module"
 done
 
@@ -180,6 +180,7 @@ FFMPEG_CONFIGURE=(
 	--enable-shared --disable-static --enable-pic
 	--disable-debug --disable-doc --disable-ffplay
 	--disable-autodetect
+	--enable-version3 --enable-openssl --enable-libsrt --enable-libxml2
 	--enable-gpl --enable-librubberband --pkg-config-flags=--static --extra-libs="-lstdc++ -lm" --enable-libdvdread --enable-libdvdnav --enable-demuxer=dvdvideo
 	--enable-pthreads --enable-iconv --enable-zlib --enable-bzlib
 	--enable-vaapi --enable-libdrm --enable-vulkan
@@ -336,6 +337,7 @@ step "Verify bundle"
 unresolved="$(env -u LD_LIBRARY_PATH ldd "$APPDIR"/usr/bin/libgdffmpeg.*.so "$APPDIR"/usr/bin/ffmpeg | awk '/=>/ && $3 ~ /^\// && $3 !~ /AppDir/ {n = $1; sub(".*/", "", n); print n}' | sort -u | grep -vE "$HOST_LIBS" || true)"
 [ -z "$unresolved" ] || die "libraries resolve outside the AppDir: $unresolved"
 "$APPDIR/usr/bin/ffprobe" -hide_banner -version | head -1
+python3 "$ROOT/packaging/checks/network_protocols.py" "$APPDIR/usr/bin"
 GLIBC_FLOOR="$(elf_files | xargs objdump -T 2>/dev/null | grep -oP 'GLIBC_\K[0-9.]+' | sort -Vu | tail -1)"
 echo "requires glibc >= $GLIBC_FLOOR"
 (( $(printf '%s\n' "$GLIBC_FLOOR" "$GLIBC_TARGET" | sort -V | tail -1 | grep -cx "$GLIBC_TARGET") )) \
@@ -354,7 +356,10 @@ mkdir -p "$APPDIR/usr/share/licenses/VPX"
 cp "$ROOT/LICENSE" "$APPDIR/usr/share/licenses/VPX/LICENSE-PolyForm-Noncommercial-1.0.0.txt"
 cp "$ROOT/addons/ffmpeg/LICENSE" "$APPDIR/usr/share/licenses/VPX/EIRTeam.FFmpeg-MIT.txt"
 cp "$BUILD/rubberband-4.0.0/COPYING" "$APPDIR/usr/share/licenses/VPX/RubberBand-GPL.txt"
-cp "$FFMPEG_SRC/COPYING.GPLv2" "$APPDIR/usr/share/licenses/VPX/FFmpeg-GPLv2.txt"
+cp "$FFMPEG_SRC/COPYING.GPLv3" "$APPDIR/usr/share/licenses/VPX/FFmpeg-GPLv3.txt"
+cp /usr/share/licenses/openssl/LICENSE.txt "$APPDIR/usr/share/licenses/VPX/OpenSSL-Apache-2.0.txt"
+cp /usr/share/licenses/libxml2/Copyright "$APPDIR/usr/share/licenses/VPX/libxml2-Copyright.txt"
+cp /usr/share/licenses/spdx/MPL-2.0.txt "$APPDIR/usr/share/licenses/VPX/SRT-MPL-2.0.txt"
 cp "$DSD_SRC/LICENSE" "$APPDIR/usr/share/licenses/VPX/DSD-Nexus-LGPL-2.1.txt"
 cp /usr/share/doc/libdvdread/COPYING "$APPDIR/usr/share/licenses/VPX/libdvdread-COPYING.txt"
 cp /usr/share/doc/libdvdnav/COPYING "$APPDIR/usr/share/licenses/VPX/libdvdnav-COPYING.txt"
