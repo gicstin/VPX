@@ -2,6 +2,7 @@ extends PanelContainer
 
 signal bookmark_name_requested(text: String)
 signal menu_requested
+signal settings_requested
 signal close_requested
 signal recenter_requested
 signal reset_position_requested
@@ -120,6 +121,10 @@ func _build_header() -> Control:
 	var menu := _header_button("Menu", "library")
 	menu.pressed.connect(menu_requested.emit)
 	header.add_child(menu)
+	var settings_button := _header_button("Settings", "system")
+	settings_button.name = "SettingsButton"
+	settings_button.pressed.connect(settings_requested.emit)
+	header.add_child(settings_button)
 	var close := _header_button("", "close")
 	close.pressed.connect(close_requested.emit)
 	header.add_child(close)

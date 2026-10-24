@@ -3,7 +3,7 @@ extends Node
 signal finished(result: Dictionary)
 signal cover_found(path: String, cover: Dictionary)
 
-enum Sort { NAME, DATE, SIZE }
+enum Sort { NAME, DATE, SIZE, PLAY_COUNT }
 
 const BackgroundTask := preload("res://scripts/background_task.gd")
 const SCAN_TIMEOUT := 15.0
@@ -273,6 +273,8 @@ func _accept_file(state: Dictionary, directory: String, name: String) -> void:
 			state["keys"][entry] = FileAccess.get_modified_time(path)
 		Sort.SIZE:
 			state["keys"][entry] = FileAccess.get_size(path)
+		Sort.PLAY_COUNT:
+			state["keys"][entry] = state["request"].get("filter", {}).get("play_counts", {}).get(path, 0)
 
 
 func _resolve_faces(state: Dictionary, only_directory := "") -> void:
@@ -297,7 +299,13 @@ func _resolve_faces(state: Dictionary, only_directory := "") -> void:
 func _passes(filter: Dictionary, path: String) -> bool:
 	if filter.is_empty():
 		return true
-	var kind: int = filter["kind"]
+	if filter.has("favorites") and not filter["favorites"].has(path):
+		return false
+	if filter.get("unplayed", false) and (PanoramaFiles.is_image(path) or int(filter.get("play_counts", {}).get(path, 0)) > 0):
+		return false
+	var kind: int = filter.get("kind", Settings.LibraryFilter.ALL)
+	if kind == Settings.LibraryFilter.ALL:
+		return true
 	if kind == Settings.LibraryFilter.PHOTOS:
 		return PanoramaFiles.is_image(path)
 	return format_kind(path, filter["info"].get(path, {}), filter["formats"].get(path)) == kind
@@ -567,12 +575,18 @@ func _ordered_playlist(files: PackedStringArray, request: Dictionary) -> PackedS
 	var paths: Array[String] = []
 	var keys := {}
 	var sort: int = request.get("sort", Sort.NAME)
-	var filter: Dictionary = {} if request.get("audio_only", false) else request.get("filter", {})
+	var filter: Dictionary = request.get("filter", {})
+	if request.get("audio_only", false):
+		filter = filter.duplicate()
+		for key in ["kind", "info", "formats"]:
+			filter.erase(key)
 	for path: String in files:
 		if not path.ends_with("/") and not _passes(filter, path):
 			continue
 		paths.append(path)
-		if sort != Sort.NAME:
+		if sort == Sort.PLAY_COUNT:
+			keys[path] = filter.get("play_counts", {}).get(path, 0)
+		elif sort != Sort.NAME:
 			var source := path.trim_suffix("/")
 			keys[path] = FileAccess.get_modified_time(source) if sort == Sort.DATE else FileAccess.get_size(source)
 	_sort(paths, keys, sort != Sort.NAME, false)

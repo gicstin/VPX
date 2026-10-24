@@ -51,7 +51,6 @@ touch "$ROOT/build/.gdignore"
 
 GODOT_VERSION="$("$GODOT" --version | awk -F. '{print $1"."$2"."$3"-"$4}')"
 [[ "$GODOT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[a-z0-9]+$ ]] || die "cannot parse Godot version: $("$GODOT" --version)"
-VPX_BUILD_NUMBER="${VPX_BUILD_NUMBER:-$(grep -oP '^const BUILD := \K[0-9]+' "$ROOT/scripts/log.gd")}"
 
 VPX_VERSION="$(python3 "$ROOT/packaging/release_version.py" "${VPX_VERSION:-}")"
 VPX_NUMERIC_VERSION="${VPX_VERSION%%[-+]*}"

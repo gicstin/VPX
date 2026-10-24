@@ -6,7 +6,6 @@ const WIVRN_LOG_SUBDIR := "wivrn/wivrn-dashboard"
 const STATS_INTERVAL := 5.0
 const SEEK_LOG_DELAY := 0.4
 const SETTING_LOG_DELAY := 0.4
-const BUILD := 202
 const HMD_LOG_PATH := "user://hmd.log"
 const HMD_TAIL_BYTES := 65536
 const WIVRN_TAIL_BYTES := 1048576
@@ -65,8 +64,7 @@ func _ready() -> void:
 
 
 func version_label() -> String:
-	var version := str(ProjectSettings.get_setting("application/config/version", ""))
-	return "%s (b%d)" % [version, BUILD] if not version.is_empty() else "b%d" % BUILD
+	return str(ProjectSettings.get_setting("application/config/version", ""))
 
 
 func _log_wivrn_stream() -> void:

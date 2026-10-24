@@ -253,6 +253,30 @@ func _test_seek() -> void:
 	check(player.stream_position > 0.0 and is_equal_approx(ui.seek_slider.value, player.stream_position), "keyboard seek commits and survives transport refresh")
 	var log_node := root.get_node("Log")
 	var seek_serial: int = log_node.seek_serial
+	root.get_node("Library").set_pref(clip, "bookmarks", [0.0, 4.37, 12.0])
+	player.rename_bookmark(4.37, "Opening Ελληνικά")
+	await frames()
+	var controller = main.get_node("Origin/Right")
+	controller.target_viewport = ui.get_viewport()
+	controller.hit_panel = main.panel
+	ui.get_viewport().notify_mouse_entered()
+	var pin := Vector2(ui.marks._x(4.37), ui.marks.size.y * 0.5 - 9.0)
+	var uv: Vector2 = (ui.marks.global_position + pin) / Vector2(ui.get_viewport().size_2d_override)
+	controller._push_motion(uv)
+	await frames()
+	check(ui.seek_bubble.visible and "Opening Ελληνικά" in ui.bubble_label.text and is_equal_approx(ui.preview_time, 4.37), "pin hover shows Unicode name at exact bookmark time")
+	controller.trigger_held = true
+	controller._push_button(uv, true)
+	controller.trigger_held = false
+	controller._push_button(uv, false)
+	await frames()
+	check(log_node.seek_serial == seek_serial + 1 and is_equal_approx(player.stream_position, 4.37) and not ui.seeking, "pin click seeks once to exact timestamp without slider drag")
+	controller._push_motion(Vector2(0.1, 0.1))
+	await frames()
+	check(not ui.seek_bubble.visible, "leaving pin hides hover bubble")
+	check(not ui.marks._has_point(Vector2(pin.x, ui.marks.size.y * 0.5)), "timeline track remains available for normal scrubbing")
+	check(ui.marks.bookmark_at(Vector2(ui.marks._x(0.0), pin.y)) == 0.0 and ui.marks.bookmark_at(Vector2(ui.marks._x(12.0), pin.y)) == 12.0, "first and last pins remain clickable")
+	seek_serial = log_node.seek_serial
 	ui.seek_slider.value = 3.0
 	ui.seek_slider.drag_started.emit()
 	await frames()

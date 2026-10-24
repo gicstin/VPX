@@ -5,6 +5,7 @@ const STROKE := 2.0
 const HEADER := "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#ffffff\" stroke-width=\"%s\" stroke-linecap=\"round\" stroke-linejoin=\"round\">%s</svg>"
 const SOLID := "fill=\"#ffffff\" stroke=\"none\""
 const SHAPES := {
+	"dice": '<rect x="3.5" y="3.5" width="17" height="17" rx="3"/><g fill="#ffffff" stroke="none"><circle cx="8" cy="8" r="1.5"/><circle cx="16" cy="8" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="8" cy="16" r="1.5"/><circle cx="16" cy="16" r="1.5"/></g>',
 	"play": "<path d=\"M7.5 4.8v14.4a.9.9 0 0 0 1.4.8l11.2-7.2a.9.9 0 0 0 0-1.6L8.9 4a.9.9 0 0 0-1.4.8z\" fill=\"#ffffff\" stroke=\"none\"/>",
 	"pause": "<rect x=\"5.5\" y=\"4.5\" width=\"4.5\" height=\"15\" rx=\"1.2\" fill=\"#ffffff\" stroke=\"none\"/><rect x=\"14\" y=\"4.5\" width=\"4.5\" height=\"15\" rx=\"1.2\" fill=\"#ffffff\" stroke=\"none\"/>",
 	"prev": "<path d=\"M18.5 5.5v13a.8.8 0 0 1-1.3.6L9 12.6a.8.8 0 0 1 0-1.2l8.2-6.5a.8.8 0 0 1 1.3.6z\" fill=\"#ffffff\" stroke=\"none\"/><path d=\"M6 5v14\"/>",

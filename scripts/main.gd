@@ -152,12 +152,16 @@ var seek_bar_suppressed := false
 var held_step_key := KEY_NONE
 var held_step_direction := 0
 var held_step_timer := 0.0
+var window_session: Node
 
 
 func _ready() -> void:
 	if not _init_xr():
 		process_mode = Node.PROCESS_MODE_DISABLED
 		return
+	if desktop_mode:
+		window_session = preload("res://scripts/window_session.gd").new()
+		add_child(window_session)
 	ui.previews.reparent(self)
 	Log.bind_player(player, null if desktop_mode else xr_interface)
 	subtitle_view = SubtitleView.new()
@@ -897,6 +901,8 @@ func adjust_visualizer_zoom(amount: float) -> void:
 
 
 func _step_action(action: Settings.StickAction, direction: int) -> void:
+	if action == Settings.StickAction.PLAYBACK_SPEED and player.is_live():
+		return
 	if player._audio_only_playing() and action in FORMAT_ACTION_NAMES:
 		Settings.cycle_visualizer_preset(direction)
 		return

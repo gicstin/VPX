@@ -111,8 +111,8 @@ def github_preflight(repo, tag, commit):
         raise ValueError(f"release {tag} already exists; choose a new version or finish its draft on GitHub")
 
 
-def build_packages(args, version, build):
-    environment = {**os.environ, "VPX_VERSION": version, "VPX_BUILD_NUMBER": build, "VPX_DIST_DIR": str(args.dist.resolve())}
+def build_packages(args, version):
+    environment = {**os.environ, "VPX_VERSION": version, "VPX_DIST_DIR": str(args.dist.resolve())}
     environment.pop("VPX_BUILD_DIR", None)
     for script in ["linux/build-appimage.sh", "windows/build-windows.sh"]:
         command = ["bash", str(ROOT / "packaging" / script)]
@@ -156,13 +156,7 @@ def main(argv=None):
         parser.error("--repo must be GitHub OWNER/REPO")
     try:
         notes = release_notes(args.changelog, version)
-        build = None
         commit = None
-        if args.windows is None or args.linux is None:
-            match = re.search(r"^const BUILD := (\d+)$", (ROOT / "scripts/log.gd").read_text(), re.MULTILINE)
-            if not match:
-                raise ValueError("cannot read current build; pass --windows and --linux explicitly")
-            build = match.group(1)
         if args.build:
             if not sys.platform.startswith("linux") or os.uname().machine != "x86_64":
                 raise ValueError("release builds require a Linux x86_64 host")
@@ -171,9 +165,9 @@ def main(argv=None):
                     raise ValueError("GitHub CLI (gh) is required; install it and run gh auth login")
                 commit = source_commit()
                 github_preflight(args.repo, f"v{version}", commit)
-            print(f"VPX {version} (b{build}) -> {args.repo}", flush=True)
+            print(f"VPX {version} -> {args.repo}", flush=True)
             args.dist = args.dist / f"v{version}"
-            build_packages(args, version, build)
+            build_packages(args, version)
             if args.dry_run:
                 action = "keep packages locally" if args.build_only else f"create v{version} at HEAD and upload README-compatible assets"
                 print(f"Preview only. Would build both platforms and {action}.")

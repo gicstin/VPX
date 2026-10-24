@@ -83,6 +83,7 @@ var auto_cropped := false
 var auto_crop_key := ""
 var radio := preload("res://scripts/radio_metadata.gd").new()
 var radio_metadata_timer := 0.0
+var watch_history := preload("res://scripts/watch_history.gd").new()
 
 
 func _ready() -> void:
@@ -132,6 +133,8 @@ func _process(delta: float) -> void:
 	_monitor_stream(delta)
 	_update_radio_metadata(delta)
 	_update_sleep(delta)
+	if playback != null and not watch_history.path.is_empty() and not watch_history.counted:
+		watch_history.sample(stream_position, get_stream_length(), not paused and is_playing() and (not is_image() or not music_path.is_empty()) and (image_loader == null or not music_path.is_empty()), _audio_only_playing())
 	if current_path.is_empty() or paused or not is_playing():
 		return
 	if loop_b > loop_a and loop_a >= 0.0 and stream_position >= loop_b:
@@ -184,6 +187,7 @@ func _is_audio_item(path: String) -> bool:
 func _on_finished() -> void:
 	if replacing_stream:
 		return
+	watch_history.sample(get_stream_length(), get_stream_length(), true, _audio_only_playing())
 	if not music_path.is_empty() and (image != null or image_loader != null):
 		var song := music_path
 		Settings.remember_position(song, 0.0, 0.0)
@@ -192,7 +196,6 @@ func _on_finished() -> void:
 		music_ended.emit()
 		return
 	Settings.remember_position(current_path, 0.0, 0.0)
-	Library.mark_finished(current_path)
 	ended.emit()
 
 
@@ -454,6 +457,7 @@ func _open_source(path: String, options: Dictionary, serial: int) -> bool:
 	stream = video
 	replacing_stream = false
 	current_path = path
+	watch_history.begin(path)
 	file_bytes = int(source_info.get("bytes", 0))
 	chapters = []
 	clear_loop()
@@ -947,6 +951,7 @@ func _play_with_picture(path: String, options: Dictionary, serial: int, source_i
 	Log.info("music over picture %s" % path)
 	tracks.reset()
 	music_path = path
+	watch_history.begin(path)
 	replacing_stream = true
 	_retire_stream()
 	playback = null
@@ -1206,9 +1211,10 @@ func apply_priority() -> void:
 func apply_speed() -> void:
 	if playback != null and playback.has_method("set_tempo_quality"):
 		playback.set_tempo_quality(Settings.audio_stretch_quality)
-	if playback != null and not is_equal_approx(playback.get_speed(), Settings.playback_speed):
-		playback.set_speed(Settings.playback_speed)
-		Log.info("playback speed %.2f" % Settings.playback_speed)
+	var speed := 1.0 if is_live() else Settings.playback_speed
+	if playback != null and not is_equal_approx(playback.get_speed(), speed):
+		playback.set_speed(speed)
+		Log.info("playback speed %.2f" % speed)
 
 
 func _apply_decode_mode(force_software := false) -> void:
@@ -1274,6 +1280,8 @@ func is_live() -> bool:
 func restart() -> void:
 	if playback == null:
 		return
+	if watch_history.counted:
+		watch_history.begin(music_path if not music_path.is_empty() else current_path)
 	seek_to(0.0)
 	paused = false
 	if not is_playing():
@@ -1329,15 +1337,6 @@ func note_shown_frame() -> void:
 
 func shown_fps() -> float:
 	return 1000.0 / shown_period_msec if shown_period_msec > 0.0 else 0.0
-
-
-func build_label() -> String:
-	var label := Log.version_label()
-	if playback != null:
-		var extension_build := int(playback.get_frame_info().get("build", 0))
-		if extension_build != Log.BUILD:
-			label += " (extension b%d)" % extension_build
-	return label
 
 
 func playback_fps() -> float:

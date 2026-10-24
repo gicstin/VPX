@@ -1,5 +1,7 @@
 extends Node
 
+signal watch_changed(path: String)
+
 const PATH := "user://library.json"
 const SAVE_DELAY := 1.0
 const MAX_ENTRIES := 5000
@@ -34,6 +36,10 @@ func set_favorite(path: String, on: bool) -> void:
 
 func favorite_paths() -> PackedStringArray:
 	return PackedStringArray(favorites.keys())
+
+
+func play_count(path: String) -> int:
+	return int(get_pref(path, "view_count", 0)) + int(get_pref(path, "listen_count", 0))
 
 
 func mark_played(path: String) -> void:

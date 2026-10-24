@@ -31,7 +31,7 @@ const PAGE_ICONS := {"Format": "format", "Picture": "picture", "Angles": "angles
 const QUICK_AUDIO_TAB := 3
 const QUICK_SUBTITLE_TAB := 4
 const SOURCES := [["Folder", "folder"], ["Recent", "recent"], ["Favourites", "star_outline"], ["Places", "drive"], ["Network", "network"], ["Discover", "audio"]]
-const SORTS := ["Name", "Newest", "Largest"]
+const SORTS := ["Name", "Newest", "Largest", "Play count"]
 const END_ACTIONS := [["stop_end", "Stop at end"], ["repeat", "Repeat"], ["playlist", "Play next"]]
 const SOURCE_TITLES := ["", "Recently played", "Favourites", "Places", "Network", "Discover radio & streams"]
 const FILTERS := ["All", "2D", "3D", "180°", "360°", "Photos"]
@@ -72,7 +72,10 @@ const CHEAT_SHEET := [
 	["Trigger drag on the library", "Scroll"],
 	["Esc", "Library, or close the menu"],
 	["Tab", "Move through the menu (Shift reverses)"],
-	["Ctrl + Tab", "Next menu page"],
+	["Ctrl + Tab", "Next Library tab, or next menu page outside Library"],
+	["Ctrl + Shift + Tab", "Previous Library tab, or previous menu page"],
+	["Ctrl + T", "New Library tab"],
+	["Ctrl + W", "Close Library tab"],
 	["Arrows / Enter", "Pick in the menu, Backspace goes up"],
 	["Ctrl + F", "Search the library"],
 	["Space", "Play / pause"],
@@ -138,6 +141,7 @@ const NAV_KEYS := [KEY_TAB, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_ENTER, KE
 
 var directory := Settings.last_directory
 var directory_fallbacks := true
+var library_tabs: HBoxContainer
 var paths_job: Node
 var paths_serial := 0
 var saved_path_info := {}
@@ -203,6 +207,8 @@ var quick: QuickPanel
 var spirit_level: SpiritLevel
 var spirit_level_section: VBoxContainer
 var flat_view_button: Button
+var favorites_filter_button: Button
+var unplayed_filter_button: Button
 var keyboard: Keyboard
 var settings_search: Control
 var network: Network
@@ -256,6 +262,7 @@ var remote_label: Label
 var web_label: Label
 var web_button: Button
 var resolving_path := ""
+var pending_play_path := ""
 var recovery: Control
 var accessibility_size := Vector2.ZERO
 var accessibility_text_size := 0.0
@@ -330,6 +337,10 @@ func _ready() -> void:
 	_build_media_rename()
 	_build_library_bar()
 	_build_filter_row()
+	library_tabs = preload("res://scripts/library_tabs.gd").new()
+	%Library.add_child(library_tabs)
+	%Library.move_child(library_tabs, 0)
+	library_tabs.setup(self)
 	_build_network()
 	_build_discovery()
 	recovery = preload("res://scripts/playback_recovery.gd").new()
@@ -351,6 +362,7 @@ func _ready() -> void:
 			previews.clear()
 			preview_rect.texture = null
 			preview_rect.visible = false)
+	Library.watch_changed.connect(_on_watch_changed)
 	player.opened.connect(_on_opened)
 	player.music_metadata_changed.connect(_refresh_now_playing)
 	player.music_changed.connect(func() -> void:
@@ -373,7 +385,7 @@ func _ready() -> void:
 	scanner.finished.connect(_on_scan_finished)
 	scanner.cover_found.connect(_on_cover_found)
 	add_child(scanner)
-	refresh_directory()
+	library_tabs.restore()
 	_refresh_now_playing()
 	page_scroll.follow_focus = true
 	file_scroll.follow_focus = true
@@ -864,6 +876,7 @@ func _build_quick_panel() -> void:
 		keyboard_purpose = "bookmark_name"
 		keyboard.open("Bookmark name", text, "Optional name · up to 64 characters"))
 	quick.menu_requested.connect(show_main)
+	quick.settings_requested.connect(show_settings)
 	quick.recenter_requested.connect(recenter_requested.emit)
 	quick.reset_position_requested.connect(reset_position_requested.emit)
 	quick.level_requested.connect(level_requested.emit)
@@ -884,6 +897,12 @@ func show_main() -> void:
 	quick.close_picker()
 	quick.visible = false
 	$Sheet.visible = true
+
+
+func show_settings() -> void:
+	show_main()
+	show_page(%System)
+	_collapse_rail()
 
 
 func show_page(page: Node) -> void:
@@ -937,6 +956,28 @@ func _build_library_bar() -> void:
 				_select_source(i))
 		%SourceRow.add_child(button)
 		source_buttons.append(button)
+	var source_scroll: ScrollContainer = %SourceScroll
+	var source_row: HBoxContainer = %SourceRow
+	var source_left: Button = %SourceLeft
+	var source_right: Button = %SourceRight
+	var source_range := source_scroll.get_h_scroll_bar()
+	source_left.icon = VpxTheme.icon("chevron_left", 18)
+	source_right.icon = VpxTheme.icon("chevron_right", 18)
+	var update_source_navigation := func() -> void:
+		var overflow: bool = source_row.get_combined_minimum_size().x > source_scroll.get_parent().size.x
+		source_left.visible = overflow
+		source_right.visible = overflow
+		source_left.disabled = source_range.value <= source_range.min_value
+		source_right.disabled = source_range.value >= source_range.max_value - source_range.page
+	source_scroll.get_parent().resized.connect(update_source_navigation)
+	%SourceRow.minimum_size_changed.connect(update_source_navigation)
+	source_range.changed.connect(update_source_navigation)
+	source_range.value_changed.connect(func(_value: float) -> void: update_source_navigation.call())
+	source_left.pressed.connect(func() -> void:
+		source_scroll.scroll_horizontal -= int(maxf(48.0, source_scroll.size.x * 0.8)))
+	source_right.pressed.connect(func() -> void:
+		source_scroll.scroll_horizontal += int(maxf(48.0, source_scroll.size.x * 0.8)))
+	update_source_navigation.call_deferred()
 	sort_button.action_mode = BaseButton.ACTION_MODE_BUTTON_RELEASE
 	for i in SORTS.size():
 		sort_button.add_icon_item(VpxTheme.icon("sort", 22), SORTS[i])
@@ -974,6 +1015,20 @@ func _build_filter_row() -> void:
 		Settings.apply("library_flat_view", on)
 		refresh_directory())
 	row.add_child(flat_view_button)
+	favorites_filter_button = _action_button("Filter favourites", "star")
+	favorites_filter_button.toggle_mode = true
+	favorites_filter_button.tooltip_text = "Show only starred media in this folder; Flat view includes subfolders"
+	favorites_filter_button.toggled.connect(func(on: bool) -> void:
+		Settings.apply("library_favorites_only", on)
+		refresh_directory())
+	row.add_child(favorites_filter_button)
+	unplayed_filter_button = _action_button("Unplayed", "play")
+	unplayed_filter_button.toggle_mode = true
+	unplayed_filter_button.tooltip_text = "Videos and audio with no watched views or listens yet"
+	unplayed_filter_button.toggled.connect(func(on: bool) -> void:
+		Settings.apply("library_unplayed_only", on)
+		refresh_directory())
+	row.add_child(unplayed_filter_button)
 	query_chip = _action_button("", "close")
 	query_chip.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	query_chip.pressed.connect(func() -> void: _set_query(""))
@@ -1122,6 +1177,18 @@ func _build_seek_extras() -> void:
 			_show_bubble(preview_time, _slider_x(preview_time)))
 	marks = SeekMarks.new()
 	seek_slider.add_child(marks)
+	marks.bookmark_hovered.connect(func(time: float) -> void:
+		if seek_slider.editable and not seeking:
+			_show_bubble(time, _slider_x(time)))
+	marks.bookmark_selected.connect(func(time: float) -> void:
+		if seek_slider.editable and not seeking:
+			seek_edit_serial += 1
+			player.seek_to(time)
+			seek_slider.set_value_no_signal(time))
+	marks.mouse_exited.connect(func() -> void:
+		if not seeking:
+			seek_bubble.visible = false
+			previews.stop(self))
 	player.marks_changed.connect(_refresh_marks)
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 6)
@@ -1396,6 +1463,9 @@ func _sync() -> void:
 	up_button.visible = not discovering
 	flat_view_button.visible = Settings.library_source == Settings.LibrarySource.FOLDER
 	flat_view_button.set_pressed_no_signal(Settings.library_flat_view)
+	favorites_filter_button.visible = Settings.library_source == Settings.LibrarySource.FOLDER
+	favorites_filter_button.set_pressed_no_signal(Settings.library_favorites_only)
+	unplayed_filter_button.set_pressed_no_signal(Settings.library_unplayed_only)
 	sort_button.select(clampi(Settings.library_sort, 0, SORTS.size() - 1))
 	_refresh_format_badge()
 	_refresh_favorite_button()
@@ -1494,6 +1564,10 @@ func _update_clock() -> void:
 
 func _update_transport() -> void:
 	var has_media := player.playback != null
+	var live := player.is_live()
+	speed_button.visible = not live
+	if live and speed_button.get_popup().visible:
+		speed_button.get_popup().hide()
 	var length := player.get_stream_length() if has_media else 0.0
 	updating_slider = true
 	seek_slider.max_value = maxf(length, 1.0)
@@ -1502,7 +1576,7 @@ func _update_transport() -> void:
 		seek_slider.set_value_no_signal(player.stream_position if has_media else 0.0)
 	updating_slider = false
 	elapsed_label.text = _format_time(player.stream_position if has_media else 0.0, length)
-	total_label.text = "LIVE" if player.is_live() else _format_time(length, length)
+	total_label.text = "LIVE" if live else _format_time(length, length)
 	var playing := has_media and not player.paused and player.is_playing()
 	end_time_label.visible = playing and length > 0.0
 	if end_time_label.visible:
@@ -1583,6 +1657,9 @@ func _show_bubble(value: float, local_x: float) -> void:
 	preview_time = value
 	_ensure_seek_previews()
 	bubble_label.text = _format_time(value, seek_slider.max_value)
+	var bookmark := player.bookmark_name(value) if value in marks.bookmarks else ""
+	if not bookmark.is_empty():
+		bubble_label.text += "  ·  " + bookmark
 	var chapter := player.chapter_title(player.chapter_at(value)) if not player.chapters.is_empty() else ""
 	if not chapter.is_empty():
 		bubble_label.text += "  ·  " + chapter
@@ -1682,7 +1759,7 @@ func _update_stats() -> void:
 	var texture := player.get_video_texture() if not player.current_path.is_empty() else null
 	if texture == null:
 		stats_label.text = "Display %.0f fps" % display_fps
-		info_label.text = "%s\nDisplay %.0f fps\nNo video playing\nLog: %s" % [player.build_label(), display_fps, ProjectSettings.globalize_path(Log.LOG_PATH)]
+		info_label.text = "%s\nDisplay %.0f fps\nNo video playing\nLog: %s" % [Log.version_label(), display_fps, ProjectSettings.globalize_path(Log.LOG_PATH)]
 		return
 	var res := "%dx%d" % [texture.get_width(), texture.get_height()]
 	var mbps := player.bitrate_mbps()
@@ -1694,7 +1771,7 @@ func _update_stats() -> void:
 	if %System.visible:
 		var tier := int(player.playback.get_frame_info().get("adaptive_tier", 0)) if player.playback != null else 0
 		info_label.text = "\n".join(PackedStringArray([
-			"Build %s" % player.build_label(),
+			"Version %s" % Log.version_label(),
 			"Display %.0f fps  ·  video %s" % [display_fps, shown],
 			"%s  ·  %s  ·  %s decode  ·  %s" % [res, rate, decode, player.pixel_format_name()],
 			"Adaptive quality tier %d" % tier,
@@ -1712,6 +1789,9 @@ func _image_stats() -> String:
 
 
 func _on_opened(path: String) -> void:
+	if path == pending_play_path:
+		pending_play_path = ""
+		_resume_and_close()
 	var entry := _entry_for(path)
 	if entry.is_empty() or VPXPlayer._network_path(path):
 		_request_playlist(path)
@@ -1976,6 +2056,12 @@ func _refresh_cards() -> void:
 	_refresh_now_playing()
 
 
+func _on_watch_changed(path: String) -> void:
+	_on_media_updated(path)
+	if Settings.library_unplayed_only or Settings.library_sort == Settings.LibrarySort.PLAY_COUNT:
+		refresh_directory(false)
+
+
 func _on_media_updated(path: String) -> void:
 	var card := _card_for(path)
 	if card != null:
@@ -2024,7 +2110,7 @@ func _request_playlist(path: String) -> void:
 		_clear_radio_queue()
 	if not audio_over_image:
 		_set_playlist(PackedStringArray([path]), path)
-	if Settings.library_flat_view and Settings.library_source == Settings.LibrarySource.FOLDER and path in listing:
+	if (Settings.library_flat_view or Settings.library_favorites_only or Settings.library_unplayed_only) and Settings.library_source == Settings.LibrarySource.FOLDER and (path in listing or Settings.library_unplayed_only and path == player.current_path):
 		var audio := path.get_extension().to_lower() in VPXPlayer.AUDIO_EXTENSIONS
 		var image := PanoramaFiles.is_image(path)
 		var files := PackedStringArray(Array(listing).filter(func(item: String) -> bool:
@@ -2214,6 +2300,7 @@ func refresh_directory(check_paths := true) -> void:
 			up_button.disabled = true
 	if scan_started_msec < 0:
 		_flush_items()
+	library_tabs.capture()
 
 
 func _section(columns: int, h_separation: int, v_separation: int, layout: MediaCard.Layout) -> VirtualGrid:
@@ -2240,14 +2327,26 @@ func _start_scan() -> void:
 
 
 func _scan_filter() -> Dictionary:
+	var filter := {}
+	if Settings.library_source == Settings.LibrarySource.FOLDER and Settings.library_favorites_only:
+		filter["favorites"] = Library.favorites.duplicate()
+	if Settings.library_unplayed_only or Settings.library_sort == Settings.LibrarySort.PLAY_COUNT:
+		var counts := {}
+		for path: String in Library.entries:
+			var count := Library.play_count(path)
+			if count > 0:
+				counts[path] = count
+		filter["play_counts"] = counts
+		filter["unplayed"] = Settings.library_unplayed_only
 	if Settings.library_filter == Settings.LibraryFilter.ALL:
-		return {}
+		return filter
 	var formats := {}
 	for path: String in Library.entries:
 		var saved: Variant = Library.entries[path].get("format")
 		if saved is Dictionary:
 			formats[path] = saved.duplicate()
-	return {"kind": Settings.library_filter, "formats": formats, "info": MediaInfo.entries.duplicate()}
+	filter.merge({"kind": Settings.library_filter, "formats": formats, "info": MediaInfo.entries.duplicate()})
+	return filter
 
 
 func _update_scan_hint() -> void:
@@ -2281,13 +2380,14 @@ func _show_scan(result: Dictionary) -> void:
 		directory_fallbacks = false
 		Library.mark_folder_visited(directory)
 		Settings.apply("last_directory", directory)
+		library_tabs.capture()
 	var folders: PackedStringArray = result["folders"]
 	var files: PackedStringArray = result["files"]
 	folder_grid.set_items(folders)
 	media_grid.set_items(files)
 	listing = files
-	if done and player.current_path in files:
-		if Settings.library_flat_view:
+	if done and (player.current_path in files or Settings.library_unplayed_only and playlist_index.has(player.current_path)):
+		if Settings.library_flat_view or Settings.library_favorites_only or Settings.library_unplayed_only:
 			_request_playlist(player.current_path)
 		else:
 			var ordered := PackedStringArray(Array(files).filter(func(item: String) -> bool: return PanoramaFiles.is_image(item))) if player.is_image() else files
@@ -2304,6 +2404,10 @@ func _show_scan(result: Dictionary) -> void:
 			_add_hint("Nothing matches “%s” in this folder or its subfolders" % Settings.library_query)
 		elif result.get("truncated", false):
 			_add_hint("Showing the first matches — open a subfolder to search deeper")
+	elif files.is_empty() and Settings.library_unplayed_only:
+		_add_hint("No unplayed videos or audio match the filters in this folder or its subfolders" if Settings.library_flat_view else "No unplayed videos or audio match the filters in this folder")
+	elif files.is_empty() and Settings.library_favorites_only:
+		_add_hint("No favourites match the filters in this folder or its subfolders" if Settings.library_flat_view else "No favourites match the filters in this folder")
 	elif files.is_empty() and Settings.library_filter != Settings.LibraryFilter.ALL:
 		_add_hint("No %s videos in this folder" % FILTERS[Settings.library_filter] if Settings.library_filter != Settings.LibraryFilter.PHOTOS else "No photos in this folder")
 	elif folders.is_empty() and files.is_empty():
@@ -2315,7 +2419,10 @@ func _show_scan(result: Dictionary) -> void:
 
 func _list_recent(check_paths := true) -> void:
 	var folders := Array(Library.recent_folders(RECENT_LIMIT)).filter(_query_matches)
-	var paths := Array(Library.recent_paths(RECENT_LIMIT)).filter(_wanted)
+	var paths: Array[String] = []
+	paths.assign(Array(Library.recent_paths(RECENT_LIMIT)).filter(_wanted))
+	if Settings.library_sort == Settings.LibrarySort.PLAY_COUNT:
+		paths = _sorted(paths, false)
 	for path: String in folders:
 		_queue_item(path, true, "", _saved_context(path))
 	for path: String in paths:
@@ -2450,7 +2557,7 @@ static func _read_places(token: RefCounted, places: Array, platform: String, use
 
 
 func _narrowed() -> bool:
-	return Settings.library_filter != Settings.LibraryFilter.ALL or not Settings.library_query.strip_edges().is_empty()
+	return Settings.library_unplayed_only or Settings.library_filter != Settings.LibraryFilter.ALL or not Settings.library_query.strip_edges().is_empty()
 
 
 func _keep(paths: Array[String], test: Callable) -> Array[String]:
@@ -2487,6 +2594,8 @@ func _wanted(path: String, title := "") -> bool:
 
 
 func _filter_matches(path: String) -> bool:
+	if Settings.library_unplayed_only and (PanoramaFiles.is_image(path) or Library.play_count(path) > 0):
+		return false
 	var filter: int = Settings.library_filter
 	if filter == Settings.LibraryFilter.ALL:
 		return true
@@ -2570,9 +2679,13 @@ func _list_network() -> void:
 		file_list.move_child(file_list.get_child(file_list.get_child_count() - 1), 1)
 	var count := 0
 	var link_count := 0
-	for url: String in Library.recent_links():
+	var links: Array[String] = []
+	links.assign(Library.recent_links())
+	if Settings.library_sort == Settings.LibrarySort.PLAY_COUNT:
+		links = _sorted(links, false)
+	for url: String in links:
 		var title := MediaCard.pretty_name(url)
-		if not _query_matches(url, title):
+		if not _wanted(url, title):
 			continue
 		_queue_item(url, false, title, "Opened link  ·  " + Network.strip_password(url), "link")
 		link_count += 1
@@ -2625,7 +2738,13 @@ func _list_media_server() -> void:
 		var items: String = container.get("count", "")
 		_queue_item("upnp:%d" % i, true, container["title"], "%s items" % items if not items.is_empty() else "")
 		folders += 1
-	for item: Dictionary in result["items"]:
+	var items: Array = result["items"].duplicate()
+	if Settings.library_sort == Settings.LibrarySort.PLAY_COUNT:
+		items.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			var first := Library.play_count(a["url"])
+			var second := Library.play_count(b["url"])
+			return first > second or first == second and str(a["title"]).naturalnocasecmp_to(str(b["title"])) < 0)
+	for item: Dictionary in items:
 		var url: String = item["url"]
 		if not _query_matches(url, item["title"]) or not _filter_matches(url):
 			continue
@@ -2689,6 +2808,10 @@ func _sorted(paths: Array[String], folders: bool) -> Array[String]:
 			for path in paths:
 				keys[path] = saved_path_info.get(path, {}).get("mtime", 0)
 			paths.sort_custom(func(a: String, b: String) -> bool: return keys[a] > keys[b] or (keys[a] == keys[b] and a.naturalnocasecmp_to(b) < 0))
+		Settings.LibrarySort.PLAY_COUNT when not folders:
+			for path in paths:
+				keys[path] = Library.play_count(path)
+			paths.sort_custom(func(a: String, b: String) -> bool: return keys[a] > keys[b] or (keys[a] == keys[b] and a.naturalnocasecmp_to(b) < 0))
 		Settings.LibrarySort.SIZE when not folders:
 			for path in paths:
 				keys[path] = saved_path_info.get(path, {}).get("bytes", MediaInfo.entries.get(path, {}).get("bytes", 0))
@@ -2748,6 +2871,7 @@ func _build_card(key: String, parent: VirtualGrid) -> Control:
 			elif not on and discovery.saved and Settings.library_source == Settings.LibrarySource.DISCOVER:
 				_refresh_saved_listing.call_deferred())
 	card.activated.connect(_on_item_activated)
+	card.play_requested.connect(_on_item_play)
 	card.toggled.connect(func(_on: bool) -> void: _highlight_current())
 	cards[key] = card
 	if is_dir and scanned and not folder_covers.has(key):
@@ -2788,7 +2912,7 @@ func set_favorite(path: String, on: bool) -> void:
 		card.refresh()
 	if path == _favorite_path():
 		_refresh_favorite_button()
-	if Settings.library_source == Settings.LibrarySource.FAVORITES:
+	if Settings.library_source == Settings.LibrarySource.FAVORITES or (Settings.library_source == Settings.LibrarySource.FOLDER and Settings.library_favorites_only):
 		refresh_directory()
 
 
@@ -2842,6 +2966,24 @@ func _on_item_activated(path: String, is_dir: bool) -> void:
 	else:
 		_set_playlist(listing, path)
 	open_media(path)
+
+
+func _on_item_play(path: String, is_dir: bool) -> void:
+	if path == player.current_path or path == player.music_path:
+		pending_play_path = ""
+		_resume_and_close()
+		return
+	pending_play_path = path
+	var opening := resolving_path if not resolving_path.is_empty() else str(player.load_state.get("path", "")) if player.load_state.get("status") == "opening" else ""
+	if path != opening:
+		_on_item_activated(path, is_dir)
+
+
+func _resume_and_close() -> void:
+	if player.paused:
+		player.toggle_pause()
+	if Settings.hide_menu_on_play:
+		close_requested.emit()
 
 
 func cancel_disc_open() -> void:
@@ -3223,6 +3365,8 @@ func handle_key(event: InputEventKey) -> bool:
 			focus.release_focus()
 		else:
 			_forward(event)
+		return true
+	if library_navigation_active() and library_tabs.handle_key(event):
 		return true
 	var ctrl := event.ctrl_pressed or event.meta_pressed
 	match event.keycode:

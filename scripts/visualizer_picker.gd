@@ -16,6 +16,7 @@ var gallery: ScrollContainer
 var tiles: Array[Button] = []
 var favorite_buttons: Array[Button] = []
 var starred_filter: Button
+var random_button: Button
 var empty_favorites: Label
 var overlay_toggle: CheckButton
 var mix_controls: VBoxContainer
@@ -65,6 +66,14 @@ func _build() -> void:
 		Settings.apply("visualizer_starred_only", on)
 		gallery.set_deferred("scroll_vertical", 0))
 	actions.add_child(starred_filter)
+	random_button = make_button("", 60)
+	random_button.icon = VpxTheme.icon("dice")
+	random_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	random_button.add_theme_constant_override("icon_max_width", VpxTheme.ICON_SIZE)
+	random_button.toggle_mode = true
+	random_button.toggled.connect(func(on: bool) -> void:
+		Settings.apply("visualizer_shuffle", on))
+	actions.add_child(random_button)
 	controls_button = make_button("Controls ▾", 0)
 	controls_button.toggle_mode = true
 	controls_button.tooltip_text = "Adjust visualizer response and display"
@@ -300,7 +309,7 @@ func _toggle(parent: VBoxContainer, title: String, key: StringName) -> void:
 func _pull() -> void:
 	var index := clampi(int(read()), 0, options.size() - 1)
 	var enabled := Settings.immersive_music_visualizer
-	var state := [index, enabled, Settings.visualizer_overlay, Settings.visualizer_starred_only]
+	var state := [index, enabled, Settings.visualizer_overlay, Settings.visualizer_starred_only, Settings.visualizer_shuffle]
 	if external_button != null:
 		selected.set_pressed_no_signal(enabled)
 	if state == pulled_state and pulled_favorites == Settings.visualizer_favorites:
@@ -318,6 +327,9 @@ func _pull() -> void:
 	starred_filter.set_pressed_no_signal(Settings.visualizer_starred_only)
 	starred_filter.text = "★" if Settings.visualizer_starred_only else "☆"
 	starred_filter.tooltip_text = "Starred only: " + ("On" if Settings.visualizer_starred_only else "Off")
+	random_button.set_pressed_no_signal(Settings.visualizer_shuffle)
+	random_button.tooltip_text = "Random " + ("favourites" if Settings.visualizer_starred_only else "visualizers") + ": " + ("On" if Settings.visualizer_shuffle else "Off") + " · Next and previous pick without repeats until the list is exhausted"
+	random_button.disabled = Settings.visualizer_starred_only and Settings.visualizer_favorites.size() < 2
 	empty_favorites.visible = Settings.visualizer_starred_only and Settings.visualizer_favorites.is_empty()
 	for i in tiles.size():
 		var starred: bool = options[i] in Settings.visualizer_favorites

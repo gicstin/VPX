@@ -1,6 +1,7 @@
 extends Button
 
 signal activated(path: String, is_dir: bool)
+signal play_requested(path: String, is_dir: bool)
 
 enum Layout { CARD, ROW, CHIP }
 
@@ -38,6 +39,8 @@ var res_badge: PanelContainer
 var res_label: Label
 var duration_badge: PanelContainer
 var duration_label: Label
+var watched_badge: PanelContainer
+var watched_label: Label
 var playing_badge: PanelContainer
 var progress: ProgressBar
 var title_label: Label
@@ -64,6 +67,7 @@ func setup(p_path: String, p_is_dir: bool, p_layout: Layout, p_guard: Callable, 
 	toggle_mode = not is_dir or single
 	_build()
 	pressed.connect(_on_pressed)
+	gui_input.connect(_on_gui_input)
 	refresh()
 
 
@@ -77,6 +81,8 @@ func set_cover(p_cover: Dictionary) -> void:
 		child.queue_free()
 	frame = null
 	playing_badge = null
+	watched_badge = null
+	watched_label = null
 	thumb = null
 	placeholder = null
 	progress = null
@@ -96,6 +102,30 @@ func _build() -> void:
 			_build_row()
 		Layout.CHIP:
 			_build_chip()
+	if not is_dir:
+		_build_watched_badge()
+
+
+func _build_watched_badge() -> void:
+	watched_badge = PanelContainer.new()
+	watched_badge.theme_type_variation = &"Badge"
+	watched_badge.mouse_filter = MOUSE_FILTER_IGNORE
+	var row := HBoxContainer.new()
+	row.mouse_filter = MOUSE_FILTER_IGNORE
+	row.add_theme_constant_override("separation", 4)
+	row.add_child(_icon_rect("check", 18, VpxTheme.ACCENT_HOVER))
+	watched_label = _label(&"Caption")
+	row.add_child(watched_label)
+	watched_badge.add_child(row)
+	if layout == Layout.CARD:
+		frame.add_child(watched_badge)
+		_pin(watched_badge, Vector2(10, -14), false, true)
+	else:
+		var parent := star.get_parent()
+		parent.add_child(watched_badge)
+		parent.move_child(watched_badge, star.get_index())
+		watched_badge.size_flags_vertical = SIZE_SHRINK_CENTER
+	watched_badge.visible = false
 
 
 static func pretty_name(file_path: String) -> String:
@@ -122,12 +152,37 @@ func set_playing(active: bool) -> void:
 			return
 		playing_badge = PanelContainer.new()
 		playing_badge.theme_type_variation = &"Badge"
-		playing_badge.mouse_filter = MOUSE_FILTER_IGNORE
+		playing_badge.mouse_filter = MOUSE_FILTER_STOP
+		playing_badge.mouse_default_cursor_shape = CURSOR_POINTING_HAND
+		playing_badge.gui_input.connect(_on_badge_input)
 		playing_badge.custom_minimum_size = Vector2(38, 34)
 		playing_badge.add_child(_icon_rect("play", 22, VpxTheme.ACCENT_HOVER))
 		frame.add_child(playing_badge)
-		_pin(playing_badge, Vector2(10, -14), false, true)
+	_pin(playing_badge, Vector2(10, -54 if watched_badge != null and watched_badge.visible else -14), false, true)
 	playing_badge.visible = active
+
+
+func _on_gui_input(event: InputEvent) -> void:
+	var button := event as InputEventMouseButton
+	if button != null and button.pressed and button.double_click and button.button_index == MOUSE_BUTTON_LEFT:
+		accept_event()
+		_request_play()
+
+
+func _on_badge_input(event: InputEvent) -> void:
+	var button := event as InputEventMouseButton
+	if button != null and button.pressed and button.button_index == MOUSE_BUTTON_LEFT:
+		playing_badge.accept_event()
+		_request_play()
+
+
+func _request_play() -> void:
+	if guard.is_valid() and not guard.call():
+		return
+	if single:
+		play_requested.emit(cover, false)
+	elif not is_dir:
+		play_requested.emit(path, false)
 
 
 func _on_pressed() -> void:
@@ -288,6 +343,15 @@ func refresh() -> void:
 	var resolution := VPXPlayer.resolution_label(width, height) if width > 0 else ""
 	var length := MediaInfo.duration_text(duration) if duration > 0.0 else ""
 	var status := _status_text(media, duration, resume_at)
+	if watched_badge != null:
+		var listens := int(Library.get_pref(media, "listen_count", 0))
+		var audio := listens > 0 or media.get_slice("?", 0).get_slice("#", 0).get_extension().to_lower() in VPXPlayer.AUDIO_EXTENSIONS
+		var count := listens if audio else int(Library.get_pref(media, "view_count", 0))
+		watched_badge.visible = count > 0 and not image
+		watched_label.text = "%d %s%s" % [count, "listen" if audio else "view", "" if count == 1 else "s"]
+		watched_badge.tooltip_text = "%s — playback reached 90%% of the duration" % ("Listened" if audio else "Watched")
+		if playing_badge != null:
+			_pin(playing_badge, Vector2(10, -54 if watched_badge.visible else -14), false, true)
 	var quality := _quality_text(media)
 	if is_dir and not single:
 		format = "%d items" % cover_count
@@ -364,8 +428,6 @@ func _format_text(media: String, info: Dictionary, image: bool) -> String:
 func _status_text(media: String, duration: float, resume_at: float) -> String:
 	if resume_at > 0.0 and duration > 0.0:
 		return "%s left" % MediaInfo.duration_text(maxf(duration - resume_at, 0.0))
-	if Library.get_pref(media, "finished", false):
-		return "Watched"
 	return ""
 
 

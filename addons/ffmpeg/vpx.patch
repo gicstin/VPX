@@ -39,7 +39,7 @@ index 0d167d1..b0c0840 100644
  		tf->set_height(height);
  		tf->set_width(width);
  		tf->set_usage_bits(usage_bits);
-@@ -89,7 +99,15 @@ typedef RD::ComputeListID ComputeListID;
+@@ -89,7 +99,14 @@ typedef RD::ComputeListID ComputeListID;
  #endif
  
  #include "tracy_import.h"
@@ -47,7 +47,6 @@ index 0d167d1..b0c0840 100644
 +#include <chrono>
 +#include <cstdint>
 +
-+static const int VPX_BUILD = 202;
 +
 +static inline uint64_t vpx_ticks_usec() {
 +	return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -56,7 +55,7 @@ index 0d167d1..b0c0840 100644
  
  #ifdef GDEXTENSION
  #define FREE_RD_RID(rid) RS::get_singleton()->get_rendering_device()->free_rid(rid);
-@@ -97,7 +115,17 @@ typedef RD::ComputeListID ComputeListID;
+@@ -97,7 +114,17 @@ typedef RD::ComputeListID ComputeListID;
  #define FREE_RD_RID(rid) RS::get_singleton()->get_rendering_device()->free(rid);
  #endif
  void FFmpegVideoStreamPlayback::seek_into_sync() {
@@ -74,7 +73,7 @@ index 0d167d1..b0c0840 100644
  	Vector<Ref<DecodedFrame>> decoded_frames;
  	for (Ref<DecodedFrame> df : available_frames) {
  		decoded_frames.push_back(df);
-@@ -114,20 +142,127 @@ double FFmpegVideoStreamPlayback::get_current_frame_time() {
+@@ -114,20 +141,127 @@ double FFmpegVideoStreamPlayback::get_current_frame_time() {
  	return 0.0f;
  }
  
@@ -206,7 +205,7 @@ index 0d167d1..b0c0840 100644
  }
  
  const char *const upd_str = "update_internal";
-@@ -135,26 +261,89 @@ const char *const upd_str = "update_internal";
+@@ -135,26 +260,89 @@ const char *const upd_str = "update_internal";
  void FFmpegVideoStreamPlayback::update_internal(double p_delta) {
  	ZoneScopedN("update_internal");
  
@@ -302,7 +301,7 @@ index 0d167d1..b0c0840 100644
  
  		if (looping) {
  			out_of_sync &= Math::abs(playback_position - decoder->get_duration() - peek_frame->get_time()) > LENIENCE_BEFORE_SEEK &&
-@@ -168,46 +357,71 @@ void FFmpegVideoStreamPlayback::update_internal(double p_delta) {
+@@ -168,46 +356,71 @@ void FFmpegVideoStreamPlayback::update_internal(double p_delta) {
  	}
  
  	double frame_time = get_current_frame_time();
@@ -397,7 +396,7 @@ index 0d167d1..b0c0840 100644
  		} else if (texture.is_valid()) {
  			if (texture->get_size() != last_frame_image->get_size() || texture->get_format() != last_frame_image->get_format()) {
  				ZoneNamedN(__img_upate_slow, "Image update slow", true);
-@@ -220,6 +434,11 @@ void FFmpegVideoStreamPlayback::update_internal(double p_delta) {
+@@ -220,6 +433,11 @@ void FFmpegVideoStreamPlayback::update_internal(double p_delta) {
  	}
  #endif
  
@@ -409,7 +408,7 @@ index 0d167d1..b0c0840 100644
  	if (available_frames.size() == 0) {
  		for (Ref<DecodedFrame> frame : decoder->get_decoded_frames()) {
  			available_frames.push_back(frame);
-@@ -246,16 +465,80 @@ void FFmpegVideoStreamPlayback::update_internal(double p_delta) {
+@@ -246,16 +464,80 @@ void FFmpegVideoStreamPlayback::update_internal(double p_delta) {
  		// TODO: seek audio stream individually if it desyncs
  	}
  
@@ -495,7 +494,7 @@ index 0d167d1..b0c0840 100644
  		next_audio_frame = next_audio_frame->next();
  		available_audio_frames.pop_front();
  	}
-@@ -265,26 +548,53 @@ void FFmpegVideoStreamPlayback::update_internal(double p_delta) {
+@@ -265,26 +547,53 @@ void FFmpegVideoStreamPlayback::update_internal(double p_delta) {
  		}
  	}
  
@@ -555,7 +554,7 @@ index 0d167d1..b0c0840 100644
  	} else {
  #ifdef GDEXTENSION
  		texture = ImageTexture::create_from_image(Image::create(size.x, size.y, false, Image::FORMAT_RGBA8));
-@@ -326,19 +636,19 @@ void FFmpegVideoStreamPlayback::stop_internal() {
+@@ -326,19 +635,19 @@ void FFmpegVideoStreamPlayback::stop_internal() {
 -		decoder->seek(playback_position, true);
  		just_seeked = true;
  		texture.unref();
@@ -583,7 +582,7 @@ index 0d167d1..b0c0840 100644
  }
  
  double FFmpegVideoStreamPlayback::get_length_internal() const {
-@@ -349,13 +660,108 @@ Ref<Texture2D> FFmpegVideoStreamPlayback::get_texture_internal() const {
+@@ -349,13 +659,107 @@ Ref<Texture2D> FFmpegVideoStreamPlayback::get_texture_internal() const {
  #ifdef FFMPEG_MT_GPU_UPLOAD
  	return last_frame_texture;
  #else
@@ -646,7 +645,6 @@ index 0d167d1..b0c0840 100644
 +	info["chroma_location"] = color.chroma_location;
 +	info["frame_serial"] = get_frame_serial();
 +	info["adaptive_tier"] = decoder->get_adaptive_tier();
-+	info["build"] = VPX_BUILD;
 +	return info;
 +}
 +
@@ -694,7 +692,7 @@ index 0d167d1..b0c0840 100644
  double FFmpegVideoStreamPlayback::get_playback_position_internal() const {
  	return playback_position / 1000.0;
  }
-@@ -365,285 +771,846 @@ int FFmpegVideoStreamPlayback::get_mix_rate_internal() const {
+@@ -365,285 +769,846 @@ int FFmpegVideoStreamPlayback::get_mix_rate_internal() const {
  }
  
  int FFmpegVideoStreamPlayback::get_channels_internal() const {

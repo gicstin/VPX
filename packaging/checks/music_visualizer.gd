@@ -24,6 +24,7 @@ func run() -> void:
 	var settings := root.get_node("Settings")
 	settings.set_process(false)
 	settings.visualizer_starred_only = false
+	settings.visualizer_shuffle = false
 	settings.visualizer_favorites = PackedStringArray()
 	var main = load("res://scripts/main.gd").new()
 	var player = load("res://scripts/player.gd").new()
@@ -234,6 +235,35 @@ func run() -> void:
 	for tile: Button in picker.tiles:
 		visible_count += int(tile.visible)
 	check(visible_count == 2 and picker.tiles[4].visible and picker.tiles[18].visible, "starred filter hides other presets")
+	check(picker.random_button.visible and not picker.random_button.disabled, "starred mode offers random favourite")
+	check(picker.random_button.get_parent() == picker.starred_filter.get_parent() and picker.random_button.get_index() == picker.starred_filter.get_index() + 1 and picker.random_button.text.is_empty(), "dice toggle sits beside favourite filter without a text label")
+	picker.random_button.button_pressed = true
+	player.current_path = "test.flac"
+	desktop.root.refresh()
+	vr.view.refresh()
+	check(settings.visualizer_shuffle and desktop.root.scene_picker.random_button.button_pressed and vr.view.scene_picker.random_button.button_pressed, "dice mode synchronizes across pickers")
+	check(desktop.root.next_style_button.icon == VpxTheme.icon("dice") and desktop.root.previous_style_button.icon == VpxTheme.icon("dice") and vr.view.previous_style_button.icon == VpxTheme.icon("dice"), "dice mode replaces next and previous icons on desktop and VR")
+	picker.favorite_buttons[30].pressed.emit()
+	var random_seen: Array[int] = [4]
+	for step in 2:
+		var previous: int = settings.visualizer_preset
+		var random_button: Button = desktop.root.next_style_button if step == 0 else vr.view.previous_style_button
+		random_button.pressed.emit()
+		check(settings.visualizer_preset in [4, 18, 30] and settings.visualizer_preset not in random_seen and settings.visualizer_preset != previous, "random favourites share an unexhausted round across pickers")
+		random_seen.append(settings.visualizer_preset)
+	for round_index in 5:
+		random_seen.clear()
+		for step in 3:
+			var previous: int = settings.visualizer_preset
+			desktop.root.next_style_button.pressed.emit()
+			check(settings.visualizer_preset in [4, 18, 30] and settings.visualizer_preset not in random_seen and settings.visualizer_preset != previous, "random round %d visits each favourite once without consecutive repeats" % round_index)
+			random_seen.append(settings.visualizer_preset)
+	picker.random_button.button_pressed = false
+	desktop.root.refresh()
+	vr.view.refresh()
+	check(not settings.visualizer_shuffle and desktop.root.next_style_button.icon == VpxTheme.icon("chevron_right") and vr.view.previous_style_button.icon == VpxTheme.icon("chevron_left"), "disabling dice restores directional controls")
+	picker.favorite_buttons[30].pressed.emit()
+	settings.apply("visualizer_preset", 4)
 	if "--preview" in OS.get_cmdline_user_args():
 		await process_frame
 		await process_frame
@@ -272,14 +302,50 @@ func run() -> void:
 	check(settings.visualizer_preset == 18 and not picker.tiles[4].visible, "unstarring current preset selects remaining favorite")
 	settings.cycle_visualizer_preset(-1)
 	check(settings.visualizer_preset == 18, "single favorite stays selected")
+	check(picker.random_button.disabled, "random favourite disabled with one favourite")
+	settings.random_visualizer_preset()
+	check(settings.visualizer_preset == 18, "random favourite leaves a single favourite selected")
 	picker.favorite_buttons[18].pressed.emit()
 	settings.cycle_visualizer_preset(1)
 	settings.cycle_visualizer_preset(-1)
 	check(settings.visualizer_preset == 18 and picker.empty_favorites.visible, "empty favorites show guidance and stop cycling")
+	check(picker.random_button.disabled, "random favourite disabled with no favourites")
+	settings.random_visualizer_preset()
+	check(settings.visualizer_preset == 18, "random favourite safely ignores empty favourites")
 	picker.starred_filter.button_pressed = false
 	check(picker.tiles[0].visible and not picker.empty_favorites.visible, "turning filter off restores all presets")
+	check(picker.random_button.visible and not picker.random_button.disabled, "dice toggle remains available for the full list without favourites")
 	settings.cycle_visualizer_preset(1)
 	check(settings.visualizer_preset == 19, "unfiltered cycling restores full preset order")
+	picker.random_button.button_pressed = true
+	desktop.root.refresh()
+	vr.view.refresh()
+	check(desktop.root.next_style_button.icon == VpxTheme.icon("dice") and vr.view.previous_style_button.icon == VpxTheme.icon("dice"), "unfiltered shuffle uses dice icons on desktop and VR")
+	random_seen = [settings.visualizer_preset]
+	var full_round_ok := true
+	for step in settings.VISUALIZER_PRESETS.size() - 1:
+		settings.cycle_visualizer_preset(1 if step % 2 == 0 else -1)
+		full_round_ok = full_round_ok and settings.visualizer_preset not in random_seen
+		random_seen.append(settings.visualizer_preset)
+	check(full_round_ok and random_seen.size() == settings.VISUALIZER_PRESETS.size(), "unfiltered shuffle visits every visualizer before repeating")
+	random_seen.clear()
+	full_round_ok = true
+	for step in settings.VISUALIZER_PRESETS.size():
+		var previous: int = settings.visualizer_preset
+		settings.cycle_visualizer_preset(-1)
+		full_round_ok = full_round_ok and settings.visualizer_preset not in random_seen and settings.visualizer_preset != previous
+		random_seen.append(settings.visualizer_preset)
+	check(full_round_ok, "full-list shuffle starts another complete round without consecutive repeats")
+	picker.favorite_buttons[4].pressed.emit()
+	picker.favorite_buttons[18].pressed.emit()
+	picker.starred_filter.button_pressed = true
+	var filtered_start: int = settings.visualizer_preset
+	desktop.root.next_style_button.pressed.emit()
+	check(settings.visualizer_shuffle and settings.visualizer_preset in [4, 18] and settings.visualizer_preset != filtered_start, "enabling favourites narrows active shuffle to the filtered list")
+	picker.starred_filter.button_pressed = false
+	desktop.root.refresh()
+	check(settings.visualizer_shuffle and not picker.random_button.disabled and desktop.root.next_style_button.icon == VpxTheme.icon("dice"), "disabling favourites keeps full-list shuffle enabled")
+	picker.random_button.button_pressed = false
 	if "--preview" in OS.get_cmdline_user_args():
 		RenderingServer.force_draw()
 		root.get_texture().get_image().save_png("/tmp/vpx_picker.png")

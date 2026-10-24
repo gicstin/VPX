@@ -216,6 +216,12 @@ func refresh() -> void:
 	scene_picker._pull()
 	previous_style_button.visible = immersive
 	next_style_button.visible = immersive
+	var random_mode := Settings.visualizer_shuffle
+	previous_style_button.icon = VpxTheme.icon("dice" if random_mode else "chevron_left")
+	next_style_button.icon = VpxTheme.icon("dice" if random_mode else "chevron_right")
+	var random_tooltip := "Random favourite visualizer" if Settings.visualizer_starred_only else "Random visualizer"
+	previous_style_button.tooltip_text = random_tooltip if random_mode else "Previous immersive visualizer style"
+	next_style_button.tooltip_text = random_tooltip if random_mode else "Next immersive visualizer style"
 	var length := player.get_stream_length()
 	refreshing = true
 	progress.max_value = maxf(length, 1.0)

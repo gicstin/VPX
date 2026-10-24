@@ -6,6 +6,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-10-24
+
+### Added
+
+- Double-click a Library item or click its play badge to start playback right away.
+- Add a dice toggle beside the immersive visualizer favourite filter; previous and next shuffle the full list or filtered favourites without repeats, with dice icons and shared history across desktop and VR.
+- Add Play count sorting with most-played videos and audio first, plus an Unplayed filter that combines with search, media filters and favourites and persists per Library tab.
+- Restore desktop window size, position, monitor, maximized and fullscreen state after restart, fitting saved bounds to available screens.
+- Restore open Library tabs, active tab, folders, filters, view modes and scroll positions after restart.
+- Add browser-style Library tabs with independent folders, filters, view modes and scroll positions, plus new-tab, close-tab and tab-switching shortcuts.
+- Show bookmark names when hovering yellow timeline pins and seek to their exact timestamps when clicked.
+- Show watched icons and view counts for videos, and listened icons and listen counts for audio, once playback reaches 90% of the duration, including after seeking.
+- Add a saved folder favourites filter that combines with search and media-type filters, including subfolders in Flat view and updating when favourites change.
+
+### Fixed
+
+- Hide playback speed controls for live sources and keep streams at normal speed, including after playing a file at another speed.
+- Show the release version throughout the app and remove obsolete build numbering from packaging.
+
 ## [0.0.7] - 2026-10-24
 
 ### Fixed

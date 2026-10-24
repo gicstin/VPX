@@ -15,7 +15,7 @@ var title_label: Label
 var status_label: Label
 var time_label: Label
 var fps_label: Label
-var build_label: Label
+var version_label: Label
 var fps_timer := 0.0
 var progress: ProgressBar
 var fit_serial := 0
@@ -52,8 +52,8 @@ func _build() -> Control:
 	footer.add_child(fps_label)
 	time_label = _label(FONT_SIZE, VpxTheme.MUTED)
 	footer.add_child(time_label)
-	build_label = _label(FONT_SIZE, VpxTheme.MUTED)
-	footer.add_child(build_label)
+	version_label = _label(FONT_SIZE, VpxTheme.MUTED)
+	footer.add_child(version_label)
 	progress = ProgressBar.new()
 	progress.show_percentage = false
 	progress.custom_minimum_size.y = 5
@@ -68,7 +68,7 @@ func show_help(title: String, entries: Array, camera: Camera3D, status := "") ->
 	title_label.text = title
 	title_label.add_theme_color_override("font_color", VpxTheme.ACCENT_HOVER)
 	status_label.text = status
-	build_label.text = player.build_label() if player != null else Log.version_label()
+	version_label.text = Log.version_label()
 	for child in items.get_children():
 		items.remove_child(child)
 		child.queue_free()

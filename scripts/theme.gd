@@ -204,6 +204,17 @@ static func _button_colors(theme: Theme, type: String, normal: Color, pressed: C
 
 
 static func _buttons(theme: Theme) -> void:
+	theme.set_stylebox("tab_selected", "TabBar", accent_flat(10, 16, 8, &"soft"))
+	theme.set_stylebox("tab_unselected", "TabBar", flat(SURFACE, 10, 16, 8))
+	theme.set_stylebox("tab_hovered", "TabBar", flat(RAISED, 10, 16, 8))
+	theme.set_stylebox("tab_focus", "TabBar", focus_ring(10))
+	theme.set_color("font_selected_color", "TabBar", TEXT)
+	theme.set_color("font_unselected_color", "TabBar", MUTED)
+	theme.set_color("font_hovered_color", "TabBar", TEXT)
+	for direction in ["decrement", "increment"]:
+		var arrow := icon("chevron_left" if direction == "decrement" else "chevron_right", 24)
+		theme.set_icon(direction, "TabBar", arrow)
+		theme.set_icon(direction + "_highlight", "TabBar", arrow)
 	theme.set_stylebox("normal", "Button", flat(RAISED))
 	theme.set_stylebox("hover", "Button", hover(HOVER))
 	theme.set_stylebox("pressed", "Button", flat(ACCENT))

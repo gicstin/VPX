@@ -16,7 +16,7 @@ enum PanoramaSource { SINGLE, CUBE }
 enum StickAction { SCREEN_SIZE, BRIGHTNESS, GAMMA, SATURATION, SHARPNESS, VOLUME, FORMAT_2D, FORMAT_3D, FORMAT_ALL, SUBTITLE_TRACK, AUDIO_TRACK, SCREEN_CURVE, STEREO_DEPTH, PICTURE_ZOOM, PLAYBACK_SPEED, CHAPTER }
 enum LibraryView { GRID, LIST }
 enum SubtitleAuto { OFF, FOREIGN, ALWAYS }
-enum LibrarySort { NAME, DATE, SIZE }
+enum LibrarySort { NAME, DATE, SIZE, PLAY_COUNT }
 enum LibrarySource { FOLDER, RECENT, FAVORITES, PLACES, NETWORK, DISCOVER }
 enum SleepTimer { OFF, MIN_15, MIN_30, MIN_45, MIN_60, MIN_90, END_OF_VIDEO }
 enum LibraryFilter { ALL, FLAT_2D, FLAT_3D, VR_180, VR_360, PHOTOS }
@@ -187,6 +187,8 @@ var visualizer_atmosphere := 0.15
 var visualizer_preset := 0
 var visualizer_favorites := PackedStringArray()
 var visualizer_starred_only := false
+var visualizer_shuffle := false
+var _visualizer_random_seen: Array[int] = []
 var visualizer_quality := 0
 var visualizer_intensity := 0.75
 var visualizer_sensitivity := 1.75
@@ -277,10 +279,14 @@ var last_directory := OS.get_system_dir(OS.SYSTEM_DIR_MOVIES)
 var last_file := ""
 var library_view := LibraryView.GRID
 var library_flat_view := false
+var library_favorites_only := false
+var library_unplayed_only := false
 var library_sort := LibrarySort.NAME
 var library_source := LibrarySource.FOLDER
 var library_filter := LibraryFilter.ALL
 var library_query := ""
+var library_tab_session := {}
+var window_session := {}
 var network_servers: Array = []
 var defaults := {}
 var profiles = preload("res://scripts/view_profiles.gd").new()
@@ -362,7 +368,29 @@ func next_visualizer_preset(direction: int) -> int:
 
 func cycle_visualizer_preset(direction: int) -> void:
 	if direction != 0:
-		apply("visualizer_preset", next_visualizer_preset(direction))
+		if visualizer_shuffle:
+			random_visualizer_preset()
+		else:
+			apply("visualizer_preset", next_visualizer_preset(direction))
+
+
+func random_visualizer_preset() -> void:
+	if _visualizer_random_seen.is_empty():
+		_visualizer_random_seen.append(visualizer_preset)
+	var candidates: Array[int] = []
+	var remaining: Array[int] = []
+	for index in VISUALIZER_PRESETS.size():
+		if not visualizer_starred_only or VISUALIZER_PRESETS[index] in visualizer_favorites:
+			candidates.append(index)
+			if index not in _visualizer_random_seen:
+				remaining.append(index)
+	if candidates.size() < 2:
+		return
+	if remaining.is_empty():
+		_visualizer_random_seen.clear()
+		remaining = candidates
+		remaining.erase(visualizer_preset)
+	apply("visualizer_preset", remaining.pick_random())
 
 
 func _validate_visualizer() -> void:
@@ -415,6 +443,11 @@ func apply(property: StringName, value: Variant) -> void:
 	set(property, value)
 	if property in [&"visualizer_favorites", &"visualizer_starred_only"] and visualizer_starred_only and VISUALIZER_PRESETS[visualizer_preset] not in visualizer_favorites:
 		visualizer_preset = next_visualizer_preset(1)
+	if property in [&"visualizer_starred_only", &"visualizer_shuffle"] or (property == &"visualizer_favorites" and visualizer_starred_only):
+		_visualizer_random_seen.clear()
+		_visualizer_random_seen.append(visualizer_preset)
+	elif property == &"visualizer_preset" and visualizer_preset not in _visualizer_random_seen:
+		_visualizer_random_seen.append(visualizer_preset)
 	if property == &"picture_zoom":
 		zoom_changed.emit(is_equal_approx(float(value), 1.0))
 	Log.note_setting(property, value)
@@ -597,7 +630,6 @@ func remember_position(path: String, seconds: float, length: float) -> void:
 		return
 	if length > 0.0 and seconds > length - RESUME_END_MARGIN:
 		Library.erase_pref(path, "position")
-		Library.mark_finished(path)
 	elif seconds < RESUME_MIN_SECONDS:
 		Library.erase_pref(path, "position")
 	else:
@@ -612,6 +644,8 @@ func load_config() -> void:
 	var config := ConfigFile.new()
 	if config.load(CONFIG_PATH) != OK:
 		return
+	var saved_window: Variant = config.get_value("window", "session", {})
+	window_session = saved_window if saved_window is Dictionary else {}
 	for property in _persisted():
 		set(property, config.get_value("player", property, get(property)))
 	if not config.has_section_key("player", "immersive_music_visualizer"):
@@ -642,6 +676,7 @@ func flush() -> Error:
 	if not save_pending:
 		return OK
 	var config := ConfigFile.new()
+	config.set_value("window", "session", window_session)
 	for property in _persisted():
 		config.set_value("player", property, get(property))
 	config.set_value("player", "screen_placement_version", SCREEN_PLACEMENT_VERSION)
@@ -667,11 +702,11 @@ func _persisted() -> PackedStringArray:
 		"end_action", "resume_playback", "seek_previews", "drag_speed", "menu_translucent", "lock_horizon", "follow_posture", "look_gain", "grip_action", "trigger_action", "chord_action",
 		"show_level", "laser_menu_only", "dim_behind_menu", "menu_follow", "video_follow", "pause_when_removed", "hover_haptics", "show_clock", "face_on_open", "auto_swap_eyes",
 		"audio_language", "subtitle_auto", "subtitle_language", "subtitle_size", "subtitle_size_by_format", "subtitle_offset", "subtitle_color", "subtitle_box", "subtitle_distance",
-		"last_directory", "last_file", "library_view", "library_flat_view", "library_sort", "library_source", "library_filter", "network_servers",
+		"last_directory", "last_file", "library_view", "library_flat_view", "library_favorites_only", "library_unplayed_only", "library_sort", "library_source", "library_filter", "library_tab_session", "network_servers",
 		"stereo_depth", "stereo_vertical", "picture_zoom", "single_eye", "flat_image_repeat", "photo_pan_x", "photo_pan_y",
 		"auto_crop", "deband", "dither", "compositor_layer", "spatial_audio", "dialogue_boost", "audio_filter",
 		"remote_control", "flat_video_pan", "music_visualizer", "audio_stretch_quality", "accent_color", "ui_size", "text_size",
-		"music_visualizer_mode", "immersive_music_visualizer", "visualizer_overlay", "visualizer_overlay_opacity", "visualizer_background_dim", "visualizer_atmosphere", "visualizer_preset", "visualizer_favorites", "visualizer_starred_only", "visualizer_quality", "visualizer_intensity", "visualizer_sensitivity", "visualizer_motion", "visualizer_zoom", "visualizer_sync", "visualizer_auto_change", "visualizer_grab_mode",
+		"music_visualizer_mode", "immersive_music_visualizer", "visualizer_overlay", "visualizer_overlay_opacity", "visualizer_background_dim", "visualizer_atmosphere", "visualizer_preset", "visualizer_favorites", "visualizer_starred_only", "visualizer_shuffle", "visualizer_quality", "visualizer_intensity", "visualizer_sensitivity", "visualizer_motion", "visualizer_zoom", "visualizer_sync", "visualizer_auto_change", "visualizer_grab_mode",
 	])
 
 
