@@ -116,6 +116,9 @@ func _row() -> HBoxContainer:
 func _key(text: String, action: Callable, width := 1.0) -> Button:
 	var key := Button.new()
 	key.text = text
+	var tip: String = {"⇧": "Shift · Uppercase next letter", "⌫": "Delete character before cursor", "Clear": "Clear all text", "Paste": "Paste text from clipboard", "Done": "Accept text", "Cancel": "Close without accepting text"}.get(text, "")
+	if not tip.is_empty():
+		Tooltips.set_text(key, tip)
 	key.focus_mode = FOCUS_NONE
 	key.custom_minimum_size = Vector2(KEY_SIZE.x * width + KEY_GAP * (width - 1.0), KEY_SIZE.y)
 	key.add_theme_font_size_override("font_size", 28)
@@ -136,6 +139,7 @@ func _relabel() -> void:
 	shift_button.visible = not symbols
 	shift_button.set_pressed_no_signal(shift)
 	symbol_button.text = "abc" if symbols else "#+="
+	Tooltips.set_text(symbol_button, "Show letters" if symbols else "Show symbols")
 
 
 func _type_key(key: Button) -> void:

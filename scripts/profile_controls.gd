@@ -20,6 +20,7 @@ func _ready() -> void:
 	label.custom_minimum_size.x = 220
 	row.add_child(label)
 	selector = OptionButton.new()
+	Tooltips.set_text(selector, "Apply a saved viewing setup")
 	selector.fit_to_longest_item = false
 	selector.action_mode = BaseButton.ACTION_MODE_BUTTON_RELEASE
 	selector.clip_text = true
@@ -53,6 +54,7 @@ func _ready() -> void:
 func _button(row: HBoxContainer, text: String) -> Button:
 	var button := Button.new()
 	button.text = text
+	Tooltips.set_text(button, {"Save current": "Save current viewing settings as a new profile", "Update": "Replace the selected profile with current viewing settings", "Rename": "Rename the selected viewing profile", "Delete": "Delete the selected viewing profile"}.get(text, text))
 	button.custom_minimum_size.y = SettingRow.ROW_HEIGHT
 	button.size_flags_horizontal = SIZE_EXPAND_FILL
 	row.add_child(button)

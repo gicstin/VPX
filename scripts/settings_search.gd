@@ -51,6 +51,7 @@ func _ready() -> void:
 	input.add_child(field)
 	var keyboard := Button.new()
 	keyboard.text = "Keyboard"
+	Tooltips.set_text(keyboard, "Search settings with the on-screen keyboard")
 	keyboard.pressed.connect(func() -> void: keyboard_requested.emit())
 	input.add_child(keyboard)
 	status = Label.new()
@@ -183,6 +184,7 @@ func _refresh() -> void:
 		var available := _available(target, page)
 		var button := Button.new()
 		button.text = "%s › %s\n%s" % [page.get_meta("settings_path", page.name), entry["title"], entry["summary"] if available else "Available with matching media or settings"]
+		Tooltips.set_text(button, button.text)
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		button.clip_text = true
 		button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS

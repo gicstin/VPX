@@ -33,6 +33,7 @@ func _on_row_input(event: InputEvent) -> void:
 
 func _show(on: bool) -> void:
 	button.icon = VpxTheme.icon("switch_on" if on else "switch_off", SWITCH_HEIGHT)
+	Tooltips.set_text(button, ("Disable " if on else "Enable ") + title)
 
 
 func _pull() -> void:

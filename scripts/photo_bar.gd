@@ -28,7 +28,7 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	var show_bar: bool = player != null and player.playback != null and (player.is_image() or player.is_music_mode()) and main != null and main.desktop_mode and not main.panel.visible
+	var show_bar: bool = player != null and player.playback != null and (player.is_image() or player.is_music_mode()) and main != null and main.desktop_mode and not main.panel.visible and (main.desktop_view == null or (not main.desktop_view.mini_player.active and not main.desktop_view.mini_player.busy))
 	root.visible = show_bar
 	if not show_bar:
 		root.seeking = false

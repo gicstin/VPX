@@ -111,4 +111,7 @@ const VALUES := {
 	"Noise Floor Vault": Vector3.ONE,
 	"Harmonic Ridgeway": Vector3.ONE,
 	"Spectral Panorama": Vector3.ONE,
+	"Valley of Sources": Vector3.ONE,
+	"Sound Cathedral": Vector3.ONE,
+	"Deep Current": Vector3.ONE,
 }

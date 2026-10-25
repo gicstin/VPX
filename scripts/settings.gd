@@ -24,7 +24,7 @@ enum AudioFilter { OFF, LEVEL, NIGHT }
 enum Deband { OFF, LOW, MEDIUM, HIGH }
 
 const CONFIG_PATH := "user://settings.cfg"
-const VISUALIZER_PRESET_MAX := 109
+const VISUALIZER_PRESET_MAX := 112
 const VISUALIZER_PRESETS := [
 	"Resonance Field", "Resonant Architecture", "Particle Cosmos",
 	"Bass Strings", "Wave Architecture", "Aurora Cosmos", "Stereo Speakers",
@@ -55,7 +55,8 @@ const VISUALIZER_PRESETS := [
 	"PM · Sierpinski Shrine", "PM · Chladni Plates", "PM · Prism Shards",
 	"PM · Spirograph Choir",
 	"Spectrogram Atlas", "Vocal Detail", "Bass Observatory", "Transient Scanner",
-	"Stereo Balance Hall", "Noise Floor Vault", "Harmonic Ridgeway", "Spectral Panorama"
+	"Stereo Balance Hall", "Noise Floor Vault", "Harmonic Ridgeway", "Spectral Panorama",
+	"Valley of Sources", "Sound Cathedral", "Deep Current"
 ]
 const VISUALIZER_ZOOM_MIN := 0.5
 const VISUALIZER_ZOOM_MAX := 3.0
@@ -119,6 +120,9 @@ const VISUALIZER_STUDIO_GUIDES := [
 	"Quiet-tail and noise inspection · Left → right: 30 Hz → 18 kHz · Cyan upper = L / Rose lower = R · Top = now, bottom = 3.8 s ago · Expanded −60 → −24 dB colour range · Gold saturates above −24 dB · Display floor is −60 dB",
 	"Harmonic and resonance inspection · Centre → edges: 30 Hz → 18 kHz · Cyan left terrain = L / Rose right terrain = R · Near → far = 3.8 s history · Height = −60 → 0 dB · Contours every 10 dB · Native 48 frequency bands",
 	"360° spectral history terraces · Each quadrant repeats 30 Hz → 18 kHz from left to right · Cyan upper terrace = L / Rose lower terrace = R · Inner edge = now, outer edge = 3.8 s ago · Height and colour = −60 → 0 dB",
+	"Walk-in valley · Each beacon is a sound, placed left ↔ right where it sits in the mix · Low sounds sit low, high sounds float higher · Mountains rise toward louder directions · Ground ripples on hits · Build-ups draw light to the front horizon, drops send a shockwave · Colours change with song sections",
+	"Walk-in hall · Each light shaft is a sound, placed left ↔ right where it sits in the mix · Pillars glow toward louder directions and carry a band of light up on every beat · The vault brightens before louder sections · Drops lift the whole hall",
+	"Walk-in deep sea · Each glowing drifter is a sound, placed left ↔ right where it sits in the mix · Kelp lights toward louder directions and pulses on the beat · Surface caustics follow sustained tones · Build-ups pull light ahead, drops send a wave across the seabed",
 ]
 const SCREEN_PLACEMENT_VERSION := 1
 const SCREEN_DISTANCE := 3.0

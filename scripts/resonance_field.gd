@@ -22,6 +22,18 @@ const SPECTROGRAM_START := 102
 const SPECTROGRAM_COUNTS := [Vector4i(8, 0, 192, 0), Vector4i(8, 0, 384, 0), Vector4i(8, 0, 384, 0)]
 const SPECTROGRAM_SHADER := preload("res://shaders/resonance_spectrogram.gdshader")
 const SPECTROGRAM_SKY_SHADER := preload("res://shaders/resonance_spectrogram_sky.gdshader")
+const WORLD_START := 110
+const WORLD_COUNTS := [Vector4i(1, 1400, 24, 40), Vector4i(1, 2800, 24, 40), Vector4i(1, 4600, 24, 40)]
+const WORLD_STRUCTURES := [24, 32, 40]
+const WORLD_GROUND := [-1.5, -1.6, -4.0]
+const WORLD_SHADER := preload("res://shaders/resonance_world.gdshader")
+const WORLD_GROUND_SHADER := preload("res://shaders/resonance_world_ground.gdshader")
+const WORLD_SKY_SHADER := preload("res://shaders/resonance_world_sky.gdshader")
+const WORLD_PALETTES := [
+	[[Color(0.12, 0.42, 1.0), Color(0.95, 0.3, 0.75), Color(1.0, 0.78, 0.32)], [Color(0.1, 0.85, 0.65), Color(0.3, 0.35, 1.0), Color(0.95, 0.95, 0.6)], [Color(1.0, 0.35, 0.15), Color(0.65, 0.15, 0.9), Color(1.0, 0.85, 0.5)], [Color(0.3, 0.6, 1.0), Color(0.15, 1.0, 0.8), Color(1.0, 0.5, 0.75)]],
+	[[Color(1.0, 0.62, 0.22), Color(0.55, 0.25, 1.0), Color(1.0, 0.92, 0.7)], [Color(0.25, 0.55, 1.0), Color(1.0, 0.3, 0.45), Color(0.85, 0.95, 1.0)], [Color(0.95, 0.85, 0.35), Color(0.2, 0.75, 0.9), Color(1.0, 0.55, 0.3)], [Color(0.75, 0.2, 0.55), Color(1.0, 0.7, 0.3), Color(0.6, 0.85, 1.0)]],
+	[[Color(0.05, 0.55, 0.9), Color(0.25, 1.0, 0.75), Color(0.75, 0.4, 1.0)], [Color(0.1, 0.35, 0.85), Color(1.0, 0.45, 0.75), Color(0.3, 1.0, 0.9)], [Color(0.0, 0.7, 0.75), Color(0.6, 0.95, 0.3), Color(1.0, 0.65, 0.4)], [Color(0.2, 0.25, 0.9), Color(0.15, 0.9, 1.0), Color(1.0, 0.95, 0.6)]],
+]
 const IMMERSIVE_START := 92
 const IMMERSIVE_COUNTS := [Vector4i(64, 240, 96, 0), Vector4i(64, 480, 144, 0), Vector4i(64, 900, 192, 0)]
 const IMMERSIVE_LIMITS := [Vector2i(18, 36), Vector2i(12, 96), Vector2i(12, 48), Vector2i(54, 108), Vector2i(28, 56), Vector2i(8, 16), Vector2i(64, 128), Vector2i(8, 32), Vector2i(48, 96), Vector2i(16, 64)]
@@ -129,6 +141,11 @@ var ring_mesh: ArrayMesh
 var psyche_bass := 0.0
 var stereo := StereoImage.new()
 var affect := MusicAffect.new()
+var timeline := MusicTimeline.new()
+var music_time := -1.0
+var timeline_beats := 0
+var world_ground_mesh: ArrayMesh
+var world_colours: Array[Color] = [Color(0.12, 0.42, 1.0), Color(0.95, 0.3, 0.75), Color(1.0, 0.78, 0.32)]
 
 
 func _ready() -> void:
@@ -186,7 +203,7 @@ func _ready() -> void:
 		instances.transform_format = MultiMesh.TRANSFORM_3D
 		instances.use_custom_data = true
 		instances.mesh = particle_mesh if kind == 1 else strip_mesh
-		instances.instance_count = maxi(SPECTROGRAM_COUNTS[2][kind], maxi(IMMERSIVE_COUNTS[2][kind], maxi(maxi(maxi(COUNTS[2][kind], DEPTH_COUNTS[2][kind]), maxi(PULSE_COUNTS[2][kind], STEREO_COUNTS[2][kind])), PSYCHE_COUNTS[2][kind])))
+		instances.instance_count = maxi(WORLD_COUNTS[2][kind], maxi(SPECTROGRAM_COUNTS[2][kind], maxi(IMMERSIVE_COUNTS[2][kind], maxi(maxi(maxi(COUNTS[2][kind], DEPTH_COUNTS[2][kind]), maxi(PULSE_COUNTS[2][kind], STEREO_COUNTS[2][kind])), PSYCHE_COUNTS[2][kind]))))
 		instances.custom_aabb = AABB(Vector3.ONE * -40.0, Vector3.ONE * 80.0)
 		var rng := RandomNumberGenerator.new()
 		rng.seed = 0x52534E43 + kind
@@ -230,14 +247,15 @@ func cycle_preset() -> void:
 func _apply_preset() -> void:
 	response_profile = RESPONSE_PROFILES.VALUES.get(Settings.VISUALIZER_PRESETS[preset_index], Vector3.ONE)
 	var pulse := preset_index >= PULSE_START and preset_index < STEREO_START
-	var spectrogram_scene := preset_index >= SPECTROGRAM_START
+	var world_scene := is_world_scene()
+	var spectrogram_scene := preset_index >= SPECTROGRAM_START and not world_scene
 	var immersive_scene := preset_index >= IMMERSIVE_START and preset_index < SPECTROGRAM_START
 	var projectm_scene := preset_index >= PROJECTM_START and preset_index < IMMERSIVE_START
 	var live_scene := preset_index >= LIVE_START and preset_index < PROJECTM_START
 	var milkdrop := preset_index >= MILKDROP_START and preset_index < LIVE_START
 	var psyche := preset_index >= PSYCHE_START and preset_index < MILKDROP_START
 	var image_scene := preset_index >= STEREO_START and preset_index < PSYCHE_START
-	var shader := SPECTROGRAM_SHADER if spectrogram_scene else IMMERSIVE_SHADER if immersive_scene else PROJECTM_SHADER if projectm_scene else LIVE_SHADER if live_scene else MILKDROP_SHADER if milkdrop else LEGACY_SHADER if preset_index < 3 else (PSYCHE_SHADER if psyche else (STEREO_SHADER if image_scene else (PULSE_SHADER if pulse else (DEPTH_SHADER if preset_index >= 7 else SHADER))))
+	var shader := WORLD_SHADER if world_scene else SPECTROGRAM_SHADER if spectrogram_scene else IMMERSIVE_SHADER if immersive_scene else PROJECTM_SHADER if projectm_scene else LIVE_SHADER if live_scene else MILKDROP_SHADER if milkdrop else LEGACY_SHADER if preset_index < 3 else (PSYCHE_SHADER if psyche else (STEREO_SHADER if image_scene else (PULSE_SHADER if pulse else (DEPTH_SHADER if preset_index >= 7 else SHADER))))
 	for kind in materials.size():
 		var material := materials[kind]
 		material.shader = shader
@@ -256,7 +274,10 @@ func _apply_preset() -> void:
 		material.set_shader_parameter("immersive_style", maxi(0, preset_index - IMMERSIVE_START))
 		material.set_shader_parameter("object_count", IMMERSIVE_LIMITS[preset_index - IMMERSIVE_START].x if immersive_scene else 0)
 		material.set_shader_parameter("milkdrop_style", maxi(0, preset_index - MILKDROP_START))
+		material.set_shader_parameter("world_style", world_style())
 		stereo.bind(material)
+	if world_scene:
+		materials[0].shader = WORLD_GROUND_SHADER
 	layers[1].multimesh.mesh = live_particle_mesh if live_scene else particle_mesh
 	for kind in [0, 2, 3]:
 		layers[kind].multimesh.mesh = (live_mesh if kind == 0 else ring_mesh) if live_scene else (psyche_meshes[preset_index - PSYCHE_START] if kind == 0 else ring_mesh) if psyche else (surface_mesh if kind == 2 and preset_index >= 7 and preset_index < PULSE_START else strip_mesh)
@@ -266,10 +287,19 @@ func _apply_preset() -> void:
 	if immersive_scene:
 		layers[0].multimesh.mesh = immersive_mesh
 		layers[2].multimesh.mesh = live_mesh
+	if world_scene:
+		if world_ground_mesh == null:
+			world_ground_mesh = _surface(192, 96)
+		layers[0].multimesh.mesh = world_ground_mesh
+		layers[1].multimesh.mesh = live_particle_mesh
+		layers[2].multimesh.mesh = strip_mesh
+		layers[3].multimesh.mesh = strip_mesh
+		world_colours = _world_palette(0)
 	if projectm_scene:
 		layers[3].multimesh.mesh = projectm_sun_mesh if preset_index == PROJECTM_START + 4 else surface_mesh
-	sky_material.shader = SPECTROGRAM_SKY_SHADER if spectrogram_scene else IMMERSIVE_SKY_SHADER if immersive_scene else PROJECTM_SKY_SHADER if projectm_scene else LIVE_SKY_SHADER if live_scene else PSYCHE_SKY_SHADER if milkdrop else LEGACY_SKY_SHADER if preset_index < 3 else (PSYCHE_SKY_SHADER if psyche else (STEREO_SKY_SHADER if image_scene else (PULSE_SKY_SHADER if pulse else SKY_SHADER)))
+	sky_material.shader = WORLD_SKY_SHADER if world_scene else SPECTROGRAM_SKY_SHADER if spectrogram_scene else IMMERSIVE_SKY_SHADER if immersive_scene else PROJECTM_SKY_SHADER if projectm_scene else LIVE_SKY_SHADER if live_scene else PSYCHE_SKY_SHADER if milkdrop else LEGACY_SKY_SHADER if preset_index < 3 else (PSYCHE_SKY_SHADER if psyche else (STEREO_SKY_SHADER if image_scene else (PULSE_SKY_SHADER if pulse else SKY_SHADER)))
 	sky_material.set_shader_parameter("spectrogram_style", maxi(0, preset_index - SPECTROGRAM_START))
+	sky_material.set_shader_parameter("world_style", world_style())
 	sky_material.set_shader_parameter("live_style", maxi(0, preset_index - LIVE_START))
 	sky_material.set_shader_parameter("projectm_style", maxi(0, preset_index - PROJECTM_START))
 	sky_material.set_shader_parameter("immersive_style", maxi(0, preset_index - IMMERSIVE_START))
@@ -302,6 +332,8 @@ func _apply_compositing(force := false) -> void:
 	if overlay == compositing_overlay and not force:
 		return
 	compositing_overlay = overlay
+	if is_world_scene() and not force:
+		_apply_quality()
 	for material in materials:
 		if overlay:
 			material.shader = _overlay_shader(material.shader, false)
@@ -327,12 +359,18 @@ func _spectrogram_mesh() -> ArrayMesh:
 
 
 func _apply_quality() -> void:
-	if preset_index >= SPECTROGRAM_START:
+	var world_scene := is_world_scene()
+	if preset_index >= SPECTROGRAM_START and not world_scene:
 		layers[0].multimesh.mesh = _spectrogram_mesh()
-	var counts: Array = SPECTROGRAM_COUNTS if preset_index >= SPECTROGRAM_START else IMMERSIVE_COUNTS if preset_index >= IMMERSIVE_START else PROJECTM_COUNTS if preset_index >= PROJECTM_START else LIVE_COUNTS if preset_index >= LIVE_START else MILKDROP_COUNTS if preset_index >= MILKDROP_START else LEGACY_COUNTS if preset_index < 3 else (PSYCHE_COUNTS if preset_index >= PSYCHE_START else (STEREO_COUNTS if preset_index >= STEREO_START else (PULSE_COUNTS if preset_index >= PULSE_START else (DEPTH_COUNTS if preset_index >= 7 else COUNTS))))
+	var counts: Array = WORLD_COUNTS if world_scene else SPECTROGRAM_COUNTS if preset_index >= SPECTROGRAM_START else IMMERSIVE_COUNTS if preset_index >= IMMERSIVE_START else PROJECTM_COUNTS if preset_index >= PROJECTM_START else LIVE_COUNTS if preset_index >= LIVE_START else MILKDROP_COUNTS if preset_index >= MILKDROP_START else LEGACY_COUNTS if preset_index < 3 else (PSYCHE_COUNTS if preset_index >= PSYCHE_START else (STEREO_COUNTS if preset_index >= STEREO_START else (PULSE_COUNTS if preset_index >= PULSE_START else (DEPTH_COUNTS if preset_index >= 7 else COUNTS))))
 	for kind in layers.size():
 		var count: int = counts[clampi(quality, 0, 2)][kind]
-		if preset_index >= SPECTROGRAM_START:
+		if world_scene:
+			if kind == 0 and compositing_overlay:
+				count = 0
+			elif kind == 3:
+				count = WORLD_STRUCTURES[world_style()]
+		elif preset_index >= SPECTROGRAM_START:
 			if preset_index == SPECTROGRAM_START + 4:
 				count /= 2
 		elif preset_index >= IMMERSIVE_START:
@@ -425,7 +463,7 @@ func feed(data: PackedFloat32Array, features: Dictionary) -> void:
 			low_power += magnitude * magnitude / 10.0
 		beat_energy = sqrt(low_power) * 5.0
 		psyche_bass = beat_energy
-	if beat_rise > 0.045 and beat_energy > (0.1 if preset_index >= PSYCHE_START else 0.08) and beat_age > 0.16:
+	if not timeline.active and beat_rise > 0.045 and beat_energy > (0.1 if preset_index >= PSYCHE_START else 0.08) and beat_age > 0.16:
 		beat_age = 0.0
 		beat_count += 1
 	domain_targets = energy
@@ -465,6 +503,7 @@ func reset() -> void:
 	spin = 0.0
 	surge = 0.0
 	affect.reset()
+	timeline.reset()
 	psyche_bass = 0.0
 	bass = 0.0
 	mids = 0.0
@@ -564,9 +603,13 @@ func _process(delta: float) -> void:
 	_update_spectral_history(delta)
 	stereo.update(delta)
 	affect.update(delta, beat_count, psyche_bass, response_motion)
+	_update_timeline(delta, playing)
 	scene_opacity = lerpf(scene_opacity, 1.0, 1.0 - exp(-delta * 8.0))
 	var dim := (0.2 if menu != null and menu.visible else 1.0) * scene_opacity
 	var palette := clock * 0.0025 + preset.dot(Vector3(0.0, 0.17, 0.38))
+	var world := is_world_scene()
+	if world:
+		_update_world_palette(delta)
 	for kind in materials.size():
 		if layers[kind].multimesh.visible_instance_count == 0:
 			continue
@@ -601,6 +644,9 @@ func _process(delta: float) -> void:
 		material.set_shader_parameter("dim", dim * (Settings.visualizer_overlay_opacity if compositing_overlay else 1.0))
 		stereo.apply(material)
 		affect.apply(material)
+		timeline.apply(material)
+		if world:
+			_apply_world(material)
 	sky_material.set_shader_parameter("source_count", source_count if preset_index >= 6 else 0)
 	sky_material.set_shader_parameter("channel_left", channel_levels[0])
 	sky_material.set_shader_parameter("channel_right", channel_levels[1])
@@ -621,7 +667,76 @@ func _process(delta: float) -> void:
 		sky_material.set_shader_parameter("overlay_opacity", Settings.visualizer_atmosphere * Settings.visualizer_overlay_opacity)
 	stereo.apply(sky_material)
 	affect.apply(sky_material)
+	timeline.apply(sky_material)
+	if world:
+		_apply_world(sky_material)
+		sky_material.set_shader_parameter("motion", response_motion)
 	_auto_quality(delta)
+
+
+func is_world_scene() -> bool:
+	return preset_index >= WORLD_START
+
+
+func world_style() -> int:
+	return clampi(preset_index - WORLD_START, 0, WORLD_STRUCTURES.size() - 1)
+
+
+func set_music_map(map: MusicMap) -> void:
+	timeline.set_map(map)
+
+
+func _update_timeline(delta: float, playing: bool) -> void:
+	timeline.update(music_time, delta, playing, {"transients": transients, "impulse": impulse, "mids": mids, "arousal": affect.arousal, "centroid": affect.centroid, "beat_phase": affect.beat_phase, "bar_phase": affect.bar_phase, "period": affect.period, "tension": affect.tension, "release": affect.release})
+	if timeline.active:
+		beat_count += maxi(0, timeline.beat_count - timeline_beats)
+		beat_age = timeline.beat_age
+	timeline_beats = timeline.beat_count
+
+
+func _world_palette(group: int) -> Array[Color]:
+	var choices: Array = WORLD_PALETTES[world_style()]
+	var chosen: Array = choices[posmod(group, choices.size())]
+	var colours: Array[Color] = []
+	for colour: Color in chosen:
+		colours.append(colour)
+	return colours
+
+
+func _update_world_palette(delta: float) -> void:
+	var target := _world_palette(int(timeline.palette_group))
+	var blend := 1.0 - exp(-delta * 0.8)
+	for i in world_colours.size():
+		world_colours[i] = world_colours[i].lerp(target[i], blend)
+
+
+func _apply_world(material: ShaderMaterial) -> void:
+	material.set_shader_parameter("world_style", world_style())
+	material.set_shader_parameter("ground_level", ground_level())
+	material.set_shader_parameter("colour_a", world_colours[0])
+	material.set_shader_parameter("colour_b", world_colours[1])
+	material.set_shader_parameter("colour_c", world_colours[2])
+	material.set_shader_parameter("breath", affect.breath)
+	material.set_shader_parameter("source_spread", source_spread())
+
+
+func ground_level() -> float:
+	var level: float = WORLD_GROUND[world_style()]
+	var origin := camera.get_parent() as XROrigin3D if camera != null else null
+	if not vr_zoom or origin == null:
+		return level
+	var floor_offset := origin.global_position.y - global_position.y
+	if floor_offset < -2.1 or floor_offset > -0.8:
+		return level
+	return floor_offset + (level - WORLD_GROUND[0])
+
+
+func source_spread() -> float:
+	if vr_zoom or camera == null:
+		return 0.9
+	var size := get_viewport().get_visible_rect().size
+	var half := atan(tan(deg_to_rad(camera.fov) * 0.5) * size.x / maxf(size.y, 1.0))
+	return clampf(half * 0.72, 0.45, 0.9)
 
 
 func _update_zoom() -> void:

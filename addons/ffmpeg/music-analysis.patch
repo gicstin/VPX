@@ -1,0 +1,1426 @@
+diff --git a/register_types.cpp b/register_types.cpp
+index f1d0a2e..c9b8142 100644
+--- a/register_types.cpp
++++ b/register_types.cpp
+@@ -44,6 +44,7 @@
+ #include "vpx_panorama.h"
+ #include "vpx_file_ops.h"
+ #include "vpx_subtitles.h"
++#include "vpx_music_analysis.h"
+ void vpx_panorama_release_shared();
+ #endif
+ #include "video_stream_ffmpeg_loader.h"
+@@ -97,6 +98,7 @@ void initialize_ffmpeg_module(ModuleInitializationLevel p_level) {
+ 	GDREGISTER_CLASS(VPXPanorama);
+ 	GDREGISTER_CLASS(VPXFileOps);
+ 	GDREGISTER_CLASS(VPXSubtitles);
++	GDREGISTER_CLASS(VPXMusicAnalysis);
+ #endif
+ 	ffmpeg_loader.instantiate();
+ #ifdef GDEXTENSION
+diff --git a/vpx_music_analysis.cpp b/vpx_music_analysis.cpp
+new file mode 100644
+index 0000000..418cae4
+--- /dev/null
++++ b/vpx_music_analysis.cpp
+@@ -0,0 +1,1302 @@
++#ifdef GDEXTENSION
++
++#include "vpx_music_analysis.h"
++
++#include <godot_cpp/core/class_db.hpp>
++
++#include <algorithm>
++#include <cmath>
++#include <complex>
++#include <numeric>
++
++extern "C" {
++#include "libavcodec/avcodec.h"
++#include "libavformat/avformat.h"
++#include "libavutil/channel_layout.h"
++#include "libavutil/samplefmt.h"
++#include "libswresample/swresample.h"
++}
++
++namespace {
++
++constexpr double PI_D = 3.14159265358979323846;
++constexpr double BAND_LOW = 30.0;
++constexpr double BAND_HIGH = 10000.0;
++constexpr double BASS_HIGH = 150.0;
++constexpr double CHROMA_LOW = 110.0;
++constexpr double CHROMA_HIGH = 4200.0;
++constexpr double BEAT_OFFSET = 0.025;
++constexpr int SPLIT_BINS = 512;
++constexpr int SPLIT_TIME = 8;
++constexpr int SPLIT_FREQUENCY = 4;
++constexpr float SPLIT_MARGIN = 2.0f;
++constexpr double TEMPO_CENTRE = 120.0;
++constexpr double TEMPO_SPREAD = 0.9;
++constexpr double TIGHTNESS = 100.0;
++constexpr int SECTION_KERNEL = 16;
++constexpr int SECTION_SPACING = 16;
++constexpr double SECTION_FLOOR = 0.15;
++constexpr int TIMBRE = 12;
++
++using Complex = std::complex<float>;
++
++class FFT {
++	int size = 0;
++	std::vector<int> reverse;
++	std::vector<Complex> twiddle;
++
++public:
++	explicit FFT(int p_size) :
++			size(p_size) {
++		int bits = 0;
++		while ((1 << bits) < size) {
++			bits++;
++		}
++		reverse.resize(size);
++		for (int i = 0; i < size; i++) {
++			int r = 0;
++			for (int b = 0; b < bits; b++) {
++				r |= ((i >> b) & 1) << (bits - 1 - b);
++			}
++			reverse[i] = r;
++		}
++		twiddle.resize(size / 2);
++		for (int i = 0; i < size / 2; i++) {
++			twiddle[i] = std::polar(1.0f, (float)(-2.0 * PI_D * i / size));
++		}
++	}
++
++	void transform(std::vector<Complex> &r_data) const {
++		for (int i = 0; i < size; i++) {
++			if (i < reverse[i]) {
++				std::swap(r_data[i], r_data[reverse[i]]);
++			}
++		}
++		for (int length = 2; length <= size; length <<= 1) {
++			const int half = length >> 1;
++			const int step = size / length;
++			for (int start = 0; start < size; start += length) {
++				for (int k = 0; k < half; k++) {
++					const Complex t = twiddle[k * step] * r_data[start + k + half];
++					r_data[start + k + half] = r_data[start + k] - t;
++					r_data[start + k] += t;
++				}
++			}
++		}
++	}
++};
++
++struct Frames {
++	int count = 0;
++	std::vector<float> bands;
++	std::vector<float> chroma;
++	std::vector<float> rms;
++	std::vector<float> bass;
++	std::vector<float> centroid;
++	std::vector<float> percussive;
++	std::vector<float> harmonic;
++};
++
++class Extractor {
++	static constexpr int N = VPXMusicAnalysis::FFT_SIZE;
++	static constexpr int H = VPXMusicAnalysis::HOP;
++	static constexpr int B = VPXMusicAnalysis::BANDS;
++	static constexpr int C = VPXMusicAnalysis::CHROMA;
++
++	FFT fft;
++	std::vector<float> window;
++	std::vector<float> buffer;
++	std::vector<Complex> spectrum;
++	std::vector<float> power;
++	std::vector<std::vector<std::pair<int, float>>> band_bins;
++	std::vector<int> chroma_class;
++	int bass_last = 0;
++	double window_power = 0.0;
++	std::vector<std::vector<float>> history;
++	int pushed = 0;
++	int split = 0;
++	std::vector<float> column;
++
++	void _split(int p_centre) {
++		const int first = std::max(0, p_centre - SPLIT_TIME);
++		const int last = std::min(pushed - 1, p_centre + SPLIT_TIME);
++		const std::vector<float> &centre = history[p_centre % history.size()];
++		double percussive = 0.0;
++		double harmonic = 0.0;
++		for (int j = 0; j < SPLIT_BINS; j++) {
++			column.clear();
++			for (int f = first; f <= last; f++) {
++				column.push_back(history[f % history.size()][j]);
++			}
++			std::nth_element(column.begin(), column.begin() + column.size() / 2, column.end());
++			const float h = column[column.size() / 2];
++			column.clear();
++			for (int k = std::max(0, j - SPLIT_FREQUENCY); k <= std::min(SPLIT_BINS - 1, j + SPLIT_FREQUENCY); k++) {
++				column.push_back(centre[k]);
++			}
++			std::nth_element(column.begin(), column.begin() + column.size() / 2, column.end());
++			const float p = column[column.size() / 2];
++			const float magnitude = centre[j];
++			const float p4 = (p * p) * (p * p);
++			const float wide = h * SPLIT_MARGIN;
++			const float h4 = (wide * wide) * (wide * wide);
++			const float mask = p4 + h4 > 1e-30f ? p4 / (p4 + h4) : 0.0f;
++			percussive += (double)magnitude * magnitude * mask * mask;
++			harmonic += (double)magnitude * magnitude * (1.0f - mask) * (1.0f - mask);
++		}
++		frames.percussive[p_centre] = (float)std::sqrt(percussive);
++		frames.harmonic[p_centre] = (float)std::sqrt(harmonic);
++	}
++	size_t total = 0;
++
++	void _frame(const float *p_samples) {
++		double energy = 0.0;
++		for (int i = 0; i < N; i++) {
++			const float value = p_samples[i] * window[i];
++			energy += (double)value * value;
++			spectrum[i] = Complex(value, 0.0f);
++		}
++		fft.transform(spectrum);
++		double weighted = 0.0;
++		double sum = 0.0;
++		for (int k = 0; k <= N / 2; k++) {
++			power[k] = std::norm(spectrum[k]) * (4.0f / (float)window_power) / (float)N;
++			const double frequency = (double)k * VPXMusicAnalysis::SAMPLE_RATE / N;
++			weighted += frequency * power[k];
++			sum += power[k];
++		}
++		for (int b = 0; b < B; b++) {
++			double value = 0.0;
++			for (const std::pair<int, float> &bin : band_bins[b]) {
++				value += power[bin.first] * bin.second;
++			}
++			frames.bands.push_back((float)std::sqrt(value));
++		}
++		float classes[C] = {};
++		for (int k = 0; k <= N / 2; k++) {
++			if (chroma_class[k] >= 0) {
++				classes[chroma_class[k]] += std::sqrt(power[k]);
++			}
++		}
++		frames.chroma.insert(frames.chroma.end(), classes, classes + C);
++		double low = 0.0;
++		for (int k = 1; k <= bass_last; k++) {
++			low += power[k];
++		}
++		frames.rms.push_back((float)std::sqrt(energy / window_power));
++		frames.bass.push_back((float)std::sqrt(low));
++		frames.centroid.push_back(sum > 1e-12 ? (float)(weighted / sum) : 0.0f);
++		frames.count++;
++		std::vector<float> &pooled = history[pushed % history.size()];
++		for (int j = 0; j < SPLIT_BINS; j++) {
++			pooled[j] = (float)std::sqrt(power[j * 2 + 1] + power[j * 2 + 2]);
++		}
++		pushed++;
++		frames.percussive.push_back(0.0f);
++		frames.harmonic.push_back(0.0f);
++		while (split <= pushed - 1 - SPLIT_TIME) {
++			_split(split++);
++		}
++	}
++
++public:
++	Frames frames;
++
++	Extractor() :
++			fft(N) {
++		window.resize(N);
++		for (int i = 0; i < N; i++) {
++			window[i] = 0.5f - 0.5f * (float)std::cos(2.0 * PI_D * i / N);
++			window_power += (double)window[i] * window[i];
++		}
++		history.assign(SPLIT_TIME * 2 + 1, std::vector<float>(SPLIT_BINS, 0.0f));
++		spectrum.resize(N);
++		power.resize(N / 2 + 1);
++		buffer.assign(N / 2, 0.0f);
++		const double bin_hz = (double)VPXMusicAnalysis::SAMPLE_RATE / N;
++		band_bins.resize(B);
++		for (int b = 0; b < B; b++) {
++			const double lo = BAND_LOW * std::pow(BAND_HIGH / BAND_LOW, (double)b / B);
++			const double hi = BAND_LOW * std::pow(BAND_HIGH / BAND_LOW, (double)(b + 1) / B);
++			std::vector<int> bins;
++			for (int k = 1; k <= N / 2; k++) {
++				const double f = k * bin_hz;
++				if (f >= lo && f < hi) {
++					bins.push_back(k);
++				}
++			}
++			if (bins.empty()) {
++				const double centre = std::sqrt(lo * hi) / bin_hz;
++				const int below = std::max(1, (int)std::floor(centre));
++				const float fraction = (float)(centre - below);
++				band_bins[b].push_back({ below, 1.0f - fraction });
++				band_bins[b].push_back({ std::min(N / 2, below + 1), fraction });
++			} else {
++				for (int k : bins) {
++					band_bins[b].push_back({ k, 1.0f / bins.size() });
++				}
++			}
++		}
++		chroma_class.assign(N / 2 + 1, -1);
++		for (int k = 1; k <= N / 2; k++) {
++			const double f = k * bin_hz;
++			if (f >= CHROMA_LOW && f <= CHROMA_HIGH) {
++				const int note = (int)std::lround(12.0 * std::log2(f / 440.0)) + 69;
++				chroma_class[k] = ((note % C) + C) % C;
++			}
++			if (f <= BASS_HIGH) {
++				bass_last = k;
++			}
++		}
++	}
++
++	void push(const float *p_samples, size_t p_count) {
++		buffer.insert(buffer.end(), p_samples, p_samples + p_count);
++		total += p_count;
++		size_t offset = 0;
++		while (buffer.size() - offset >= (size_t)N) {
++			_frame(buffer.data() + offset);
++			offset += H;
++		}
++		if (offset > 0) {
++			buffer.erase(buffer.begin(), buffer.begin() + offset);
++		}
++	}
++
++	void finish() {
++		const size_t wanted = total / H + 1;
++		std::vector<float> tail(N, 0.0f);
++		while ((size_t)frames.count < wanted) {
++			std::fill(tail.begin(), tail.end(), 0.0f);
++			std::copy(buffer.begin(), buffer.begin() + std::min(buffer.size(), (size_t)N), tail.begin());
++			_frame(tail.data());
++			buffer.erase(buffer.begin(), buffer.begin() + std::min(buffer.size(), (size_t)H));
++		}
++		while (split < pushed) {
++			_split(split++);
++		}
++	}
++
++	size_t sample_count() const { return total; }
++};
++
++float percentile(std::vector<float> p_values, double p_fraction) {
++	if (p_values.empty()) {
++		return 0.0f;
++	}
++	const size_t index = std::min(p_values.size() - 1, (size_t)(p_fraction * (p_values.size() - 1)));
++	std::nth_element(p_values.begin(), p_values.begin() + index, p_values.end());
++	return p_values[index];
++}
++
++std::vector<float> to_db(const std::vector<float> &p_values) {
++	std::vector<float> result(p_values.size());
++	for (size_t i = 0; i < p_values.size(); i++) {
++		result[i] = 20.0f * std::log10(std::max(p_values[i], 1e-7f));
++	}
++	return result;
++}
++
++std::vector<float> normalise_db(const std::vector<float> &p_db, float p_range, float p_reference = NAN) {
++	const float top = std::isnan(p_reference) ? percentile(p_db, 0.97) : p_reference;
++	std::vector<float> result(p_db.size());
++	for (size_t i = 0; i < p_db.size(); i++) {
++		result[i] = std::clamp((p_db[i] - (top - p_range)) / p_range, 0.0f, 1.0f);
++	}
++	return result;
++}
++
++void smooth(std::vector<float> &r_values, double p_seconds, double p_rate) {
++	if (r_values.empty() || p_seconds <= 0.0) {
++		return;
++	}
++	const float blend = (float)(1.0 - std::exp(-1.0 / (p_seconds * p_rate)));
++	float state = r_values.front();
++	for (float &value : r_values) {
++		state += (value - state) * blend;
++		value = state;
++	}
++	state = r_values.back();
++	for (size_t i = r_values.size(); i-- > 0;) {
++		state += (r_values[i] - state) * blend;
++		r_values[i] = state;
++	}
++}
++
++std::vector<float> moving_average(const std::vector<float> &p_values, int p_radius) {
++	std::vector<double> prefix(p_values.size() + 1, 0.0);
++	for (size_t i = 0; i < p_values.size(); i++) {
++		prefix[i + 1] = prefix[i] + p_values[i];
++	}
++	std::vector<float> result(p_values.size());
++	for (size_t i = 0; i < p_values.size(); i++) {
++		const size_t lo = (size_t)std::max<int64_t>(0, (int64_t)i - p_radius);
++		const size_t hi = std::min(p_values.size(), i + p_radius + 1);
++		result[i] = (float)((prefix[hi] - prefix[lo]) / (hi - lo));
++	}
++	return result;
++}
++
++float sample_curve(const std::vector<float> &p_curve, double p_time, double p_rate) {
++	if (p_curve.empty()) {
++		return 0.0f;
++	}
++	const double position = std::clamp(p_time * p_rate, 0.0, (double)p_curve.size() - 1.0);
++	const size_t index = (size_t)position;
++	const size_t next = std::min(p_curve.size() - 1, index + 1);
++	const float fraction = (float)(position - index);
++	return p_curve[index] + (p_curve[next] - p_curve[index]) * fraction;
++}
++
++float mean_between(const std::vector<float> &p_curve, double p_from, double p_to, double p_rate) {
++	if (p_curve.empty()) {
++		return 0.0f;
++	}
++	const int64_t lo = std::clamp<int64_t>((int64_t)std::floor(p_from * p_rate), 0, (int64_t)p_curve.size() - 1);
++	const int64_t hi = std::clamp<int64_t>((int64_t)std::ceil(p_to * p_rate), lo + 1, (int64_t)p_curve.size());
++	double total = 0.0;
++	for (int64_t i = lo; i < hi; i++) {
++		total += p_curve[i];
++	}
++	return (float)(total / (hi - lo));
++}
++
++std::vector<float> low_flux(const Frames &p_frames) {
++	const int B = VPXMusicAnalysis::BANDS;
++	int bass_bands = 0;
++	for (int b = 0; b < B; b++) {
++		if (BAND_LOW * std::pow(BAND_HIGH / BAND_LOW, (double)(b + 1) / B) <= BASS_HIGH * 1.05) {
++			bass_bands = b + 1;
++		}
++	}
++	std::vector<float> result(p_frames.count, 0.0f);
++	for (int t = 1; t < p_frames.count; t++) {
++		double low = 0.0;
++		for (int b = 0; b < bass_bands; b++) {
++			low += std::max(0.0f, p_frames.bands[(size_t)t * B + b] - p_frames.bands[(size_t)(t - 1) * B + b]);
++		}
++		result[t] = (float)(low / std::max(1, bass_bands));
++	}
++	return result;
++}
++
++std::vector<float> onset_envelope(const Frames &p_frames) {
++	const int B = VPXMusicAnalysis::BANDS;
++	std::vector<float> levels((size_t)p_frames.count * B);
++	float loudest = -200.0f;
++	for (size_t i = 0; i < levels.size(); i++) {
++		levels[i] = 20.0f * std::log10(std::max(p_frames.bands[i], 1e-7f));
++		loudest = std::max(loudest, levels[i]);
++	}
++	for (float &level : levels) {
++		level = std::max(level, loudest - 80.0f);
++	}
++	std::vector<float> envelope(p_frames.count, 0.0f);
++	for (int t = 1; t < p_frames.count; t++) {
++		double flux = 0.0;
++		for (int b = 0; b < B; b++) {
++			flux += std::max(0.0f, levels[(size_t)t * B + b] - levels[(size_t)(t - 1) * B + b]);
++		}
++		envelope[t] = (float)(flux / B);
++	}
++	return envelope;
++}
++
++double estimate_period(const std::vector<float> &p_onset, double p_rate) {
++	const int count = (int)p_onset.size();
++	const int min_lag = std::max(2, (int)std::floor(p_rate * 60.0 / 240.0));
++	const int max_lag = std::min(count / 3, (int)std::ceil(p_rate * 60.0 / 40.0));
++	if (max_lag <= min_lag + 2) {
++		return 0.0;
++	}
++	const std::vector<float> trend = moving_average(p_onset, (int)std::lround(p_rate * 0.25));
++	std::vector<float> detail(count);
++	for (int t = 0; t < count; t++) {
++		detail[t] = std::max(0.0f, p_onset[t] - trend[t]);
++	}
++	std::vector<float> blurred(count, 0.0f);
++	for (int t = 0; t < count; t++) {
++		double total = 0.0;
++		double weight = 0.0;
++		for (int k = -2; k <= 2; k++) {
++			if (t + k >= 0 && t + k < count) {
++				const double w = std::exp(-0.5 * k * k);
++				total += detail[t + k] * w;
++				weight += w;
++			}
++		}
++		blurred[t] = (float)(total / weight);
++	}
++	double mean = 0.0;
++	for (float value : blurred) {
++		mean += value;
++	}
++	mean /= count;
++	for (float &value : blurred) {
++		value -= (float)mean;
++	}
++	const int reach = max_lag * 3 + 2;
++	std::vector<double> correlation(reach + 1, 0.0);
++	for (int lag = 1; lag <= reach && lag < count; lag++) {
++		double sum = 0.0;
++		for (int t = 0; t + lag < count; t++) {
++			sum += (double)blurred[t] * blurred[t + lag];
++		}
++		correlation[lag] = sum / (count - lag);
++	}
++	auto at = [&](double p_lag) {
++		const int index = (int)std::floor(p_lag);
++		if (index < 1 || index + 1 > reach) {
++			return 0.0;
++		}
++		const double fraction = p_lag - index;
++		return correlation[index] * (1.0 - fraction) + correlation[index + 1] * fraction;
++	};
++	double best = -1.0;
++	double best_score = 0.0;
++	for (int lag = min_lag; lag <= max_lag; lag++) {
++		if (correlation[lag] < correlation[lag - 1] || correlation[lag] < correlation[lag + 1] || correlation[lag] <= 0.0) {
++			continue;
++		}
++		const double a = correlation[lag - 1];
++		const double b = correlation[lag];
++		const double c = correlation[lag + 1];
++		const double denominator = a - 2.0 * b + c;
++		const double shift = std::abs(denominator) > 1e-20 ? std::clamp(0.5 * (a - c) / denominator, -0.5, 0.5) : 0.0;
++		const double refined = lag + shift;
++		const double height = b - 0.25 * (a - c) * shift;
++		const double support = std::max(0.0, at(refined * 2.0)) * 0.5 + std::max(0.0, at(refined * 3.0)) * 0.25;
++		const double bpm = p_rate * 60.0 / refined;
++		const double octaves = std::log2(bpm / TEMPO_CENTRE) / TEMPO_SPREAD;
++		const double score = (height + support) * std::exp(-0.5 * octaves * octaves);
++		if (score > best_score) {
++			best_score = score;
++			best = refined;
++		}
++	}
++	return best > 0.0 ? best : 0.0;
++}
++
++std::vector<double> track_beats(const std::vector<float> &p_onset, double p_period) {
++	const int count = (int)p_onset.size();
++	std::vector<double> beats;
++	if (p_period <= 1.0 || count < (int)(p_period * 4.0)) {
++		return beats;
++	}
++	double variance = 0.0;
++	for (float value : p_onset) {
++		variance += (double)value * value;
++	}
++	const double deviation = std::sqrt(variance / count);
++	if (deviation < 1e-6) {
++		return beats;
++	}
++	const double sigma = std::max(0.5, p_period / 32.0);
++	const int radius = (int)std::ceil(sigma * 3.0);
++	std::vector<double> local(count, 0.0);
++	for (int t = 0; t < count; t++) {
++		double total = 0.0;
++		for (int k = -radius; k <= radius; k++) {
++			const int u = t + k;
++			if (u >= 0 && u < count) {
++				total += p_onset[u] / deviation * std::exp(-0.5 * (k / sigma) * (k / sigma));
++			}
++		}
++		local[t] = total;
++	}
++	std::vector<double> cumulative(count, 0.0);
++	std::vector<int> back(count, -1);
++	const int nearest = (int)std::lround(p_period * 0.5);
++	const int farthest = (int)std::lround(p_period * 2.0);
++	double best_so_far = 0.0;
++	for (int t = 0; t < count; t++) {
++		double best = -1e30;
++		int link = -1;
++		for (int tau = t - farthest; tau <= t - nearest; tau++) {
++			if (tau < 0) {
++				continue;
++			}
++			const double gap = std::log((t - tau) / p_period);
++			const double score = cumulative[tau] - TIGHTNESS * gap * gap;
++			if (score > best) {
++				best = score;
++				link = tau;
++			}
++		}
++		if (link < 0 || best < 0.01 * best_so_far) {
++			cumulative[t] = local[t];
++			back[t] = -1;
++		} else {
++			cumulative[t] = local[t] + best;
++			back[t] = link;
++		}
++		best_so_far = std::max(best_so_far, cumulative[t]);
++	}
++	std::vector<double> peaks;
++	for (int t = 1; t + 1 < count; t++) {
++		if (cumulative[t] > cumulative[t - 1] && cumulative[t] >= cumulative[t + 1]) {
++			peaks.push_back(cumulative[t]);
++		}
++	}
++	if (peaks.empty()) {
++		return beats;
++	}
++	std::vector<double> sorted = peaks;
++	std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
++	const double threshold = 0.5 * sorted[sorted.size() / 2];
++	int last = -1;
++	for (int t = count - 2; t >= 1; t--) {
++		if (cumulative[t] > cumulative[t - 1] && cumulative[t] >= cumulative[t + 1] && cumulative[t] >= threshold) {
++			last = t;
++			break;
++		}
++	}
++	if (last < 0) {
++		return beats;
++	}
++	std::vector<int> frames;
++	for (int t = last; t >= 0; t = back[t]) {
++		frames.push_back(t);
++	}
++	std::reverse(frames.begin(), frames.end());
++	std::vector<double> strength(frames.size());
++	for (size_t i = 0; i < frames.size(); i++) {
++		strength[i] = local[frames[i]];
++	}
++	std::vector<double> smoothed(frames.size(), 0.0);
++	const double hann[5] = { 0.25, 0.75, 1.0, 0.75, 0.25 };
++	double square = 0.0;
++	for (size_t i = 0; i < frames.size(); i++) {
++		double total = 0.0;
++		for (int k = -2; k <= 2; k++) {
++			const int64_t j = (int64_t)i + k;
++			if (j >= 0 && j < (int64_t)frames.size()) {
++				total += strength[j] * hann[k + 2];
++			}
++		}
++		smoothed[i] = total;
++		square += total * total;
++	}
++	const double trim = 0.5 * std::sqrt(square / std::max<size_t>(1, frames.size()));
++	size_t first = 0;
++	size_t end = frames.size();
++	while (first < end && smoothed[first] <= trim) {
++		first++;
++	}
++	while (end > first && smoothed[end - 1] <= trim) {
++		end--;
++	}
++	for (size_t i = first; i < end; i++) {
++		const int t = frames[i];
++		double shift = 0.0;
++		if (t > 0 && t + 1 < count) {
++			const double a = local[t - 1];
++			const double b = local[t];
++			const double c = local[t + 1];
++			const double denominator = a - 2.0 * b + c;
++			if (std::abs(denominator) > 1e-12) {
++				shift = std::clamp(0.5 * (a - c) / denominator, -0.5, 0.5);
++			}
++		}
++		beats.push_back(t + shift);
++	}
++	return beats;
++}
++
++float distance(const std::vector<float> &p_features, int p_dim, int p_a, int p_b) {
++	double total = 0.0;
++	const float *a = p_features.data() + (size_t)p_a * p_dim;
++	const float *b = p_features.data() + (size_t)p_b * p_dim;
++	for (int i = 0; i < p_dim; i++) {
++		const double d = a[i] - b[i];
++		total += d * d;
++	}
++	return (float)std::sqrt(total);
++}
++
++}
++
++bool vpx_music_decode(const std::string &p_path, Extractor &r_extractor, std::atomic<bool> *p_cancel, std::atomic<float> *p_progress, std::string &r_error) {
++	AVFormatContext *format = nullptr;
++	if (avformat_open_input(&format, p_path.c_str(), nullptr, nullptr) < 0) {
++		r_error = "cannot open file";
++		return false;
++	}
++	if (avformat_find_stream_info(format, nullptr) < 0) {
++		avformat_close_input(&format);
++		r_error = "cannot read file";
++		return false;
++	}
++	const AVCodec *codec = nullptr;
++	const int index = av_find_best_stream(format, AVMEDIA_TYPE_AUDIO, -1, -1, &codec, 0);
++	if (index < 0 || codec == nullptr) {
++		avformat_close_input(&format);
++		r_error = "no audio";
++		return false;
++	}
++	AVStream *stream = format->streams[index];
++	AVCodecContext *context = avcodec_alloc_context3(codec);
++	bool ok = context != nullptr && avcodec_parameters_to_context(context, stream->codecpar) >= 0 && avcodec_open2(context, codec, nullptr) >= 0;
++	double duration = 0.0;
++	if (stream->duration != AV_NOPTS_VALUE) {
++		duration = stream->duration * av_q2d(stream->time_base);
++	} else if (format->duration != AV_NOPTS_VALUE) {
++		duration = format->duration / (double)AV_TIME_BASE;
++	}
++	SwrContext *swr = nullptr;
++	AVChannelLayout mono;
++	av_channel_layout_default(&mono, 1);
++	if (ok && context->sample_rate > 0 && context->ch_layout.nb_channels > 0) {
++		ok = swr_alloc_set_opts2(&swr, &mono, AV_SAMPLE_FMT_FLT, VPXMusicAnalysis::SAMPLE_RATE, &context->ch_layout, context->sample_fmt, context->sample_rate, 0, nullptr) >= 0 && swr_init(swr) >= 0;
++	} else {
++		ok = false;
++	}
++	AVPacket *packet = av_packet_alloc();
++	AVFrame *frame = av_frame_alloc();
++	std::vector<float> chunk;
++	const size_t limit = (size_t)(VPXMusicAnalysis::MAX_SECONDS * VPXMusicAnalysis::SAMPLE_RATE);
++	if (!ok || packet == nullptr || frame == nullptr) {
++		r_error = "cannot decode audio";
++		ok = false;
++	} else {
++		bool draining = false;
++		bool done = false;
++		while (!done) {
++			if (p_cancel != nullptr && p_cancel->load()) {
++				r_error = "cancelled";
++				ok = false;
++				break;
++			}
++			if (!draining) {
++				const int read = av_read_frame(format, packet);
++				if (read < 0) {
++					draining = true;
++					avcodec_send_packet(context, nullptr);
++				} else if (packet->stream_index != index) {
++					av_packet_unref(packet);
++					continue;
++				} else {
++					avcodec_send_packet(context, packet);
++					av_packet_unref(packet);
++				}
++			}
++			while (true) {
++				const int received = avcodec_receive_frame(context, frame);
++				if (received == AVERROR(EAGAIN)) {
++					done = draining;
++					break;
++				}
++				if (received < 0) {
++					done = true;
++					break;
++				}
++				const int capacity = (int)av_rescale_rnd(swr_get_delay(swr, context->sample_rate) + frame->nb_samples, VPXMusicAnalysis::SAMPLE_RATE, context->sample_rate, AV_ROUND_UP) + 32;
++				chunk.resize(capacity);
++				uint8_t *out = reinterpret_cast<uint8_t *>(chunk.data());
++				const int got = swr_convert(swr, &out, capacity, (const uint8_t **)frame->extended_data, frame->nb_samples);
++				if (got > 0) {
++					r_extractor.push(chunk.data(), got);
++				}
++				if (p_progress != nullptr && duration > 0.0 && frame->pts != AV_NOPTS_VALUE) {
++					p_progress->store((float)std::clamp(frame->pts * av_q2d(stream->time_base) / duration * 0.8, 0.0, 0.8));
++				}
++				av_frame_unref(frame);
++				if (r_extractor.sample_count() >= limit) {
++					done = true;
++					break;
++				}
++			}
++		}
++		if (ok) {
++			chunk.resize(4096);
++			uint8_t *out = reinterpret_cast<uint8_t *>(chunk.data());
++			const int got = swr_convert(swr, &out, 4096, nullptr, 0);
++			if (got > 0) {
++				r_extractor.push(chunk.data(), got);
++			}
++		}
++	}
++	av_frame_free(&frame);
++	av_packet_free(&packet);
++	swr_free(&swr);
++	avcodec_free_context(&context);
++	avformat_close_input(&format);
++	if (ok && r_extractor.sample_count() == 0) {
++		r_error = "audio is empty";
++		ok = false;
++	}
++	return ok;
++}
++
++static bool vpx_music_build(Extractor &p_extractor, VPXMusicMap &r_map, std::atomic<bool> *p_cancel, std::atomic<float> *p_progress) {
++	p_extractor.finish();
++	const Frames &frames = p_extractor.frames;
++	const double rate = (double)VPXMusicAnalysis::SAMPLE_RATE / VPXMusicAnalysis::HOP;
++	const int count = frames.count;
++	r_map = VPXMusicMap();
++	r_map.rate = rate;
++	r_map.analysed = (double)p_extractor.sample_count() / VPXMusicAnalysis::SAMPLE_RATE;
++	r_map.duration = r_map.analysed;
++	if (count < 4) {
++		return true;
++	}
++	auto cancelled = [&]() { return p_cancel != nullptr && p_cancel->load(); };
++	auto report = [&](float p_value) {
++		if (p_progress != nullptr) {
++			p_progress->store(p_value);
++		}
++	};
++	const std::vector<float> loud_db = to_db(frames.rms);
++	const float top = std::max(percentile(loud_db, 0.97), -80.0f);
++	const bool silent = top <= -80.0f;
++	r_map.loudness = normalise_db(loud_db, 36.0f, top);
++	r_map.bass = normalise_db(to_db(frames.bass), 36.0f, top);
++	r_map.brightness.resize(count);
++	for (int t = 0; t < count; t++) {
++		const float centroid = frames.centroid[t];
++		r_map.brightness[t] = centroid > 0.0f ? std::clamp((float)(std::log2(centroid / 250.0) / std::log2(6000.0 / 250.0)), 0.0f, 1.0f) * r_map.loudness[t] : 0.0f;
++	}
++	smooth(r_map.brightness, 0.08, rate);
++	report(0.84f);
++	if (cancelled()) {
++		return false;
++	}
++	const std::vector<float> lows = low_flux(frames);
++	r_map.percussive = normalise_db(to_db(frames.percussive), 36.0f, top);
++	r_map.harmonic = normalise_db(to_db(frames.harmonic), 36.0f, top);
++	smooth(r_map.harmonic, 0.15, rate);
++	report(0.9f);
++	if (cancelled()) {
++		return false;
++	}
++	std::vector<float> onset = onset_envelope(frames);
++	const float onset_top = std::max(1e-6f, percentile(onset, 0.99));
++	r_map.onset.resize(count);
++	for (int t = 0; t < count; t++) {
++		r_map.onset[t] = silent ? 0.0f : std::clamp(onset[t] / onset_top, 0.0f, 1.0f);
++	}
++	std::vector<float> density = r_map.onset;
++	smooth(density, 1.0, rate);
++	const float density_top = std::max(1e-6f, percentile(density, 0.97));
++	std::vector<float> bass_slow = r_map.bass;
++	smooth(bass_slow, 0.5, rate);
++	std::vector<float> loud_slow = r_map.loudness;
++	smooth(loud_slow, 0.5, rate);
++	r_map.intensity.resize(count);
++	for (int t = 0; t < count; t++) {
++		r_map.intensity[t] = std::clamp(0.45f * loud_slow[t] + 0.3f * bass_slow[t] + 0.25f * std::min(1.0f, density[t] / density_top), 0.0f, 1.0f);
++	}
++	smooth(r_map.intensity, 0.5, rate);
++	{
++		const float floor_level = percentile(r_map.intensity, 0.05);
++		const float span = std::max(0.25f, percentile(r_map.intensity, 0.97) - floor_level);
++		for (float &value : r_map.intensity) {
++			value = std::clamp((value - floor_level) / span, 0.0f, 1.0f);
++		}
++	}
++	std::vector<double> beat_frames;
++	if (!silent) {
++		const double period = estimate_period(onset, rate);
++		beat_frames = track_beats(onset, period);
++	}
++	report(0.94f);
++	if (cancelled()) {
++		return false;
++	}
++	for (double frame : beat_frames) {
++		r_map.beats.push_back((float)(frame / rate + BEAT_OFFSET));
++	}
++	const int beat_count = (int)r_map.beats.size();
++	if (beat_count >= 2) {
++		std::vector<float> intervals;
++		for (int i = 1; i < beat_count; i++) {
++			intervals.push_back(r_map.beats[i] - r_map.beats[i - 1]);
++		}
++		r_map.tempo = 60.0 / std::max(1e-3f, percentile(intervals, 0.5));
++	}
++	float strongest = 1e-6f;
++	for (int i = 0; i < beat_count; i++) {
++		r_map.beat_strength.push_back(sample_curve(onset, r_map.beats[i], rate));
++		strongest = std::max(strongest, r_map.beat_strength.back());
++	}
++	for (float &value : r_map.beat_strength) {
++		value = std::clamp(value / strongest, 0.0f, 1.0f);
++	}
++	const int C = VPXMusicAnalysis::CHROMA;
++	auto chroma_between = [&](double p_from, double p_to, float *r_out) {
++		std::fill(r_out, r_out + C, 0.0f);
++		const int lo = std::clamp((int)std::floor(p_from * rate), 0, count - 1);
++		const int hi = std::clamp((int)std::ceil(p_to * rate), lo + 1, count);
++		double norm = 0.0;
++		for (int t = lo; t < hi; t++) {
++			for (int c = 0; c < C; c++) {
++				r_out[c] += frames.chroma[(size_t)t * C + c];
++			}
++		}
++		for (int c = 0; c < C; c++) {
++			norm += (double)r_out[c] * r_out[c];
++		}
++		norm = std::sqrt(norm);
++		for (int c = 0; c < C; c++) {
++			r_out[c] = norm > 1e-9 ? (float)(r_out[c] / norm) : 0.0f;
++		}
++	};
++	int phase = 0;
++	if (beat_count >= 8) {
++		std::vector<float> low(beat_count, 0.0f);
++		std::vector<float> change(beat_count, 0.0f);
++		double low_mean = 0.0;
++		double change_mean = 0.0;
++		for (int i = 0; i < beat_count; i++) {
++			const int t = std::clamp((int)std::lround((r_map.beats[i] - BEAT_OFFSET) * rate), 0, count - 1);
++			float peak = 0.0f;
++			for (int u = std::max(0, t - 2); u <= std::min(count - 1, t + 2); u++) {
++				peak = std::max(peak, lows[u]);
++			}
++			low[i] = peak;
++			if (i > 0 && i + 1 < beat_count) {
++				float before[C];
++				float after[C];
++				chroma_between(r_map.beats[i - 1], r_map.beats[i], before);
++				chroma_between(r_map.beats[i], r_map.beats[i + 1], after);
++				float dot = 0.0f;
++				for (int c = 0; c < C; c++) {
++					dot += before[c] * after[c];
++				}
++				change[i] = std::max(0.0f, 1.0f - dot);
++			}
++			low_mean += low[i];
++			change_mean += change[i];
++		}
++		low_mean = std::max(1e-9, low_mean / beat_count);
++		change_mean = std::max(1e-9, change_mean / beat_count);
++		double best = -1.0;
++		for (int p = 0; p < 4; p++) {
++			double total = 0.0;
++			int used = 0;
++			for (int i = p; i < beat_count; i += 4) {
++				total += low[i] / low_mean + change[i] / change_mean;
++				used++;
++			}
++			const double score = used > 0 ? total / used : 0.0;
++			if (score > best) {
++				best = score;
++				phase = p;
++			}
++		}
++		for (int i = phase; i < beat_count; i += 4) {
++			r_map.downbeats.push_back(r_map.beats[i]);
++		}
++	}
++	r_map.sections.push_back(0.0f);
++	const int units = beat_count - 1;
++	std::vector<int> boundaries;
++	if (units >= SECTION_KERNEL * 2) {
++		const int dim = C + TIMBRE + 1;
++		std::vector<float> features((size_t)units * dim, 0.0f);
++		const int B = VPXMusicAnalysis::BANDS;
++		const int group = B / TIMBRE;
++		for (int u = 0; u < units; u++) {
++			float *row = features.data() + (size_t)u * dim;
++			chroma_between(r_map.beats[u], r_map.beats[u + 1], row);
++			const int lo = std::clamp((int)std::floor((r_map.beats[u] - BEAT_OFFSET) * rate), 0, count - 1);
++			const int hi = std::clamp((int)std::ceil((r_map.beats[u + 1] - BEAT_OFFSET) * rate), lo + 1, count);
++			for (int t = lo; t < hi; t++) {
++				for (int b = 0; b < B; b++) {
++					row[C + b / group] += 20.0f * std::log10(std::max(frames.bands[(size_t)t * B + b], 1e-6f)) / (float)(group * (hi - lo));
++				}
++			}
++			row[C + TIMBRE] = mean_between(r_map.loudness, r_map.beats[u], r_map.beats[u + 1], rate);
++		}
++		for (int d = C; d < dim; d++) {
++			double mean = 0.0;
++			double square = 0.0;
++			for (int u = 0; u < units; u++) {
++				mean += features[(size_t)u * dim + d];
++			}
++			mean /= units;
++			for (int u = 0; u < units; u++) {
++				const double v = features[(size_t)u * dim + d] - mean;
++				square += v * v;
++			}
++			const double deviation = std::max(1e-6, std::sqrt(square / units));
++			const double weight = d == C + TIMBRE ? 0.6 : 1.0 / std::sqrt((double)TIMBRE);
++			for (int u = 0; u < units; u++) {
++				float &v = features[(size_t)u * dim + d];
++				v = (float)((v - mean) / deviation * weight);
++			}
++		}
++		const int K = SECTION_KERNEL;
++		std::vector<double> taper(K);
++		for (int k = 0; k < K; k++) {
++			const double x = (k + 0.5) / (K * 0.5);
++			taper[k] = std::exp(-0.5 * x * x);
++		}
++		std::vector<double> novelty(beat_count, 0.0);
++		for (int i = 1; i < units; i++) {
++			if ((i & 63) == 0 && cancelled()) {
++				return false;
++			}
++			double cross = 0.0;
++			double cross_weight = 0.0;
++			double left = 0.0;
++			double right = 0.0;
++			double left_weight = 0.0;
++			double right_weight = 0.0;
++			for (int a = 0; a < K; a++) {
++				const int la = std::clamp(i - 1 - a, 0, units - 1);
++				const int ra = std::clamp(i + a, 0, units - 1);
++				for (int b = 0; b < K; b++) {
++					const int lb = std::clamp(i - 1 - b, 0, units - 1);
++					const int rb = std::clamp(i + b, 0, units - 1);
++					const double w = taper[a] * taper[b];
++					cross += w * distance(features, dim, la, rb);
++					cross_weight += w;
++					if (b > a) {
++						left += w * distance(features, dim, la, lb);
++						right += w * distance(features, dim, ra, rb);
++						left_weight += w;
++						right_weight += w;
++					}
++				}
++			}
++			novelty[i] = cross / cross_weight - 0.5 * (left / std::max(1e-9, left_weight) + right / std::max(1e-9, right_weight));
++		}
++		double mean = 0.0;
++		double square = 0.0;
++		for (int i = 1; i < units; i++) {
++			mean += novelty[i];
++		}
++		mean /= std::max(1, units - 1);
++		for (int i = 1; i < units; i++) {
++			square += (novelty[i] - mean) * (novelty[i] - mean);
++		}
++		std::vector<float> spread(novelty.begin() + 1, novelty.begin() + units);
++		const double middle = percentile(spread, 0.5);
++		for (float &value : spread) {
++			value = std::abs(value - (float)middle);
++		}
++		const double threshold = std::max(SECTION_FLOOR, middle + 1.5 * 1.4826 * percentile(spread, 0.5));
++		for (int i = 0; i < beat_count; i++) {
++			r_map.novelty.push_back((float)novelty[i]);
++		}
++		std::vector<int> candidates;
++		for (int i = 4; i < units - 3; i++) {
++			if (novelty[i] <= threshold || novelty[i] <= 0.0) {
++				continue;
++			}
++			bool peak = true;
++			for (int j = std::max(1, i - 8); j <= std::min(units - 1, i + 8) && peak; j++) {
++				peak = j == i || novelty[j] < novelty[i] || (novelty[j] == novelty[i] && j > i);
++			}
++			if (peak) {
++				candidates.push_back(i);
++			}
++		}
++		std::sort(candidates.begin(), candidates.end(), [&](int a, int b) { return novelty[a] > novelty[b]; });
++		for (int candidate : candidates) {
++			bool spaced = true;
++			for (int accepted : boundaries) {
++				spaced = spaced && std::abs(accepted - candidate) >= SECTION_SPACING;
++			}
++			if (spaced) {
++				boundaries.push_back(candidate);
++			}
++		}
++		for (int &boundary : boundaries) {
++			const int offset = ((boundary - phase) % 4 + 4) % 4;
++			if (offset == 1) {
++				boundary -= 1;
++			} else if (offset == 3) {
++				boundary += 1;
++			} else if (offset == 2 && novelty[std::max(1, boundary - 2)] >= novelty[std::min(units - 1, boundary + 2)]) {
++				boundary -= 2;
++			} else if (offset == 2) {
++				boundary += 2;
++			}
++			boundary = std::clamp(boundary, 1, beat_count - 1);
++		}
++		std::sort(boundaries.begin(), boundaries.end());
++		boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
++		for (int boundary : boundaries) {
++			r_map.sections.push_back(r_map.beats[boundary]);
++		}
++		const int section_count = (int)r_map.sections.size();
++		std::vector<std::vector<double>> means(section_count, std::vector<double>(dim, 0.0));
++		for (int s = 0; s < section_count; s++) {
++			const int from = s == 0 ? 0 : boundaries[s - 1];
++			const int to = s + 1 < section_count ? boundaries[s] : units;
++			for (int u = from; u < to; u++) {
++				for (int d = 0; d < dim; d++) {
++					means[s][d] += features[(size_t)u * dim + d] / std::max(1, to - from);
++				}
++			}
++		}
++		std::vector<double> pairs;
++		auto section_distance = [&](int a, int b) {
++			double total = 0.0;
++			for (int d = 0; d < dim; d++) {
++				total += (means[a][d] - means[b][d]) * (means[a][d] - means[b][d]);
++			}
++			return std::sqrt(total);
++		};
++		for (int a = 0; a < section_count; a++) {
++			for (int b = a + 1; b < section_count; b++) {
++				pairs.push_back(section_distance(a, b));
++			}
++		}
++		double limit = 0.0;
++		if (!pairs.empty()) {
++			std::nth_element(pairs.begin(), pairs.begin() + pairs.size() / 2, pairs.end());
++			limit = pairs[pairs.size() / 2] * 0.5;
++		}
++		int groups = 0;
++		for (int s = 0; s < section_count; s++) {
++			int assigned = -1;
++			for (int previous = 0; previous < s && assigned < 0; previous++) {
++				if (section_distance(s, previous) < limit) {
++					assigned = (int)r_map.section_group[previous];
++				}
++			}
++			if (assigned < 0) {
++				assigned = groups++;
++			}
++			r_map.section_group.push_back((float)assigned);
++		}
++	} else {
++		r_map.section_group.push_back(0.0f);
++	}
++	const int section_count = (int)r_map.sections.size();
++	std::vector<float> energies;
++	for (int s = 0; s < section_count; s++) {
++		const double from = r_map.sections[s];
++		const double to = s + 1 < section_count ? r_map.sections[s + 1] : r_map.duration;
++		energies.push_back(mean_between(r_map.intensity, from, to, rate));
++	}
++	for (float energy : energies) {
++		r_map.section_energy.push_back(std::clamp(energy, 0.0f, 1.0f));
++	}
++	report(0.97f);
++	if (beat_count >= 24) {
++		const float typical = percentile(r_map.intensity, 0.5);
++		std::vector<int> drop_beats;
++		std::vector<int> candidates = boundaries;
++		for (int candidate : candidates) {
++			int best = -1;
++			float best_jump = 0.0f;
++			for (int j = std::max(4, candidate - 2); j <= std::min(beat_count - 8, candidate + 2); j++) {
++				if (((j - phase) % 4 + 4) % 4 != 0) {
++					continue;
++				}
++				const double at = r_map.beats[j];
++				const double after = r_map.beats[std::min(beat_count - 1, j + 16)];
++				const double before = r_map.beats[std::max(0, j - 4)];
++				const float jump = mean_between(r_map.bass, at, after, rate) - mean_between(r_map.bass, before, at, rate);
++				if (jump > best_jump) {
++					best_jump = jump;
++					best = j;
++				}
++			}
++			if (best < 0 || best_jump < 0.2f) {
++				continue;
++			}
++			const double at = r_map.beats[best];
++			const double after = r_map.beats[std::min(beat_count - 1, best + 16)];
++			const double before = r_map.beats[std::max(0, best - 8)];
++			const float lift = mean_between(r_map.intensity, at, after, rate) - mean_between(r_map.intensity, before, at, rate);
++			if (lift < 0.12f || mean_between(r_map.intensity, at, after, rate) < typical) {
++				continue;
++			}
++			bool spaced = true;
++			for (int accepted : drop_beats) {
++				spaced = spaced && std::abs(accepted - best) >= 16;
++			}
++			if (spaced) {
++				drop_beats.push_back(best);
++			}
++		}
++		std::sort(drop_beats.begin(), drop_beats.end());
++		for (int j : drop_beats) {
++			const double at = r_map.beats[j];
++			const float bass_after = mean_between(r_map.bass, at, r_map.beats[std::min(beat_count - 1, j + 16)], rate);
++			int span = 0;
++			std::vector<float> bar_energy;
++			for (int k = 1; k <= 16 && j - 4 * k >= 0; k++) {
++				const double from = r_map.beats[j - 4 * k];
++				const double to = r_map.beats[j - 4 * k + 4];
++				if (mean_between(r_map.bass, from, to, rate) >= bass_after * 0.6f) {
++					break;
++				}
++				span = k;
++				bar_energy.push_back(mean_between(r_map.intensity, from, to, rate));
++			}
++			int start_bar = span > 0 ? std::min(span, 8) : 2;
++			if (span > 8) {
++				int lowest = 1;
++				for (int k = 2; k <= span; k++) {
++					if (bar_energy[k - 1] < bar_energy[lowest - 1] - 0.01f) {
++						lowest = k;
++					}
++				}
++				start_bar = std::max(8, lowest);
++			}
++			r_map.drops.push_back((float)at);
++			r_map.build_starts.push_back(r_map.beats[std::max(0, j - 4 * start_bar)]);
++		}
++	}
++	report(1.0f);
++	return true;
++}
++
++void VPXMusicAnalysis::_bind_methods() {
++	ClassDB::bind_method(D_METHOD("start", "path"), &VPXMusicAnalysis::start);
++	ClassDB::bind_method(D_METHOD("cancel"), &VPXMusicAnalysis::cancel);
++	ClassDB::bind_method(D_METHOD("stop"), &VPXMusicAnalysis::stop);
++	ClassDB::bind_method(D_METHOD("is_running"), &VPXMusicAnalysis::is_running);
++	ClassDB::bind_method(D_METHOD("is_done"), &VPXMusicAnalysis::is_done);
++	ClassDB::bind_method(D_METHOD("get_progress"), &VPXMusicAnalysis::get_progress);
++	ClassDB::bind_method(D_METHOD("get_error"), &VPXMusicAnalysis::get_error);
++	ClassDB::bind_method(D_METHOD("get_result"), &VPXMusicAnalysis::get_result);
++	ClassDB::bind_method(D_METHOD("analyze_samples", "samples", "rate"), &VPXMusicAnalysis::analyze_samples);
++	ClassDB::bind_method(D_METHOD("get_version"), &VPXMusicAnalysis::get_version);
++}
++
++static PackedFloat32Array packed(const std::vector<float> &p_values) {
++	PackedFloat32Array result;
++	result.resize((int64_t)p_values.size());
++	if (!p_values.empty()) {
++		memcpy(result.ptrw(), p_values.data(), p_values.size() * sizeof(float));
++	}
++	return result;
++}
++
++Dictionary VPXMusicAnalysis::to_dictionary(const VPXMusicMap &p_map) {
++	Dictionary result;
++	result["version"] = VERSION;
++	result["rate"] = p_map.rate;
++	result["duration"] = p_map.duration;
++	result["analysed"] = p_map.analysed;
++	result["tempo"] = p_map.tempo;
++	result["beats"] = packed(p_map.beats);
++	result["beat_strength"] = packed(p_map.beat_strength);
++	result["downbeats"] = packed(p_map.downbeats);
++	result["sections"] = packed(p_map.sections);
++	result["section_energy"] = packed(p_map.section_energy);
++	result["section_group"] = packed(p_map.section_group);
++	result["drops"] = packed(p_map.drops);
++	result["build_starts"] = packed(p_map.build_starts);
++	result["loudness"] = packed(p_map.loudness);
++	result["bass"] = packed(p_map.bass);
++	result["percussive"] = packed(p_map.percussive);
++	result["harmonic"] = packed(p_map.harmonic);
++	result["brightness"] = packed(p_map.brightness);
++	result["onset"] = packed(p_map.onset);
++	result["intensity"] = packed(p_map.intensity);
++	result["novelty"] = packed(p_map.novelty);
++	return result;
++}
++
++bool VPXMusicAnalysis::analyse_file(const std::string &p_path, VPXMusicMap &r_map, std::atomic<bool> *p_cancel, std::atomic<float> *p_progress, std::string &r_error) {
++	Extractor extractor;
++	if (!vpx_music_decode(p_path, extractor, p_cancel, p_progress, r_error)) {
++		return false;
++	}
++	if (!vpx_music_build(extractor, r_map, p_cancel, p_progress)) {
++		r_error = "cancelled";
++		return false;
++	}
++	return true;
++}
++
++bool VPXMusicAnalysis::analyse(const std::vector<float> &p_samples, VPXMusicMap &r_map, std::atomic<bool> *p_cancel, std::atomic<float> *p_progress) {
++	Extractor extractor;
++	extractor.push(p_samples.data(), p_samples.size());
++	return vpx_music_build(extractor, r_map, p_cancel, p_progress);
++}
++
++void VPXMusicAnalysis::_run(std::string p_path) {
++	VPXMusicMap result;
++	std::string failure;
++	const bool ok = analyse_file(p_path, result, &cancelled, &progress, failure);
++	{
++		std::lock_guard<std::mutex> lock(mutex);
++		if (ok) {
++			map = std::move(result);
++			has_map = true;
++		} else {
++			error = failure;
++		}
++	}
++	running.store(false);
++	finished.store(true);
++}
++
++void VPXMusicAnalysis::_join() {
++	if (worker.joinable()) {
++		worker.join();
++	}
++}
++
++bool VPXMusicAnalysis::start(const String &p_path) {
++	if (running.load()) {
++		return false;
++	}
++	_join();
++	{
++		std::lock_guard<std::mutex> lock(mutex);
++		error.clear();
++		map = VPXMusicMap();
++		has_map = false;
++	}
++	cancelled.store(false);
++	finished.store(false);
++	progress.store(0.0f);
++	running.store(true);
++	worker = std::thread(&VPXMusicAnalysis::_run, this, std::string(p_path.utf8().get_data()));
++	return true;
++}
++
++void VPXMusicAnalysis::cancel() {
++	cancelled.store(true);
++	_join();
++}
++
++void VPXMusicAnalysis::stop() {
++	cancelled.store(true);
++}
++
++String VPXMusicAnalysis::get_error() const {
++	std::lock_guard<std::mutex> lock(mutex);
++	return String::utf8(error.c_str());
++}
++
++Dictionary VPXMusicAnalysis::get_result() const {
++	std::lock_guard<std::mutex> lock(mutex);
++	return has_map ? to_dictionary(map) : Dictionary();
++}
++
++Dictionary VPXMusicAnalysis::analyze_samples(const PackedFloat32Array &p_samples, int p_rate) {
++	std::vector<float> samples(p_samples.ptr(), p_samples.ptr() + p_samples.size());
++	if (p_rate != SAMPLE_RATE && p_rate > 0 && !samples.empty()) {
++		std::vector<float> resampled((size_t)((double)samples.size() * SAMPLE_RATE / p_rate));
++		for (size_t i = 0; i < resampled.size(); i++) {
++			const double position = (double)i * p_rate / SAMPLE_RATE;
++			const size_t index = std::min(samples.size() - 1, (size_t)position);
++			const size_t next = std::min(samples.size() - 1, index + 1);
++			resampled[i] = samples[index] + (samples[next] - samples[index]) * (float)(position - index);
++		}
++		samples.swap(resampled);
++	}
++	VPXMusicMap result;
++	if (!analyse(samples, result, nullptr, nullptr)) {
++		return Dictionary();
++	}
++	return to_dictionary(result);
++}
++
++VPXMusicAnalysis::~VPXMusicAnalysis() {
++	cancelled.store(true);
++	_join();
++}
++
++#endif
+diff --git a/vpx_music_analysis.h b/vpx_music_analysis.h
+new file mode 100644
+index 0000000..7d544c6
+--- /dev/null
++++ b/vpx_music_analysis.h
+@@ -0,0 +1,92 @@
++#ifndef VPX_MUSIC_ANALYSIS_H
++#define VPX_MUSIC_ANALYSIS_H
++
++#ifdef GDEXTENSION
++
++#include <godot_cpp/classes/ref_counted.hpp>
++#include <godot_cpp/variant/dictionary.hpp>
++#include <godot_cpp/variant/packed_float32_array.hpp>
++#include <godot_cpp/variant/string.hpp>
++
++#include <atomic>
++#include <mutex>
++#include <string>
++#include <thread>
++#include <vector>
++
++using namespace godot;
++
++struct VPXMusicMap {
++	double rate = 0.0;
++	double duration = 0.0;
++	double analysed = 0.0;
++	double tempo = 0.0;
++	std::vector<float> beats;
++	std::vector<float> beat_strength;
++	std::vector<float> downbeats;
++	std::vector<float> sections;
++	std::vector<float> section_energy;
++	std::vector<float> section_group;
++	std::vector<float> drops;
++	std::vector<float> build_starts;
++	std::vector<float> loudness;
++	std::vector<float> bass;
++	std::vector<float> percussive;
++	std::vector<float> harmonic;
++	std::vector<float> brightness;
++	std::vector<float> onset;
++	std::vector<float> intensity;
++	std::vector<float> novelty;
++};
++
++class VPXMusicAnalysis : public RefCounted {
++	GDCLASS(VPXMusicAnalysis, RefCounted);
++
++public:
++	static constexpr int SAMPLE_RATE = 22050;
++	static constexpr int FFT_SIZE = 2048;
++	static constexpr int HOP = 512;
++	static constexpr int BANDS = 48;
++	static constexpr int CHROMA = 12;
++	static constexpr double MAX_SECONDS = 7200.0;
++	static constexpr int VERSION = 3;
++
++private:
++	std::thread worker;
++	std::atomic<bool> cancelled = false;
++	std::atomic<bool> running = false;
++	std::atomic<bool> finished = false;
++	std::atomic<float> progress = 0.0f;
++	mutable std::mutex mutex;
++	std::string error;
++	VPXMusicMap map;
++	bool has_map = false;
++
++	void _run(std::string p_path);
++	void _join();
++
++protected:
++	static void _bind_methods();
++
++public:
++	static bool analyse_file(const std::string &p_path, VPXMusicMap &r_map, std::atomic<bool> *p_cancel, std::atomic<float> *p_progress, std::string &r_error);
++	static bool analyse(const std::vector<float> &p_samples, VPXMusicMap &r_map, std::atomic<bool> *p_cancel, std::atomic<float> *p_progress);
++	static Dictionary to_dictionary(const VPXMusicMap &p_map);
++
++	bool start(const String &p_path);
++	void cancel();
++	void stop();
++	bool is_running() const { return running.load(); }
++	bool is_done() const { return finished.load(); }
++	float get_progress() const { return progress.load(); }
++	String get_error() const;
++	Dictionary get_result() const;
++	Dictionary analyze_samples(const PackedFloat32Array &p_samples, int p_rate);
++	int get_version() const { return VERSION; }
++
++	~VPXMusicAnalysis();
++};
++
++#endif
++
++#endif

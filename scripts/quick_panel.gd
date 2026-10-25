@@ -135,6 +135,9 @@ func _header_button(text: String, icon_name: String) -> Button:
 	var button := Button.new()
 	button.text = text
 	button.icon = VpxTheme.icon(icon_name, 26)
+	var tip: String = {"close": "Close quick controls", "trash": "Delete this bookmark", "keyboard": "Rename this bookmark"}.get(icon_name, "")
+	if not tip.is_empty():
+		Tooltips.set_text(button, tip)
 	button.theme_type_variation = &"Chip"
 	button.focus_mode = FOCUS_NONE
 	button.custom_minimum_size = Vector2(TAB_HEIGHT, TAB_HEIGHT)
@@ -201,6 +204,7 @@ func _build_format(page: VBoxContainer) -> void:
 	for i in Settings.FORMAT_PRESETS.size():
 		var button := Button.new()
 		button.text = Settings.FORMAT_PRESETS[i][0]
+		Tooltips.set_text(button, "Use " + str(Settings.FORMAT_PRESETS[i][0]).replace("SBS", "side-by-side").replace("OU", "top-and-bottom").replace("mono", "2D") + " format")
 		button.toggle_mode = true
 		button.focus_mode = FOCUS_NONE
 		button.size_flags_horizontal = SIZE_EXPAND_FILL
@@ -304,6 +308,7 @@ func _build_marks(page: VBoxContainer) -> void:
 	bookmark_name_field.text_submitted.connect(func(_text: String) -> void: _save_bookmark_name())
 	bookmark_editor.add_child(bookmark_name_field)
 	bookmark_presets = OptionButton.new()
+	Tooltips.set_text(bookmark_presets, "Choose a preset bookmark name")
 	bookmark_presets.fit_to_longest_item = false
 	bookmark_presets.clip_text = true
 	bookmark_presets.action_mode = BaseButton.ACTION_MODE_BUTTON_RELEASE
@@ -359,6 +364,19 @@ func _save_bookmark_name() -> void:
 func _action(text: String, icon_name: String) -> Button:
 	var button := Button.new()
 	button.text = text
+	var tip: String = {
+		"Center screen here": "Center the screen where you are looking (R)",
+		"Reset picture position": "Reset picture orientation and photo pan",
+		"Reset to Level": "Straighten the picture horizon",
+		"Top": "Scroll to subtitle tracks",
+		"Style": "Scroll to subtitle appearance settings",
+		"Save size for this format": "Save subtitle size for this projection and 2D / 3D layout",
+		"Add bookmark": "Bookmark current playback position (B)",
+		"Clear loop": "Remove A–B loop points (Shift+L)",
+		"Keyboard": "Edit bookmark name with the on-screen keyboard",
+	}.get(text, "")
+	if not tip.is_empty():
+		Tooltips.set_text(button, tip)
 	button.icon = VpxTheme.icon(icon_name, 24)
 	button.focus_mode = FOCUS_NONE
 	button.size_flags_horizontal = SIZE_EXPAND_FILL
@@ -376,6 +394,7 @@ func _rebuild_marks() -> void:
 		loop_button.text = "Loop: set B (A %s)" % MediaInfo.duration_text(player.loop_a)
 	else:
 		loop_button.text = "Looping %s – %s" % [MediaInfo.duration_text(player.loop_a), MediaInfo.duration_text(player.loop_b)]
+	Tooltips.set_text(loop_button, "Set loop start at current position (L)" if player.loop_a < 0.0 else ("Set loop end at current position (L)" if player.loop_b < 0.0 else "Start a new A–B loop at current position (L)"))
 	loop_clear.disabled = player.loop_a < 0.0
 	for child in bookmark_list.get_children():
 		child.queue_free()
@@ -602,10 +621,12 @@ class SubtitleFilePicker extends Control:
 		toolbar.add_theme_constant_override("separation", 8)
 		body.add_child(toolbar)
 		var back := _button("Back", "back")
+		Tooltips.set_text(back, "Go to parent folder")
 		back.custom_minimum_size.x = 110
 		back.pressed.connect(_go_parent)
 		toolbar.add_child(back)
 		var up := _button("Up", "up")
+		Tooltips.set_text(up, "Go to parent folder")
 		up.pressed.connect(_go_parent)
 		toolbar.add_child(up)
 		path_field = LineEdit.new()
@@ -615,7 +636,7 @@ class SubtitleFilePicker extends Control:
 		path_field.text_submitted.connect(_open_path)
 		toolbar.add_child(path_field)
 		var go := _button("Go", "forward")
-		go.tooltip_text = "Open the folder path above"
+		Tooltips.set_text(go, "Open the folder path to the left")
 		go.custom_minimum_size.x = 76
 		go.pressed.connect(func() -> void: _open_path(path_field.text))
 		toolbar.add_child(go)
@@ -985,6 +1006,7 @@ func _fill_list(list: VBoxContainer, entries: Array, selected: int, pick: Callab
 	for entry in entries:
 		var button := Button.new()
 		button.text = entry[0]
+		Tooltips.set_text(button, "Select " + str(entry[0]))
 		button.theme_type_variation = &"Chip"
 		button.toggle_mode = true
 		button.button_group = group

@@ -5,6 +5,14 @@ const STROKE := 2.0
 const HEADER := "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#ffffff\" stroke-width=\"%s\" stroke-linecap=\"round\" stroke-linejoin=\"round\">%s</svg>"
 const SOLID := "fill=\"#ffffff\" stroke=\"none\""
 const SHAPES := {
+	"more": '<circle cx="5" cy="12" r="1" fill="#ffffff"/><circle cx="12" cy="12" r="1" fill="#ffffff"/><circle cx="19" cy="12" r="1" fill="#ffffff"/>',
+	"cover_mode": '<rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1" fill="#ffffff" stroke="none"/>',
+	"opacity": '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="#ffffff" stroke="none"/>',
+	"audio_off": '<path d="M4 10v4M8 7v10M12 10v10M16 14v3M20 11v3M3 3l18 18"/>',
+	"mini_player": '<rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="11" width="7" height="6" rx="1" fill="#ffffff" stroke="none"/>',
+	"expand": '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>',
+	"minus": '<path d="M6 12h12"/>',
+	"pin": '<path d="m9 3 6 0-1 6 4 4v2h-5v6l-2-3v-3H6v-2l4-4z"/>',
 	"dice": '<rect x="3.5" y="3.5" width="17" height="17" rx="3"/><g fill="#ffffff" stroke="none"><circle cx="8" cy="8" r="1.5"/><circle cx="16" cy="8" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="8" cy="16" r="1.5"/><circle cx="16" cy="16" r="1.5"/></g>',
 	"play": "<path d=\"M7.5 4.8v14.4a.9.9 0 0 0 1.4.8l11.2-7.2a.9.9 0 0 0 0-1.6L8.9 4a.9.9 0 0 0-1.4.8z\" fill=\"#ffffff\" stroke=\"none\"/>",
 	"pause": "<rect x=\"5.5\" y=\"4.5\" width=\"4.5\" height=\"15\" rx=\"1.2\" fill=\"#ffffff\" stroke=\"none\"/><rect x=\"14\" y=\"4.5\" width=\"4.5\" height=\"15\" rx=\"1.2\" fill=\"#ffffff\" stroke=\"none\"/>",

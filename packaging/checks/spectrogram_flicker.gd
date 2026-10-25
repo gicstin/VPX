@@ -24,7 +24,7 @@ func run() -> void:
 		data[band] = 0.4 + 0.25 * sin(band * 0.3)
 		data[field.BANDS + band] = 0.5 + 0.2 * cos(band * 0.25)
 	DirAccess.make_dir_recursive_absolute("/tmp/vpx-spectrogram-flicker")
-	for index in range(field.SPECTROGRAM_START, settings.VISUALIZER_PRESETS.size()):
+	for index in range(field.SPECTROGRAM_START, field.WORLD_START):
 		settings.apply("visualizer_preset", index)
 		field.reset()
 		var title: String = settings.VISUALIZER_PRESETS[index]

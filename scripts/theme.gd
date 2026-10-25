@@ -490,7 +490,13 @@ static func _dialogs(theme: Theme) -> void:
 	for type in ["Window", "AcceptDialog", "ConfirmationDialog", "FileDialog"]:
 		theme.set_color("title_color", type, TEXT)
 		theme.set_color("title_outline_modulate", type, TRANSPARENT)
-	theme.set_stylebox("panel", "TooltipPanel", outlined(SURFACE, BORDER, 1, 10, 12, 8))
+	theme.set_type_variation("TooltipSurface", "PanelContainer")
+	var tooltip := outlined(SURFACE, BORDER, 1, RADIUS, 16, 12)
+	tooltip.shadow_color = SHADOW
+	tooltip.shadow_size = 8
+	theme.set_stylebox("panel", "TooltipSurface", tooltip)
+	theme.set_type_variation("TooltipLabel", "Label")
+	theme.set_font_size("font_size", "TooltipLabel", SMALL_FONT_SIZE)
 	theme.set_color("font_color", "TooltipLabel", TEXT)
 	theme.set_color("font_shadow_color", "TooltipLabel", TRANSPARENT)
 	theme.set_stylebox("panel", "ItemList", outlined(FIELD, BORDER, 1, 10, 8, 8))

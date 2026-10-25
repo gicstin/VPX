@@ -23,6 +23,8 @@ var ui_viewport: SubViewport
 var osd: FloatPanel
 var player: VPXPlayer
 
+var mini_player: Control
+var mini_button: Button
 var backdrop: ColorRect
 var menu_rect: TextureRect
 var osd_rect: TextureRect
@@ -75,6 +77,26 @@ func _ready() -> void:
 		reticle.visible = false
 	screen.flat_desktop = true
 	screen.refresh()
+	mini_player = preload("res://scripts/mini_player.gd").new()
+	mini_player.desktop = self
+	add_child(mini_player)
+	mini_button = Button.new()
+	mini_button.theme = VpxTheme.build()
+	mini_button.icon = VpxTheme.icon("mini_player", VpxTheme.ICON_SIZE)
+	mini_button.theme_type_variation = &"FlatIcon"
+	mini_button.custom_minimum_size = Vector2(60, 60)
+	mini_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	mini_button.focus_mode = Control.FOCUS_NONE
+	mini_button.expand_icon = true
+	mini_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mini_button.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
+	mini_button.add_theme_constant_override("h_separation", 0)
+	Tooltips.set_text(mini_button, "Mini player · Ctrl+Shift+M")
+	mini_button.pressed.connect(mini_player.enter)
+	var controls: Node = main.ui.get_node("%VolumeLabel").get_parent()
+	controls.add_child(mini_button)
+	controls.move_child(mini_button, main.ui.get_node("%VolumeLabel").get_index() + 1)
+
 
 
 func _build_seek_preview() -> void:
@@ -113,6 +135,14 @@ func _texture_rect(texture: Texture2D) -> TextureRect:
 func _process(delta: float) -> void:
 	var window := get_viewport().get_visible_rect().size
 	if window.x < 1.0 or window.y < 1.0:
+		return
+	mini_button.visible = main.desktop_mode and not mini_player.active and not mini_player.busy
+	if mini_player.active or mini_player.busy:
+		menu_rect.visible = false
+		backdrop.visible = false
+		osd_rect.visible = false
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		_fit_camera(window)
 		return
 	_layout_menu(window)
 	if not panel.visible:
@@ -167,6 +197,7 @@ func _is_flat() -> bool:
 
 
 func _fit_camera(window: Vector2) -> void:
+	camera.v_offset = 0.0
 	if not _is_flat():
 		var zoom: float = Settings.visualizer_zoom if main.resonance_field != null and main.resonance_field.active and not player.is_visualizer_overlay_active() else 1.0
 		camera.fov = rad_to_deg(2.0 * atan(tan(deg_to_rad(sphere_fov) * 0.5) / zoom))
@@ -176,7 +207,12 @@ func _fit_camera(window: Vector2) -> void:
 		return
 	camera.global_transform = Transform3D(screen.global_basis.orthonormalized(), screen.get_parent().global_position)
 	var tiles := float(Settings.flat_image_tiles()) if player.is_image() else 1.0
-	var height := maxf(quad.size.y, quad.size.x * window.y / window.x) / tiles
+	var available := window.y
+	if mini_player != null and mini_player.active and mini_player.picture and not mini_player.cover_mode:
+		available = maxf(1.0, window.y - (mini_player.HEADER + mini_player.FOOTER) * mini_player.ui_factor)
+	var height := maxf(quad.size.y * window.y / available, quad.size.x * window.y / window.x) / tiles
+	if available != window.y:
+		camera.v_offset = -(mini_player.FOOTER - mini_player.HEADER) * mini_player.ui_factor * height / (2.0 * window.y)
 	camera.fov = rad_to_deg(2.0 * atan(height * 0.5 / Settings.SCREEN_DISTANCE))
 
 
@@ -195,6 +231,9 @@ func toggle_fullscreen() -> void:
 func handle_key(event: InputEventKey) -> bool:
 	if not event.pressed or event.echo:
 		return false
+	if event.keycode == KEY_M and event.ctrl_pressed and event.shift_pressed:
+		mini_player.enter()
+		return true
 	if event.keycode == KEY_F11 or (event.keycode == KEY_ENTER and event.alt_pressed):
 		toggle_fullscreen()
 		return true
@@ -202,6 +241,8 @@ func handle_key(event: InputEventKey) -> bool:
 
 
 func handle_input(event: InputEvent) -> bool:
+	if mini_player.active or mini_player.busy:
+		return event is InputEventMouse
 	var mouse := event as InputEventMouse
 	if mouse == null:
 		return false

@@ -163,6 +163,16 @@ func _option(parent: Control, label: String) -> OptionButton:
 func _button(parent: Control, text: String, icon_name: String, action: Callable) -> Button:
 	var button := Button.new()
 	button.text = text
+	var tip: String = {
+		"Popular": "Find stations with the most clicks",
+		"Trending": "Find stations gaining clicks",
+		"Surprise me": "Find a random selection of stations",
+		"Saved stations": "Show saved favourite stations",
+		"Reset": "Clear station search and filters",
+		"Open stream URL": "Enter a radio or media stream URL",
+	}.get(text, "")
+	if not tip.is_empty():
+		Tooltips.set_text(button, tip)
 	button.icon = VpxTheme.icon(icon_name, 24)
 	button.theme_type_variation = &"Chip"
 	button.custom_minimum_size = Vector2(48, 48)

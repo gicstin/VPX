@@ -649,6 +649,7 @@ func _build_media_page() -> void:
 	save_size_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	save_size_row.add_child(save_size_label)
 	var save_size_button := _action_button("Save", "check")
+	Tooltips.set_text(save_size_button, "Save subtitle size for this projection and 2D / 3D layout")
 	save_size_button.pressed.connect(_save_subtitle_size_for_format)
 	save_size_row.add_child(save_size_button)
 	Rows.stepper(subtitles, "Position", &"subtitle_offset", -0.4, 0.5, 0.02, {"scale": 100.0, "suffix": "%"})
@@ -688,6 +689,7 @@ func _build_calibration() -> void:
 	Rows.toggle(rows, "Crop black bars automatically (flat videos)", &"auto_crop")
 	var reset := Button.new()
 	reset.text = "Reset lens & crop"
+	Tooltips.set_text(reset, "Reset field of view, lens correction, eye tilt and crop for this video")
 	reset.icon = VpxTheme.icon("reset", 22)
 	reset.focus_mode = FOCUS_NONE
 	reset.pressed.connect(func() -> void:
@@ -929,6 +931,7 @@ func _build_presets() -> void:
 	for i in Settings.FORMAT_PRESETS.size():
 		var button := Button.new()
 		button.text = Settings.FORMAT_PRESETS[i][0]
+		Tooltips.set_text(button, "Use " + str(Settings.FORMAT_PRESETS[i][0]).replace("SBS", "side-by-side").replace("OU", "top-and-bottom").replace("mono", "2D") + " format")
 		button.toggle_mode = true
 		button.button_group = preset_group
 		button.focus_mode = FOCUS_NONE
@@ -1030,6 +1033,7 @@ func _build_filter_row() -> void:
 		refresh_directory())
 	row.add_child(unplayed_filter_button)
 	query_chip = _action_button("", "close")
+	Tooltips.set_text(query_chip, "Clear library search")
 	query_chip.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	query_chip.pressed.connect(func() -> void: _set_query(""))
 	row.add_child(query_chip)
@@ -1061,6 +1065,22 @@ func _build_filter_row() -> void:
 func _action_button(text: String, icon_name: String) -> Button:
 	var button := Button.new()
 	button.text = text
+	var tip: String = {
+		"Search": "Search the library (Ctrl+F)",
+		"Install / update web tools": "Download or update tools used to open web video links",
+		"Get yt-dlp": "Download the tool used to resolve web video links",
+		"Add server": "Save and connect to a network share URL",
+		"Open link": "Open a media or stream URL",
+		"Scan network": "Discover media servers on the local network",
+		"Remove servers": "Choose saved server entries to remove",
+		"Edit name": "Edit the proposed filename with the on-screen keyboard",
+		"Undo rename": "Restore the filename from the last rename",
+		"Reset to Level": "Straighten the picture horizon",
+		"Import settings": "Load settings from a backup; save current settings as a rollback backup first",
+		"Export settings": "Save settings to a backup file; passwords and generated caches are excluded",
+	}.get(text, "")
+	if not tip.is_empty():
+		Tooltips.set_text(button, tip)
 	button.icon = VpxTheme.icon(icon_name, 24)
 	button.theme_type_variation = &"Chip"
 	button.focus_mode = FOCUS_NONE
@@ -1367,6 +1387,24 @@ func _build_cheat_sheet() -> void:
 
 
 func _decorate() -> void:
+	var tips := {
+		"CloseButton": "Close menu (Esc)",
+		"QuitButton": "Quit VPX",
+		"GridButton": "Show library as cover grid",
+		"ListButton": "Show library as detailed list",
+		"SortButton": "Choose library sort order",
+		"UpButton": "Go to parent folder (Backspace in Library)",
+		"PrevButton": "Previous file (P)",
+		"NextButton": "Next file (N)",
+		"BackButton": "Seek back 10 seconds (Left arrow)",
+		"ForwardButton": "Seek forward 10 seconds (Right arrow)",
+		"TuneButton": "Open quick picture and playback controls",
+		"SubtitleButton": "Choose subtitle track or load a subtitle file",
+		"PickButton": "Pick the passthrough key colour from the video",
+		"ResetPicture": "Reset screen and picture settings to defaults",
+	}
+	for node_name: String in tips:
+		Tooltips.set_text(get_node("%" + node_name), tips[node_name])
 	%Logo.texture = VpxTheme.icon("logo", 46)
 	%Logo.modulate = VpxTheme.ACCENT
 	%CloseButton.icon = VpxTheme.icon("close")
@@ -1440,6 +1478,9 @@ func _sync() -> void:
 		if player.is_image():
 			player.prefetch_images(_neighbor_images(player.current_path))
 		_refresh_now_playing()
+	Tooltips.set_text(shuffle_button, ("Disable" if Settings.shuffle else "Enable") + " shuffled playback (S)")
+	Tooltips.set_text(mute_button, ("Unmute" if Settings.muted or Settings.volume == 0 else "Mute") + " (M) · Wheel or thumbstick adjusts volume; right-click toggles mute")
+	Tooltips.set_text(%ResetAngles, "Reset photo pan" if Settings.projection == Settings.ProjectionMode.FLAT and (player.is_image() or Settings.flat_video_pan) else "Reset yaw, pitch and roll to defaults")
 	shuffle_button.set_pressed_no_signal(Settings.shuffle)
 	mute_button.set_pressed_no_signal(Settings.muted)
 	mute_button.icon = VpxTheme.icon("volume_off" if Settings.muted or Settings.volume == 0 else "volume")
@@ -1449,6 +1490,7 @@ func _sync() -> void:
 	end_button.icon = VpxTheme.icon(END_ACTIONS[end_index][0])
 	end_button.set_pressed_no_signal(Settings.end_action != Settings.EndAction.STOP)
 	end_label.text = END_ACTIONS[end_index][1]
+	Tooltips.set_text(end_button, "At end: " + str(END_ACTIONS[end_index][1]) + " · Click for " + str(END_ACTIONS[(end_index + 1) % END_ACTIONS.size()][1]))
 	for i in source_buttons.size():
 		source_buttons[i].set_pressed_no_signal(i == Settings.library_source)
 	for i in filter_buttons.size():
@@ -1589,6 +1631,7 @@ func _update_transport() -> void:
 	if play_button.get_meta("icon_name", "") != icon_name:
 		play_button.set_meta("icon_name", icon_name)
 		play_button.icon = VpxTheme.icon(icon_name, 36)
+		Tooltips.set_text(play_button, "Pause (Space)" if playing else "Play (Space)")
 	%BackButton.disabled = not player.can_seek()
 	%ForwardButton.disabled = not player.can_seek()
 	if seeking:
@@ -1622,12 +1665,18 @@ func nudge_volume(direction: int) -> void:
 
 func _on_volume_nudge_input(event: InputEvent) -> void:
 	var button := event as InputEventMouseButton
-	if button == null or not button.pressed:
+	if button == null:
 		return
-	if button.button_index != MOUSE_BUTTON_WHEEL_UP and button.button_index != MOUSE_BUTTON_WHEEL_DOWN:
-		return
-	nudge_volume(1 if button.button_index == MOUSE_BUTTON_WHEEL_UP else -1)
-	accept_event()
+	if button.button_index == MOUSE_BUTTON_RIGHT:
+		if button.pressed:
+			var muted := Settings.muted or Settings.volume == 0
+			Settings.apply("muted", not muted)
+			if muted and Settings.volume == 0:
+				Settings.apply("volume", 50)
+		accept_event()
+	elif button.pressed and button.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		nudge_volume(1 if button.button_index == MOUSE_BUTTON_WHEEL_UP else -1)
+		accept_event()
 
 
 func _on_seek_hover(event: InputEvent) -> void:
@@ -1862,6 +1911,7 @@ func _refresh_favorite_button() -> void:
 	favorite_button.set_pressed_no_signal(not path.is_empty() and Library.is_favorite(path))
 	var on := favorite_button.button_pressed
 	favorite_button.icon = VpxTheme.icon("star" if on else "star_outline", 26)
+	Tooltips.set_text(favorite_button, ("Remove current media from favourites" if on else "Add current media to favourites") + " (Ctrl+Up)")
 	var color := VpxTheme.FAVORITE if on else VpxTheme.FAINT
 	for role in ["icon_normal_color", "icon_pressed_color", "icon_hover_pressed_color", "icon_focus_color"]:
 		favorite_button.add_theme_color_override(role, color)
@@ -3610,19 +3660,10 @@ func _build_speed_control() -> void:
 	speed_button.theme_type_variation = &"CompactOption"
 	speed_button.custom_minimum_size = Vector2(120, 52)
 	speed_button.tooltip_text = "Playback speed · 1× resets normal speed"
-	speed_button.mouse_exited.connect(_dismiss_speed_tooltip)
-	speed_button.get_popup().about_to_popup.connect(_dismiss_speed_tooltip)
 	for speed: float in SPEEDS:
 		speed_button.add_item("%.2f×" % speed)
 	speed_button.item_selected.connect(func(index: int) -> void: Settings.apply("playback_speed", SPEEDS[index]))
 	total_label.get_parent().add_child(speed_button)
-
-
-func _dismiss_speed_tooltip() -> void:
-	for child in speed_button.get_children():
-		if child is PopupPanel and child.theme_type_variation == &"TooltipPanel":
-			child.hide()
-			child.queue_free()
 
 
 func _network_feedback(message: String, busy: bool) -> void:
@@ -3650,6 +3691,7 @@ func _build_media_rename() -> void:
 		keyboard.open("Edit proposed filename", rename_name.text, "Keep format tags and extension"))
 	actions.add_child(edit_name)
 	rename_button = _action_button("Rename file", "format")
+	Tooltips.set_text(rename_button, "Rename this local file and matching subtitle sidecars using the proposed filename")
 	rename_button.pressed.connect(func() -> void:
 		rename_button.disabled = true
 		var result: Dictionary = await media_rename.rename_current(rename_name.text)
@@ -3706,6 +3748,7 @@ func _build_view_profiles() -> void:
 func _build_position_reset() -> void:
 	var rows := Rows.section(pages.get_node("Angles"), "Picture position")
 	var reset := _action_button("Reset picture position", "recenter")
+	Tooltips.set_text(reset, "Reset picture orientation and photo pan")
 	reset.custom_minimum_size.y = SettingRow.ROW_HEIGHT
 	reset.pressed.connect(reset_position_requested.emit)
 	rows.add_child(reset)
@@ -3741,6 +3784,7 @@ func _build_settings_backup() -> void:
 	var rows := Rows.section(pages.get_node("System"), "Settings backup")
 	var include := CheckButton.new()
 	include.text = "Include library data"
+	Tooltips.set_text(include, "Also export or import formats, bookmarks, favourites and resume positions")
 	rows.add_child(include)
 	var status := Rows.hint(rows, "Library data includes formats, bookmarks, favourites and resume positions. Passwords and generated caches are excluded. Import creates a rollback backup first.")
 	var buttons := HBoxContainer.new()

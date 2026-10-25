@@ -137,7 +137,7 @@ func run() -> void:
 	field.set_process(false)
 	field.set_active(true)
 	var frames: Array[Image] = []
-	for index in range(field.SPECTROGRAM_START, settings.VISUALIZER_PRESETS.size()):
+	for index in range(field.SPECTROGRAM_START, field.WORLD_START):
 		settings.apply("visualizer_preset", index)
 		var title: String = settings.VISUALIZER_PRESETS[index]
 		field.quality = 2

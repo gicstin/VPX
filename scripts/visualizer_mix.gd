@@ -14,14 +14,14 @@ func _ready() -> void:
 		label.text = "Visuals"
 		add_child(label)
 		off_button = _button("Off")
-		off_button.tooltip_text = "Disable immersive visuals and keep the photo and music playing"
+		Tooltips.set_text(off_button, "Disable immersive visuals and keep the photo and music playing")
 		off_button.pressed.connect(func() -> void:
 			Settings.apply("immersive_music_visualizer", false)
 			_pull())
 	for index in MIXES.size():
 		var entry: Array = MIXES[index]
 		var button := _button(entry[0])
-		button.tooltip_text = "Opacity %d%% · Backdrop dim %d%% · Atmosphere %d%%" % [entry[1] * 100, entry[2] * 100, entry[3] * 100]
+		Tooltips.set_text(button, "Opacity %d%% · Backdrop dim %d%% · Atmosphere %d%%" % [entry[1] * 100, entry[2] * 100, entry[3] * 100])
 		button.pressed.connect(func() -> void: _choose(index))
 		buttons.append(button)
 	Settings.changed.connect(_pull)

@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+
+## [0.0.9] - 2026-10-25
+
+### Added
+
+- Add a square Cover mode with hover playback, volume, favourites and an expand action; add title-side favourites in the expanded float.
+- Add a desktop-only floating mini player with artwork, video view, playback and volume controls, pin-on-top, and restoration of the full window.
+- Add contextual tooltips for playback, library, settings, bookmarks, viewing profiles, keyboard and visualizer controls, with current actions for toggles.
+- Adjust volume in 5% steps by hovering volume controls and using the mouse wheel or VR thumbstick; right-click to toggle mute, including the mini player.
+- Add three 3D music worlds, Valley of Sources, Sound Cathedral and Deep Current, with a steady ground and horizon, sounds placed where they sit in the mix, and support in desktop mode.
+- Analyse local music tracks in the background for beats, bars, sections, build-ups and drops so music scenes anticipate drops and land on the beat, with results cached for instant replay.
+- Limit music scene flashes to at most three per second.
+
+### Fixed
+
+- Route mini music player and visualizer-picker tooltip text directly to the custom renderer so Godot cannot create native tooltip windows for those controls.
+- Match the music mini player's visualizer-list button to its open state, restore consistent starred-filter backgrounds and icons, close the picker on collapse, and keep track-title tooltips current.
+
 ## [0.0.8] - 2026-10-24
 
 ### Added

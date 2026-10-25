@@ -344,9 +344,20 @@ func _ui() -> Control:
 	return viewport.get_node_or_null("UI") as Control
 
 
+func _volume_control() -> Control:
+	if not pointing_at_panel() or target_viewport == null:
+		return null
+	var control := target_viewport.gui_get_hovered_control()
+	var node: Node = control
+	while node != null:
+		if node is Control and node.has_method("volume_hovering") and node.volume_hovering(control):
+			return node as Control
+		node = node.get_parent()
+	return null
+
+
 func _hovering_volume() -> bool:
-	var ui := _ui()
-	return ui != null and ui.has_method("volume_hovering") and ui.volume_hovering()
+	return _volume_control() != null
 
 
 func _stick_scrolls(stick: Vector2) -> bool:
@@ -582,9 +593,7 @@ func _flick_vertical(direction: int, repeated: bool) -> void:
 	elif grip_held:
 		grip_adjust.emit(direction)
 	elif _hovering_volume():
-		var ui := _ui()
-		if ui != null and ui.has_method("nudge_volume"):
-			ui.nudge_volume(direction)
+		_volume_control().nudge_volume(direction)
 	elif pointing_at_panel():
 		return
 	elif trigger_held:

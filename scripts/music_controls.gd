@@ -65,7 +65,7 @@ func _init() -> void:
 	rows.add_child(header)
 	cover_button = _icon_button(header, "audio", func() -> void: set_collapsed(true), 48)
 	cover_button.custom_minimum_size = Vector2(88, 88)
-	cover_button.tooltip_text = "Collapse music player"
+	Tooltips.set_text(cover_button, "Collapse music player")
 	cover_image = _artwork_image(cover_button, 14)
 	var metadata := VBoxContainer.new()
 	metadata.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -101,7 +101,8 @@ func _init() -> void:
 	volume_slider.custom_minimum_size.y = 40
 	volume_slider.max_value = 100
 	volume_slider.step = 1
-	volume_slider.tooltip_text = "Music volume"
+	volume_slider.scrollable = false
+	Tooltips.set_text(volume_slider, "Music volume")
 	volume_slider.drag_started.connect(func() -> void: adjusting_volume = true)
 	volume_slider.drag_ended.connect(func(_changed: bool) -> void: adjusting_volume = false)
 	volume_slider.value_changed.connect(func(value: float) -> void:
@@ -113,6 +114,9 @@ func _init() -> void:
 	volume_label.custom_minimum_size.x = 64
 	volume_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	volume_row.add_child(volume_label)
+	for control: Control in [volume_button, mute_button, volume_slider, volume_label]:
+		control.mouse_filter = Control.MOUSE_FILTER_STOP
+		control.gui_input.connect(_on_volume_nudge_input)
 	spectrum_view = TextureRect.new()
 	spectrum_view.custom_minimum_size.y = 72
 	spectrum_view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -122,7 +126,7 @@ func _init() -> void:
 	progress.custom_minimum_size.y = 40
 	progress.step = 0.1
 	progress.focus_mode = Control.FOCUS_NONE
-	progress.tooltip_text = "Seek music"
+	Tooltips.set_text(progress, "Seek music")
 	progress.drag_started.connect(func() -> void: seeking = true)
 	progress.drag_ended.connect(func(_changed: bool) -> void: seeking = false)
 	progress.value_changed.connect(func(value: float) -> void:
@@ -134,19 +138,19 @@ func _init() -> void:
 	controls.add_theme_constant_override("separation", 10)
 	rows.add_child(controls)
 	previous_style_button = _icon_button(controls, "chevron_left", func() -> void: _cycle_style(-1))
-	previous_style_button.tooltip_text = "Previous immersive visualizer style"
+	Tooltips.set_text(previous_style_button, "Previous immersive visualizer style")
 	previous_style_button.visible = false
-	_icon_button(controls, "prev", func() -> void: track(-1)).tooltip_text = "Previous music track"
+	Tooltips.set_text(_icon_button(controls, "prev", func() -> void: track(-1)), "Previous music track")
 	back_button = _icon_button(controls, "back", func() -> void: player.seek_relative(-10.0), 34)
-	back_button.tooltip_text = "Music back 10 seconds"
+	Tooltips.set_text(back_button, "Music back 10 seconds")
 	play_button = _icon_button(controls, "play", func() -> void: player.toggle_pause(), 36)
 	play_button.custom_minimum_size = Vector2(76, 76)
 	play_button.theme_type_variation = &"PlayButton"
 	forward_button = _icon_button(controls, "forward", func() -> void: player.seek_relative(10.0), 34)
-	forward_button.tooltip_text = "Music forward 10 seconds"
-	_icon_button(controls, "next", func() -> void: track(1)).tooltip_text = "Next music track"
+	Tooltips.set_text(forward_button, "Music forward 10 seconds")
+	Tooltips.set_text(_icon_button(controls, "next", func() -> void: track(1)), "Next music track")
 	next_style_button = _icon_button(controls, "chevron_right", func() -> void: _cycle_style(1))
-	next_style_button.tooltip_text = "Next immersive visualizer style"
+	Tooltips.set_text(next_style_button, "Next immersive visualizer style")
 	next_style_button.visible = false
 	quick_mix = preload("res://scripts/visualizer_mix.gd").new()
 	quick_mix.activate_overlay = true
@@ -191,7 +195,6 @@ func wanted_size() -> Vector2:
 
 func refresh() -> void:
 	title_label.text = ui.music_label() if ui != null and ui.has_method("music_label") else music_path().get_file().get_basename()
-	title_label.tooltip_text = title_label.text
 	var radio_active := player.radio.path == music_path()
 	var details := PackedStringArray()
 	if radio_active:
@@ -201,8 +204,9 @@ func refresh() -> void:
 			var value := str(player.radio.metadata.get(key, ""))
 			if not value.is_empty():
 				details.append(value)
+	Tooltips.set_text(title_label, title_label.text)
 	details_label.text = " · ".join(details)
-	details_label.tooltip_text = details_label.text
+	Tooltips.set_text(details_label, details_label.text)
 	details_label.visible = not details.is_empty()
 	_refresh_volume()
 	_refresh_artwork()
@@ -212,7 +216,6 @@ func refresh() -> void:
 		scene_picker.close()
 	immersive_button.visible = player._audio_only_playing()
 	var immersive := player.is_immersive_visualizer_active()
-	immersive_button.set_pressed_no_signal(immersive)
 	scene_picker._pull()
 	previous_style_button.visible = immersive
 	next_style_button.visible = immersive
@@ -220,8 +223,8 @@ func refresh() -> void:
 	previous_style_button.icon = VpxTheme.icon("dice" if random_mode else "chevron_left")
 	next_style_button.icon = VpxTheme.icon("dice" if random_mode else "chevron_right")
 	var random_tooltip := "Random favourite visualizer" if Settings.visualizer_starred_only else "Random visualizer"
-	previous_style_button.tooltip_text = random_tooltip if random_mode else "Previous immersive visualizer style"
-	next_style_button.tooltip_text = random_tooltip if random_mode else "Next immersive visualizer style"
+	Tooltips.set_text(previous_style_button, random_tooltip if random_mode else "Previous immersive visualizer style")
+	Tooltips.set_text(next_style_button, random_tooltip if random_mode else "Next immersive visualizer style")
 	var length := player.get_stream_length()
 	refreshing = true
 	progress.max_value = maxf(length, 1.0)
@@ -234,7 +237,7 @@ func refresh() -> void:
 	time_label.text = "%s / %s" % [_format_time(progress.value if seeking else player.stream_position), "LIVE" if player.is_live() else _format_time(length)]
 	var playing := not player.paused and player.is_playing()
 	play_button.icon = VpxTheme.icon("pause" if playing else "play", 36)
-	play_button.tooltip_text = "Pause music" if playing else "Play music"
+	Tooltips.set_text(play_button, "Pause music" if playing else "Play music")
 	_refresh_favorite()
 
 
@@ -247,6 +250,8 @@ func _cycle_style(direction: int) -> void:
 func set_collapsed(value: bool) -> void:
 	collapsed = value
 	seeking = false
+	if collapsed:
+		scene_picker.close()
 	rows.visible = not collapsed
 	preview_button.visible = collapsed
 	panel.add_theme_stylebox_override("panel", VpxTheme.flat(VpxTheme.OVERLAY, 18, 0 if collapsed else 24, 0 if collapsed else 16))
@@ -280,7 +285,7 @@ func _refresh_artwork() -> void:
 		texture = spectrum_view.texture
 	preview_image.texture = texture
 	preview_button.icon = VpxTheme.icon("audio", 48) if texture == null else null
-	preview_button.tooltip_text = "Expand music player · " + title_label.tooltip_text
+	Tooltips.set_text(preview_button, "Expand music player · " + Tooltips.get_text(title_label))
 
 
 func _refresh_volume() -> void:
@@ -288,12 +293,41 @@ func _refresh_volume() -> void:
 	var icon := VpxTheme.icon("volume_off" if muted else "volume")
 	volume_button.icon = icon
 	volume_button.set_pressed_no_signal(volume_row.visible)
-	volume_button.tooltip_text = "%s volume · %d%%" % ["Hide" if volume_row.visible else "Adjust", Settings.volume]
+	Tooltips.set_text(volume_button, "%s volume · %d%%" % ["Hide" if volume_row.visible else "Adjust", Settings.volume])
 	mute_button.icon = icon
 	mute_button.set_pressed_no_signal(muted)
-	mute_button.tooltip_text = "Unmute music" if muted else "Mute music"
+	Tooltips.set_text(mute_button, "Unmute music" if muted else "Mute music")
 	volume_slider.set_value_no_signal(Settings.volume)
 	volume_label.text = "%d%%" % Settings.volume
+
+
+func volume_hovering(control: Control = null) -> bool:
+	var node := control if control != null else get_viewport().gui_get_hovered_control()
+	while node != null:
+		if node == volume_button or node == mute_button or node == volume_slider or node == volume_label:
+			return true
+		node = node.get_parent() as Control
+	return false
+
+
+func nudge_volume(direction: int) -> void:
+	var next := clampi(Settings.volume + 5 * direction, 0, 100)
+	Settings.apply("volume", next)
+	if Settings.muted and next > 0:
+		Settings.apply("muted", false)
+
+
+func _on_volume_nudge_input(event: InputEvent) -> void:
+	var button := event as InputEventMouseButton
+	if button == null:
+		return
+	if button.button_index == MOUSE_BUTTON_RIGHT:
+		if button.pressed:
+			_toggle_mute()
+		accept_event()
+	elif button.pressed and button.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		nudge_volume(1 if button.button_index == MOUSE_BUTTON_WHEEL_UP else -1)
+		accept_event()
 
 
 func _toggle_mute() -> void:
@@ -318,7 +352,7 @@ func _refresh_favorite() -> void:
 	for role in ["icon_normal_color", "icon_pressed_color", "icon_hover_pressed_color", "icon_focus_color"]:
 		favorite_button.add_theme_color_override(role, color)
 	favorite_button.add_theme_color_override("icon_hover_color", VpxTheme.FAVORITE)
-	favorite_button.tooltip_text = "Remove music from favourites" if on else "Add music to favourites"
+	Tooltips.set_text(favorite_button, "Remove music from favourites" if on else "Add music to favourites")
 
 
 func _format_time(seconds: float) -> String:

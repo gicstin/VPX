@@ -153,6 +153,7 @@ func set_playing(active: bool) -> void:
 		playing_badge = PanelContainer.new()
 		playing_badge.theme_type_variation = &"Badge"
 		playing_badge.mouse_filter = MOUSE_FILTER_STOP
+		Tooltips.set_text(playing_badge, "Play this media now")
 		playing_badge.mouse_default_cursor_shape = CURSOR_POINTING_HAND
 		playing_badge.gui_input.connect(_on_badge_input)
 		playing_badge.custom_minimum_size = Vector2(38, 34)
@@ -555,6 +556,7 @@ func _star() -> Button:
 
 func _show_star() -> void:
 	star.icon = VpxTheme.icon("star" if star.button_pressed else "star_outline", 26)
+	Tooltips.set_text(star, "Remove from favourites" if star.button_pressed else "Add to favourites")
 	var color := VpxTheme.FAVORITE if star.button_pressed else VpxTheme.FAINT
 	for role in ["icon_normal_color", "icon_pressed_color", "icon_hover_pressed_color", "icon_focus_color"]:
 		star.add_theme_color_override(role, color)

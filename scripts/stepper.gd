@@ -28,6 +28,9 @@ func _build() -> void:
 	var button_width := COMPACT_BUTTON_WIDTH if compact else BUTTON_WIDTH
 	var minus := make_button("−", button_width)
 	var plus := make_button("+", button_width)
+	var label := title if not title.is_empty() else String(setting).replace("_", " ")
+	Tooltips.set_text(minus, "Decrease " + label.to_lower() + " · Hold to repeat")
+	Tooltips.set_text(plus, "Increase " + label.to_lower() + " · Hold to repeat")
 	for button in [minus, plus]:
 		button.add_theme_font_size_override("font_size", SYMBOL_FONT_SIZE)
 	value_label = Label.new()
@@ -47,7 +50,8 @@ func _build() -> void:
 	value_hit.flat = true
 	value_hit.theme_type_variation = &"ValueButton"
 	value_hit.focus_mode = FOCUS_NONE
-	value_hit.tooltip_text = "Reset"
+	if setting != &"" and Settings.defaults.has(setting):
+		Tooltips.set_text(value_hit, "Reset " + label.to_lower() + " to default")
 	value_hit.set_anchors_preset(Control.PRESET_FULL_RECT)
 	value_hit.pressed.connect(_reset_value)
 	stack.add_child(value_hit)
@@ -58,6 +62,7 @@ func _build() -> void:
 		var reset := make_button("", COMPACT_BUTTON_WIDTH)
 		reset.theme_type_variation = &"FlatIcon"
 		reset.icon = VpxTheme.icon("reset", 26)
+		Tooltips.set_text(reset, "Reset " + label.to_lower() + " to default")
 		reset.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		reset.pressed.connect(func() -> void: Settings.reset(PackedStringArray([setting])))
 		add_child(reset)

@@ -380,6 +380,7 @@ git -C "$EXT" apply "$ROOT/addons/ffmpeg/resonance.patch"
 git -C "$EXT" apply "$ROOT/addons/ffmpeg/network.patch"
 git -C "$EXT" apply "$ROOT/addons/ffmpeg/streaming.patch"
 git -C "$EXT" apply "$ROOT/addons/ffmpeg/radio-metadata.patch"
+git -C "$EXT" apply "$ROOT/addons/ffmpeg/music-analysis.patch"
 mkdir -p "$BUILD/site_scons"
 cat >"$BUILD/site_scons/site_init.py" <<'PYEOF'
 import os

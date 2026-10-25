@@ -21,7 +21,7 @@ func _build() -> void:
 	for i in options.size():
 		var button := make_button(options[i], 0)
 		button.theme_type_variation = &"Chip"
-		button.tooltip_text = options[i]
+		Tooltips.set_text(button, title + ": " + options[i])
 		button.custom_minimum_size.y = ROW_HEIGHT - 8
 		button.toggle_mode = true
 		button.button_group = group

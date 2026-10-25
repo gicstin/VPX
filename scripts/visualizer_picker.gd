@@ -42,6 +42,7 @@ func _build() -> void:
 		selected = make_button("", MENU_WIDTH)
 		selected.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		column.add_child(selected)
+	selected.toggle_mode = true
 	selected.pressed.connect(_toggle_gallery)
 	menu = VBoxContainer.new()
 	menu.visible = false
@@ -49,19 +50,18 @@ func _build() -> void:
 	var actions := HBoxContainer.new()
 	actions.add_theme_constant_override("separation", 8)
 	menu.add_child(actions)
-	disabled_button = make_button("Disable Visualisation", 0)
+	disabled_button = make_button("Disable visuals", 0)
+	Tooltips.set_text(disabled_button, "Turn off immersive visualization")
 	disabled_button.size_flags_horizontal = SIZE_EXPAND_FILL
 	disabled_button.toggle_mode = true
 	disabled_button.pressed.connect(func() -> void:
 		Settings.apply("immersive_music_visualizer", false)
 		close())
 	actions.add_child(disabled_button)
-	starred_filter = make_button("★", 60)
+	starred_filter = make_button("", 60)
 	starred_filter.toggle_mode = true
-	for state: String in ["normal", "pressed", "hover", "hover_pressed"]:
-		starred_filter.add_theme_stylebox_override(state, VpxTheme.flat(VpxTheme.HOVER if "hover" in state else VpxTheme.BACKGROUND, 8, 8, 4))
-	starred_filter.add_theme_color_override("font_pressed_color", VpxTheme.FAVORITE)
-	starred_filter.add_theme_color_override("font_hover_pressed_color", VpxTheme.FAVORITE)
+	starred_filter.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	starred_filter.add_theme_constant_override("icon_max_width", VpxTheme.ICON_SIZE)
 	starred_filter.toggled.connect(func(on: bool) -> void:
 		Settings.apply("visualizer_starred_only", on)
 		gallery.set_deferred("scroll_vertical", 0))
@@ -76,17 +76,17 @@ func _build() -> void:
 	actions.add_child(random_button)
 	controls_button = make_button("Controls ▾", 0)
 	controls_button.toggle_mode = true
-	controls_button.tooltip_text = "Adjust visualizer response and display"
+	Tooltips.set_text(controls_button, "Adjust visualizer response and display")
 	controls_button.toggled.connect(func(on: bool) -> void:
 		tuning.visible = on
 		controls_button.text = "Controls ▴" if on else "Controls ▾"
 		gallery.set_deferred("scroll_vertical", 0))
 	actions.add_child(controls_button)
 	overlay_toggle = CheckButton.new()
-	overlay_toggle.text = "Overlay on video / image / panorama"
+	overlay_toggle.text = "Overlay on media"
 	overlay_toggle.custom_minimum_size.y = 44
 	overlay_toggle.focus_mode = FOCUS_NONE
-	overlay_toggle.tooltip_text = "Keep media visible. Visuals follow video sound or music playing over a photo or panorama."
+	Tooltips.set_text(overlay_toggle, "Keep media visible. Visuals follow video sound or music playing over a photo or panorama.")
 	overlay_toggle.toggled.connect(func(on: bool) -> void:
 		Settings.apply("visualizer_overlay", on)
 		if on:
@@ -124,9 +124,9 @@ func _build() -> void:
 	_adjustment(mix_controls, "Visual opacity", &"visualizer_overlay_opacity", 0.0, 1.0, 0.01, 100.0, "%")
 	_adjustment(mix_controls, "Backdrop dim", &"visualizer_background_dim", 0.0, 1.0, 0.01, 100.0, "%")
 	_adjustment(mix_controls, "Atmosphere", &"visualizer_atmosphere", 0.0, 1.0, 0.01, 100.0, "%")
-	adjustments[&"visualizer_overlay_opacity"].tooltip_text = "0% hides the visual layer; 100% gives full-strength visuals"
-	adjustments[&"visualizer_background_dim"].tooltip_text = "Darken media behind the visuals without changing picture settings"
-	adjustments[&"visualizer_atmosphere"].tooltip_text = "Blend the scene's sky into the backdrop; 0% keeps the media clear"
+	Tooltips.set_text(adjustments[&"visualizer_overlay_opacity"], "0% hides the visual layer; 100% gives full-strength visuals")
+	Tooltips.set_text(adjustments[&"visualizer_background_dim"], "Darken media behind the visuals without changing picture settings")
+	Tooltips.set_text(adjustments[&"visualizer_atmosphere"], "Blend the scene's sky into the backdrop; 0% keeps the media clear")
 	scene_list.add_child(tuning)
 	_option(tuning, "Quality", &"visualizer_quality", PackedStringArray(["Automatic", "Performance", "Balanced", "High"]))
 	_adjustment(tuning, "Timing", &"visualizer_sync", -0.25, Settings.visualizer_advance_limit(), 0.005, 1000.0, " ms")
@@ -143,9 +143,9 @@ func _build() -> void:
 		var tile := SceneTile.new()
 		tile.custom_minimum_size = Vector2(200, 0)
 		tile.size_flags_horizontal = SIZE_EXPAND_FILL
-		tile.tooltip_text = options[index]
+		Tooltips.set_text(tile, options[index])
 		if index >= Settings.VISUALIZER_STUDIO_START:
-			tile.tooltip_text += "\n" + Settings.VISUALIZER_STUDIO_GUIDES[index - Settings.VISUALIZER_STUDIO_START]
+			Tooltips.set_text(tile, Tooltips.get_text(tile) + "\n" + Settings.VISUALIZER_STUDIO_GUIDES[index - Settings.VISUALIZER_STUDIO_START])
 		var contents := VBoxContainer.new()
 		contents.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		contents.offset_left = 4
@@ -225,7 +225,7 @@ func _adjustment(parent: VBoxContainer, title: String, key: StringName, low: flo
 	slider.size_flags_horizontal = SIZE_EXPAND_FILL
 	slider.custom_minimum_size.x = 100
 	slider.size_flags_vertical = SIZE_SHRINK_CENTER
-	slider.tooltip_text = "Positive timing advances visuals up to the available audio output latency" if key == &"visualizer_sync" else title
+	Tooltips.set_text(slider, "Positive timing advances visuals up to the available audio output latency" if key == &"visualizer_sync" else title)
 	row.add_child(slider)
 	var value := Label.new()
 	value.custom_minimum_size.x = 80
@@ -238,7 +238,7 @@ func _adjustment(parent: VBoxContainer, title: String, key: StringName, low: flo
 	reset.icon = VpxTheme.icon("reset", 26)
 	reset.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	reset.focus_mode = FOCUS_NONE
-	reset.tooltip_text = "Reset " + title.to_lower() + " to default"
+	Tooltips.set_text(reset, "Reset " + title.to_lower() + " to default")
 	reset.pressed.connect(func() -> void: Settings.reset(PackedStringArray([key])))
 	row.add_child(reset)
 	var pull := func() -> void:
@@ -265,8 +265,9 @@ func _option(parent: VBoxContainer, title: String, key: StringName, labels: Pack
 		for index in labels.size():
 			var choice := Button.new()
 			choice.text = labels[index]
+			Tooltips.set_text(choice, title + ": " + labels[index])
 			if key == &"visualizer_grab_mode" and index == Settings.VisualizerGrab.DEFAULT:
-				choice.tooltip_text = "Scene + audio on desktop; audio only in VR"
+				Tooltips.set_text(choice, "Scene + audio on desktop; audio only in VR")
 			choice.custom_minimum_size.y = 40
 			choice.size_flags_horizontal = SIZE_EXPAND_FILL
 			choice.focus_mode = FOCUS_NONE
@@ -280,6 +281,7 @@ func _option(parent: VBoxContainer, title: String, key: StringName, labels: Pack
 			pull.call()
 		return
 	var choice := OptionButton.new()
+	Tooltips.set_text(choice, "Choose " + title.to_lower())
 	choice.custom_minimum_size.y = 40
 	choice.size_flags_horizontal = SIZE_EXPAND_FILL
 	choice.focus_mode = FOCUS_NONE
@@ -297,6 +299,7 @@ func _option(parent: VBoxContainer, title: String, key: StringName, labels: Pack
 func _toggle(parent: VBoxContainer, title: String, key: StringName) -> void:
 	var toggle := CheckButton.new()
 	toggle.text = title
+	Tooltips.set_text(toggle, {&"visualizer_auto_change": "Change immersive scene automatically during music playback", &"music_visualizer": "Show the compact spectrum or oscilloscope in the music player"}.get(key, title))
 	toggle.custom_minimum_size.y = 40
 	toggle.focus_mode = FOCUS_NONE
 	parent.add_child(toggle)
@@ -310,25 +313,24 @@ func _pull() -> void:
 	var index := clampi(int(read()), 0, options.size() - 1)
 	var enabled := Settings.immersive_music_visualizer
 	var state := [index, enabled, Settings.visualizer_overlay, Settings.visualizer_starred_only, Settings.visualizer_shuffle]
-	if external_button != null:
-		selected.set_pressed_no_signal(enabled)
+	var label := options[index] if enabled else "Disabled"
+	selected.set_pressed_no_signal(menu.visible)
+	if external_button == null:
+		selected.text = label + (" ▴" if menu.visible else " ▾")
+	Tooltips.set_text(selected, ("Hide" if menu.visible else "Show") + " immersive visualizer list · " + label + (" · Overlay on media" if Settings.visualizer_overlay else ""))
 	if state == pulled_state and pulled_favorites == Settings.visualizer_favorites:
 		tiles[index].set_pressed_no_signal(enabled)
 		return
 	pulled_state = state
 	pulled_favorites = Settings.visualizer_favorites.duplicate()
-	var label := options[index] if enabled else "Disabled"
-	if external_button == null:
-		selected.text = label + " ▾"
-	selected.tooltip_text = "Immersive sound visualizer · " + label + (" · Overlay on media" if Settings.visualizer_overlay else "") + " · Choose a scene or Disable Visualisation"
 	overlay_toggle.set_pressed_no_signal(Settings.visualizer_overlay)
 	mix_controls.visible = Settings.visualizer_overlay
 	disabled_button.set_pressed_no_signal(not enabled)
 	starred_filter.set_pressed_no_signal(Settings.visualizer_starred_only)
-	starred_filter.text = "★" if Settings.visualizer_starred_only else "☆"
-	starred_filter.tooltip_text = "Starred only: " + ("On" if Settings.visualizer_starred_only else "Off")
+	starred_filter.icon = VpxTheme.icon("star" if Settings.visualizer_starred_only else "star_outline")
+	Tooltips.set_text(starred_filter, "Starred only: " + ("On" if Settings.visualizer_starred_only else "Off"))
 	random_button.set_pressed_no_signal(Settings.visualizer_shuffle)
-	random_button.tooltip_text = "Random " + ("favourites" if Settings.visualizer_starred_only else "visualizers") + ": " + ("On" if Settings.visualizer_shuffle else "Off") + " · Next and previous pick without repeats until the list is exhausted"
+	Tooltips.set_text(random_button, "Random " + ("favourites" if Settings.visualizer_starred_only else "visualizers") + ": " + ("On" if Settings.visualizer_shuffle else "Off") + " · Next and previous pick without repeats until the list is exhausted")
 	random_button.disabled = Settings.visualizer_starred_only and Settings.visualizer_favorites.size() < 2
 	empty_favorites.visible = Settings.visualizer_starred_only and Settings.visualizer_favorites.is_empty()
 	for i in tiles.size():
@@ -337,7 +339,7 @@ func _pull() -> void:
 		tiles[i].set_pressed_no_signal(enabled and i == index)
 		favorite_buttons[i].text = "★" if starred else "☆"
 		favorite_buttons[i].set_pressed_no_signal(starred)
-		favorite_buttons[i].tooltip_text = ("Unstar " if starred else "Star ") + options[i]
+		Tooltips.set_text(favorite_buttons[i], ("Unstar " if starred else "Star ") + options[i])
 
 
 func close() -> void:
@@ -377,7 +379,8 @@ static func thumbnail(index: int) -> AtlasTexture:
 
 class SceneTile extends Button:
 	func _make_custom_tooltip(for_text: String) -> Object:
-		var width := minf(520.0 * VpxTheme.text_size, maxf(200.0, get_viewport_rect().size.x - 48.0))
+		var render_scale := maxf(0.001, absf(get_global_transform_with_canvas().get_scale().x))
+		var width := minf(520.0 * VpxTheme.text_size, maxf(1.0, get_viewport_rect().size.x / render_scale - 56.0))
 		var box := VBoxContainer.new()
 		box.custom_minimum_size.x = width
 		box.add_theme_constant_override("separation", roundi(12.0 * VpxTheme.text_size))
@@ -387,7 +390,7 @@ class SceneTile extends Button:
 		title.text = parts[0]
 		title.custom_minimum_size.x = width
 		title.add_theme_color_override("font_color", VpxTheme.TEXT)
-		title.add_theme_font_size_override("font_size", VpxTheme.TITLE_FONT_SIZE)
+		title.theme_type_variation = &"Title"
 		title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		box.add_child(title)
@@ -397,7 +400,7 @@ class SceneTile extends Button:
 			guide.custom_minimum_size.x = width
 			guide.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			guide.add_theme_color_override("font_color", VpxTheme.TEXT)
-			guide.add_theme_font_size_override("font_size", VpxTheme.FONT_SIZE)
+			guide.theme_type_variation = &"TooltipLabel"
 			guide.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			box.add_child(guide)
 		return box

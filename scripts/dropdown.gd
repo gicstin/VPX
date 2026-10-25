@@ -11,6 +11,7 @@ var button: OptionButton
 
 func _build() -> void:
 	button = OptionButton.new()
+	Tooltips.set_text(button, "Choose " + title.to_lower())
 	for option in options:
 		button.add_item(option)
 	button.custom_minimum_size = Vector2(MENU_WIDTH, ROW_HEIGHT)

@@ -25,6 +25,8 @@ var spectrum: SpectrumCanvas
 var desktop_rect: TextureRect
 var elapsed := 0.0
 var enabled := false
+var mini_active := false
+var mini_enabled := true
 var analysing := false
 var levels := PackedFloat32Array()
 var targets := PackedFloat32Array()
@@ -63,6 +65,8 @@ var audio_onset := 0.0
 var source_channels := 2
 var analysis_history: Array[Dictionary] = []
 var last_analysis_time := -1.0
+var map_store := MusicMapStore.new()
+var map_requested := false
 
 
 func _ready() -> void:
@@ -134,6 +138,33 @@ func _bind() -> void:
 		bound_playback.set_visualizer_enabled(analysing)
 	AudioServer.set_bus_effect_enabled(bus_index, _effect_index(), analysing)
 	_reset()
+	_request_map()
+
+
+func _request_map() -> void:
+	map_requested = false
+	map_store.clear()
+	if field != null:
+		field.set_music_map(null)
+
+
+func _music_source() -> String:
+	if not player.music_path.is_empty():
+		return player.music_path
+	return player.current_path if player.is_music_mode() else ""
+
+
+func _poll_map() -> void:
+	if not map_requested and bound_playback != null and analysing:
+		var source := _music_source()
+		if not source.is_empty():
+			map_requested = true
+			var cached := map_store.request(source)
+			if cached != null and field != null:
+				field.set_music_map(cached)
+	var map := map_store.poll()
+	if map != null and field != null:
+		field.set_music_map(map)
 
 
 func _reset() -> void:
@@ -151,8 +182,8 @@ func _reset() -> void:
 
 func _process(delta: float) -> void:
 	var musical := player.playback != null and (player.is_music_mode() or (player.is_image() and not player.music_path.is_empty()))
-	var immersive := player.is_immersive_visualizer_active()
-	var wanted: bool = (Settings.music_visualizer and musical) or immersive
+	var immersive := player.is_immersive_visualizer_active() and not mini_active
+	var wanted: bool = ((mini_enabled if mini_active else Settings.music_visualizer) and musical) or immersive
 	if wanted != analysing:
 		analysing = wanted
 		if bound_playback != null and native_analysis:
@@ -161,7 +192,10 @@ func _process(delta: float) -> void:
 		_reset()
 	if bound_playback != player.playback:
 		_bind()
-	var show_panel := Settings.music_visualizer and musical and not menu.visible
+	_poll_map()
+	if field != null:
+		field.music_time = player.stream_position - _analysis_delay()
+	var show_panel := Settings.music_visualizer and musical and not menu.visible and not mini_active
 	if show_panel != enabled:
 		enabled = show_panel
 		if enabled:
@@ -170,7 +204,7 @@ func _process(delta: float) -> void:
 			dismiss()
 	if field != null:
 		field.set_active(immersive)
-	var want_capture := analysing and (immersive or (Settings.music_visualizer and Settings.music_visualizer_mode == OSCILLOSCOPE))
+	var want_capture := analysing and (immersive or ((Settings.music_visualizer or mini_active) and Settings.music_visualizer_mode == OSCILLOSCOPE))
 	if capturing != want_capture:
 		capturing = want_capture
 		AudioServer.set_bus_effect_enabled(bus_index, _effect_index(capture_effect), capturing)
@@ -255,7 +289,7 @@ func _sample_waveform() -> void:
 	var frames := capture_effect.get_buffer(available)
 	var rate := AudioServer.get_mix_rate()
 	_capture_frames(frames, rate)
-	if Settings.music_visualizer and Settings.music_visualizer_mode == OSCILLOSCOPE:
+	if (Settings.music_visualizer or mini_active) and Settings.music_visualizer_mode == OSCILLOSCOPE:
 		_update_scope(rate, frames.size() / rate)
 	_update_waveform()
 
@@ -474,6 +508,7 @@ func _fill_directions(data: PackedFloat32Array, magnitudes: PackedVector2Array, 
 
 
 func _exit_tree() -> void:
+	map_store.cancel()
 	if bound_playback != null and native_analysis:
 		bound_playback.set_visualizer_enabled(false)
 	if is_instance_valid(player) and player.bus == BUS:

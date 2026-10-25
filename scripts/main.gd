@@ -291,6 +291,8 @@ func _ready() -> void:
 	var restored := await _restore_mode_session()
 	if not restored and player.current_path.is_empty() and not Settings.last_file.is_empty():
 		ui.open_media(Settings.last_file, {"paused": true})
+	if desktop_mode and window_session.active and bool(window_session.state.get("mini_active", false)):
+		await desktop_view.mini_player.enter()
 
 
 func _create_desktop_view() -> void:
