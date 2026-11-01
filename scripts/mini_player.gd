@@ -2,7 +2,7 @@ extends Control
 
 const MusicVisualizer := preload("res://scripts/music_visualizer.gd")
 const MediaCard := preload("res://scripts/media_card.gd")
-const HEADER := 0.0
+const SubtitleView := preload("res://scripts/subtitle_view.gd")
 const FOOTER := 158.0
 const UI_SCALE := 1.6
 const IDLE_OPACITY := 0.4
@@ -14,6 +14,7 @@ const TOOLBAR_DELAY := 1.2
 const VISUALIZER_NAMES := ["Disabled", "Spectrum", "Oscilloscope"]
 const MUSIC_HEIGHT := WIDTH / GOLDEN_RATIO
 const VIDEO_HEIGHT := MUSIC_HEIGHT
+const CAPTION_OF_WIDTH := 0.034
 
 var desktop: CanvasLayer
 var ui_factor := UI_SCALE
@@ -38,6 +39,7 @@ var hover_alpha := 0.0
 var reveal_alpha := 1.0
 var visualizer_menu_alpha := 0.0
 var window_menu_alpha := 0.0
+var subtitle_menu_alpha := 0.0
 var title: Label
 var title_clip: Control
 var quality: Label
@@ -72,9 +74,20 @@ var pointer_position := Vector2(-1, -1)
 var artwork_hovered := false
 var visualizer_mode := 1
 var spectrum_button: Button
+var subtitle_button: Button
+var caption_bottom: RichTextLabel
+var caption_top: RichTextLabel
+var caption_bitmaps: Control
+var caption_textures := {}
+var caption_key := ""
 var more_button: Button
 var visualizer_menu: PanelContainer
 var window_menu: PanelContainer
+var subtitle_menu: PanelContainer
+var subtitle_scroll: ScrollContainer
+var subtitle_choices: VBoxContainer
+var subtitle_options: Array[Button] = []
+var subtitle_reveal: Button
 var visualizer_options: Array[Button] = []
 var keyboard_mode := false
 var hint: Label
@@ -86,6 +99,7 @@ var visualizer_processing := true
 var menu_was_open := false
 var field_was_active := false
 var field_transform := Transform3D.IDENTITY
+var fitted_size := Vector2.ZERO
 
 
 func _ready() -> void:
@@ -152,6 +166,11 @@ func _ready() -> void:
 	fallback.modulate = VpxTheme.ACCENT
 	fallback.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(fallback)
+	caption_bitmaps = Control.new()
+	caption_bitmaps.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(caption_bitmaps)
+	caption_bottom = _caption_label()
+	caption_top = _caption_label()
 	transport_overlay = Panel.new()
 	transport_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	transport_overlay.add_theme_stylebox_override("panel", VpxTheme.flat(Color("050505a6"), 18, 0, 0))
@@ -200,6 +219,7 @@ func _ready() -> void:
 	spectrum.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(spectrum)
 	spectrum_button = _button("audio", "Choose visualizer", _toggle_visualizer_menu)
+	subtitle_button = _button("subtitles", "Subtitles · V", _toggle_subtitle_menu)
 	cover_button = _button("cover_mode", "Cover mode · Ctrl+Shift+C", _toggle_cover)
 	fade_button = _button("opacity", "Fade float when idle", _toggle_idle_fade)
 	fade_button.toggle_mode = true
@@ -220,6 +240,15 @@ func _ready() -> void:
 		option.custom_minimum_size = Vector2(164, 36)
 		option.reparent(choices)
 		visualizer_options.append(option)
+	subtitle_menu = _menu_panel()
+	subtitle_scroll = ScrollContainer.new()
+	subtitle_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	subtitle_scroll.follow_focus = true
+	subtitle_menu.add_child(subtitle_scroll)
+	subtitle_choices = VBoxContainer.new()
+	subtitle_choices.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	subtitle_choices.add_theme_constant_override("separation", 4)
+	subtitle_scroll.add_child(subtitle_choices)
 	window_menu = _menu_panel()
 	var actions := VBoxContainer.new()
 	actions.add_theme_constant_override("separation", 4)
@@ -271,6 +300,39 @@ func _label(font_size: int, color: Color) -> Label:
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(label)
 	return label
+
+
+func _caption_label() -> RichTextLabel:
+	var label := RichTextLabel.new()
+	label.bbcode_enabled = true
+	label.fit_content = true
+	label.scroll_active = false
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.visible = false
+	label.add_theme_color_override("font_outline_color", Color.BLACK)
+	label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.55))
+	add_child(label)
+	return label
+
+
+func _caption_fonts(base: Font) -> void:
+	var italic := FontVariation.new()
+	italic.base_font = base
+	italic.variation_transform = Transform2D(Vector2(1.0, 0.0), Vector2(SubtitleView.ITALIC_SKEW, 1.0), Vector2.ZERO)
+	var bold := FontVariation.new()
+	bold.base_font = base
+	bold.variation_embolden = SubtitleView.BOLD_EMBOLDEN
+	var bold_italic := FontVariation.new()
+	bold_italic.base_font = base
+	bold_italic.variation_embolden = SubtitleView.BOLD_EMBOLDEN
+	bold_italic.variation_transform = italic.variation_transform
+	for label in [caption_bottom, caption_top]:
+		label.add_theme_font_override("normal_font", base)
+		label.add_theme_font_override("italics_font", italic)
+		label.add_theme_font_override("bold_font", bold)
+		label.add_theme_font_override("bold_italics_font", bold_italic)
 
 
 func _button(icon_name: String, hint: String, action: Callable) -> Button:
@@ -351,6 +413,7 @@ func enter() -> void:
 	if font != null:
 		font.oversampling = ui_factor
 		theme.default_font = font
+		_caption_fonts(font)
 	for child in get_children():
 		if child is Button and child.has_meta("mini_icon"):
 			child.icon = VpxTheme.icon(str(child.get_meta("mini_icon")), ceili(18 * ui_factor))
@@ -381,8 +444,8 @@ func leave() -> void:
 	seeking = false
 	adjusting_volume = false
 	_suspend_visuals(false)
+	_clear_captions()
 	get_viewport().disable_3d = saved_disable_3d
-	desktop.camera.v_offset = 0.0
 	await desktop.main.window_session.leave_mini()
 	active = false
 	visible = false
@@ -397,12 +460,23 @@ func _has_picture() -> bool:
 
 
 func _desired_size() -> Vector2:
+	if cover_mode and picture:
+		var aspect := clampf(_picture_aspect(), 0.4, 2.5)
+		return (Vector2(COVER_SIZE * sqrt(aspect), COVER_SIZE / sqrt(aspect))).round()
 	return Vector2.ONE * COVER_SIZE if cover_mode else Vector2(WIDTH, VIDEO_HEIGHT if picture else MUSIC_HEIGHT)
+
+
+func _picture_aspect() -> float:
+	var quad := desktop.screen.mesh as QuadMesh
+	if not desktop._is_flat() or quad == null or quad.size.x <= 0.0 or quad.size.y <= 0.0:
+		return 16.0 / 9.0
+	return quad.size.x / quad.size.y
 
 
 func _fit_window(centered := false) -> void:
 	var usable := DisplayServer.screen_get_usable_rect()
 	var target := Vector2i((_desired_size() * ui_factor).round()).min(usable.size)
+	fitted_size = _desired_size()
 	var position := get_window().position
 	if centered:
 		position += (get_window().size - target) / 2
@@ -420,9 +494,10 @@ func _process(delta: float) -> void:
 		return
 	size = get_viewport().get_visible_rect().size / ui_factor
 	var wanted := _has_picture()
-	if wanted != picture:
+	if wanted != picture or _desired_size() != fitted_size:
+		var centered := wanted == picture
 		picture = wanted
-		_fit_window()
+		_fit_window(centered)
 		size = get_viewport().get_visible_rect().size / ui_factor
 	_refresh()
 	if hint_remaining > 0:
@@ -500,8 +575,8 @@ func _refresh() -> void:
 	details.visible = (not picture or cover_mode) and not details.text.is_empty()
 	Tooltips.set_text(details, details.text)
 	artwork.texture = player.radio.artwork if radio_active else MediaInfo.thumbnail(path)
-	artwork.visible = (not picture or cover_mode) and artwork.texture != null
-	fallback.visible = (not picture or cover_mode) and artwork.texture == null
+	artwork.visible = not picture and artwork.texture != null
+	fallback.visible = not picture and artwork.texture == null
 	play_button.icon = VpxTheme.icon("play" if player.paused or not player.is_playing() else "pause", ceili(22 * ui_factor))
 	play_button.disabled = player.playback == null
 	Tooltips.set_text(play_button, "Play · Space" if player.paused else "Pause · Space")
@@ -537,11 +612,103 @@ func _refresh() -> void:
 		visualizer_options[index].modulate = VpxTheme.ACCENT if index == visualizer_mode else VpxTheme.TEXT
 	if spectrum.visible:
 		spectrum.queue_redraw()
-	get_viewport().disable_3d = saved_disable_3d or not picture or cover_mode
+	get_viewport().disable_3d = saved_disable_3d or not picture
+	var tracks: Node = player.tracks
+	subtitle_button.disabled = tracks.subtitle_tracks.is_empty()
+	subtitle_button.modulate = VpxTheme.ACCENT if tracks.subtitle_choice >= 0 else VpxTheme.TEXT
+	Tooltips.set_text(subtitle_button, "Subtitles: %s · V" % tracks.subtitle_label(tracks.subtitle_choice) if not tracks.subtitle_tracks.is_empty() else "No subtitles")
 	get_window().transparent_bg = true
 	_layout()
+	_update_captions()
 	_update_transport()
 	queue_redraw()
+
+
+func _cycle_subtitles(direction := 1) -> void:
+	if picture and not cover_mode and not desktop.player.tracks.subtitle_tracks.is_empty():
+		desktop.player.tracks.cycle_subtitle(direction)
+
+
+func _clear_captions() -> void:
+	desktop.main.subtitle_view.suppressed = false
+	caption_key = ""
+	caption_textures.clear()
+	for child in caption_bitmaps.get_children():
+		child.queue_free()
+	caption_bottom.visible = false
+	caption_top.visible = false
+
+
+func _update_captions() -> void:
+	desktop.main.subtitle_view.suppressed = true
+	var cues: Array = desktop.player.tracks.active_cues() if picture and not cover_mode and desktop.screen.visible else []
+	var frame := _picture_frame()
+	var font_size := int(round(clampf(frame.size.x * CAPTION_OF_WIDTH, 12.0, 30.0) * Settings.subtitle_size))
+	var ids := PackedStringArray()
+	for cue in cues:
+		ids.append(str(cue["id"]))
+	var key := "%s|%d|%d|%s|%.3f|%v" % [",".join(ids), font_size, Settings.subtitle_color, Settings.subtitle_box, Settings.subtitle_offset, frame.size.round()]
+	if key != caption_key:
+		caption_key = key
+		_render_captions(cues, font_size, frame.size)
+	var low := frame.end.y - frame.size.y * (SubtitleView.BASE_MARGIN + Settings.subtitle_offset)
+	var lift := maxf(0.0, low - metadata.position.y + 6.0) * toolbar_alpha
+	var height := caption_bottom.get_content_height()
+	_place(caption_bottom, frame.position.x + 12, low - lift - height, frame.size.x - 24, height)
+	_place(caption_top, frame.position.x + 12, frame.position.y + frame.size.y * SubtitleView.BASE_MARGIN, frame.size.x - 24, caption_top.get_content_height())
+	_place(caption_bitmaps, frame.position.x, frame.position.y - lift, frame.size.x, frame.size.y)
+
+
+func _picture_frame() -> Rect2:
+	var aspect := _picture_aspect()
+	var frame_width := minf(size.x, size.y * aspect)
+	return Rect2((size - Vector2(frame_width, frame_width / aspect)) * 0.5, Vector2(frame_width, frame_width / aspect))
+
+
+func _render_captions(cues: Array, font_size: int, frame: Vector2) -> void:
+	for child in caption_bitmaps.get_children():
+		child.queue_free()
+	var bottom := PackedStringArray()
+	var top := PackedStringArray()
+	var live := {}
+	for cue in cues:
+		if cue.has("image"):
+			var id: int = cue["id"]
+			live[id] = true
+			if not caption_textures.has(id):
+				caption_textures[id] = ImageTexture.create_from_image(cue["image"])
+			var rect: Rect2 = cue["rect"]
+			var bitmap_size := rect.size * frame * Settings.subtitle_size
+			var view := TextureRect.new()
+			view.texture = caption_textures[id]
+			view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			view.stretch_mode = TextureRect.STRETCH_SCALE
+			view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			view.position = Vector2((rect.position.x + rect.size.x * 0.5) * frame.x - bitmap_size.x * 0.5, (rect.end.y - Settings.subtitle_offset) * frame.y - bitmap_size.y)
+			view.size = bitmap_size
+			caption_bitmaps.add_child(view)
+			continue
+		var converted := SubtitleView.ass_to_bbcode(cue["text"], cue["ass"])
+		if not converted["text"].strip_edges().is_empty():
+			(top if converted["top"] else bottom).append(converted["text"])
+	for id in caption_textures.keys():
+		if not live.has(id):
+			caption_textures.erase(id)
+	var color: Color = Settings.SUBTITLE_COLORS[clampi(Settings.subtitle_color, 0, Settings.SUBTITLE_COLORS.size() - 1)]
+	for label in [caption_bottom, caption_top]:
+		for font_name in ["normal_font_size", "italics_font_size", "bold_font_size", "bold_italics_font_size"]:
+			label.add_theme_font_size_override(font_name, font_size)
+		label.add_theme_color_override("default_color", color)
+		label.add_theme_constant_override("outline_size", 0 if Settings.subtitle_box else maxi(2, int(font_size * SubtitleView.OUTLINE_RATIO)))
+		label.add_theme_constant_override("shadow_offset_x", 0 if Settings.subtitle_box else maxi(1, font_size / 20))
+		label.add_theme_constant_override("shadow_offset_y", 0 if Settings.subtitle_box else maxi(1, font_size / 16))
+		label.add_theme_constant_override("text_highlight_h_padding", font_size / 3)
+		label.add_theme_constant_override("text_highlight_v_padding", font_size / 10)
+		label.add_theme_constant_override("line_separation", font_size / 5 if Settings.subtitle_box else 0)
+	for pair in [[caption_bottom, bottom], [caption_top, top]]:
+		var text := "\n".join(pair[1])
+		pair[0].text = "[bgcolor=#%s]%s[/bgcolor]" % [SubtitleView.BOX_COLOR.to_html(true), text] if Settings.subtitle_box and not text.is_empty() else text
+		pair[0].visible = not text.is_empty()
 
 
 func _place(control: Control, x: float, y: float, width: float, height: float) -> void:
@@ -593,6 +760,7 @@ func _layout() -> void:
 	_place(mute_button, 20, center - 16, 32, 32)
 	_place(volume, 60, center - 9, 128, 18)
 	_place(spectrum_button, 220, center - 16, 32, 32)
+	_place(subtitle_button, 220, center - 16, 32, 32)
 	_place(cover_button, 260, center - 16, 32, 32)
 	_place(fade_button, width - 212, center - 16, 32, 32)
 	_place(pin_button, width - 172, center - 16, 32, 32)
@@ -600,6 +768,12 @@ func _layout() -> void:
 	_place(more_button, width - 52, center - 16, 32, 32)
 	visualizer_menu.size = visualizer_menu.get_combined_minimum_size()
 	visualizer_menu.position = Vector2(212, center - 24 - visualizer_menu.size.y)
+	subtitle_scroll.custom_minimum_size.y = minf(subtitle_choices.get_combined_minimum_size().y, maxf(36, center - 52))
+	subtitle_menu.size = subtitle_menu.get_combined_minimum_size()
+	if subtitle_reveal != null and subtitle_menu.visible and subtitle_scroll.get_v_scroll_bar().max_value >= subtitle_reveal.get_rect().end.y:
+		subtitle_scroll.ensure_control_visible(subtitle_reveal)
+		subtitle_reveal = null
+	subtitle_menu.position = Vector2(clampf(212, 20, width - 20 - subtitle_menu.size.x), center - 24 - subtitle_menu.size.y)
 	window_menu.size = window_menu.get_combined_minimum_size()
 	window_menu.position = Vector2(width - 20 - window_menu.size.x, center - 24 - window_menu.size.y)
 	_place(hint, 30, art_size - 42, art_size - 20, 40)
@@ -683,18 +857,23 @@ func _animate_controls(delta: float) -> void:
 		button.visible = show_transport
 		button.modulate.a = hover_alpha
 		button.mouse_filter = Control.MOUSE_FILTER_STOP if artwork_hovered else Control.MOUSE_FILTER_IGNORE
-	metadata.modulate.a = hover_alpha if cover_mode else 1.0
+	var footer_alpha := toolbar_alpha if picture and not cover_mode else 1.0
+	metadata.modulate.a = hover_alpha if cover_mode else footer_alpha
 	if cover_mode:
 		metadata.visible = show_transport
 		for control in [mute_button, volume, cover_button]:
 			control.visible = show_transport
 			control.modulate.a *= hover_alpha
-	for control in [spectrum, progress, clock, duration, hint]:
+	for control in [progress, clock, duration]:
+		control.modulate.a = footer_alpha
+	for control in [spectrum, hint]:
 		control.modulate.a = 1.0
-	for control in [mute_button, volume, spectrum_button, cover_button, fade_button, pin_button, restore_button, more_button]:
+	for control in [mute_button, volume, spectrum_button, subtitle_button, cover_button, fade_button, pin_button, restore_button, more_button]:
 		control.modulate.a *= 1.0 if cover_mode else reveal_alpha
 	visualizer_menu_alpha = move_toward(visualizer_menu_alpha, 1.0 if visualizer_menu.visible else 0.0, delta / 0.1)
 	window_menu_alpha = move_toward(window_menu_alpha, 1.0 if window_menu.visible else 0.0, delta / 0.1)
+	subtitle_menu_alpha = move_toward(subtitle_menu_alpha, 1.0 if subtitle_menu.visible else 0.0, delta / 0.1)
+	subtitle_menu.modulate.a = subtitle_menu_alpha
 	visualizer_menu.modulate.a = visualizer_menu_alpha
 	window_menu.modulate.a = window_menu_alpha
 
@@ -725,7 +904,7 @@ func _refresh_favorite() -> void:
 
 func _update_toolbar(delta: float) -> void:
 	var hovered := pointer_inside and Rect2(Vector2.ZERO, size).has_point(pointer_position)
-	if hovered or seeking or adjusting_volume or keyboard_mode or visualizer_menu.visible or window_menu.visible:
+	if hovered or seeking or adjusting_volume or keyboard_mode or _menu_open():
 		toolbar_idle = 0.0
 		toolbar_alpha = 1.0
 	else:
@@ -743,17 +922,18 @@ func _update_toolbar(delta: float) -> void:
 		_layout()
 		_update_transport()
 		queue_redraw()
-	metadata.visible = not cover_mode or artwork_hovered
+	var footer := not cover_mode and (show or not picture)
+	metadata.visible = footer or (cover_mode and artwork_hovered)
 	quality.visible = not cover_mode and not quality.text.is_empty()
-	progress.visible = not cover_mode
-	clock.visible = not cover_mode
-	duration.visible = not cover_mode
-	for control in [mute_button, volume, spectrum_button, cover_button, fade_button, pin_button, restore_button, more_button]:
+	progress.visible = footer
+	clock.visible = footer
+	duration.visible = footer
+	for control in [mute_button, volume, spectrum_button, subtitle_button, cover_button, fade_button, pin_button, restore_button, more_button]:
 		if cover_mode:
 			control.visible = artwork_hovered and control in [mute_button, volume, cover_button]
 			control.modulate.a = (0.45 if control == volume and Settings.muted else 1.0)
 		else:
-			control.visible = show and (control != spectrum_button or not picture)
+			control.visible = show and (control != spectrum_button or not picture) and (control != subtitle_button or picture)
 			control.modulate.a = toolbar_alpha * (0.45 if control == volume and Settings.muted else 1.0)
 
 
@@ -765,7 +945,7 @@ func _toggle_idle_fade() -> void:
 
 func _update_appearance(delta: float) -> void:
 	var hovered := pointer_inside and Rect2(Vector2.ZERO, size).has_point(pointer_position)
-	var target := IDLE_OPACITY if idle_fade and not hovered and not seeking and not adjusting_volume and not keyboard_mode and not visualizer_menu.visible and not window_menu.visible else 1.0
+	var target := IDLE_OPACITY if idle_fade and not hovered and not seeking and not adjusting_volume and not keyboard_mode and not _menu_open() else 1.0
 	current_opacity = lerpf(current_opacity, target, 1.0 - exp(-delta * (16.0 if target == 1.0 else 8.0)))
 	if absf(current_opacity - target) < 0.001:
 		current_opacity = target
@@ -821,14 +1001,22 @@ func _quality_text() -> String:
 func _draw() -> void:
 	if not active:
 		return
-	if cover_mode:
-		draw_rect(Rect2(Vector2.ZERO, size), Color("1b1b1b"))
-	elif not picture:
-		draw_texture_rect(gradient, Rect2(Vector2.ZERO, size), false)
-		draw_style_box(VpxTheme.flat(Color("ffffff08"), 18, 0, 0), artwork.get_rect())
-
+	if not picture:
+		if cover_mode:
+			draw_rect(Rect2(Vector2.ZERO, size), Color("1b1b1b"))
+		else:
+			draw_texture_rect(gradient, Rect2(Vector2.ZERO, size), false)
+			draw_style_box(VpxTheme.flat(Color("ffffff08"), 18, 0, 0), artwork.get_rect())
 	else:
-		draw_rect(Rect2(0, size.y - FOOTER, size.x, FOOTER), Color("1b1b1b"))
+		var frame := _picture_frame()
+		for bar in [Rect2(0, 0, size.x, frame.position.y), Rect2(0, frame.end.y, size.x, size.y - frame.end.y), Rect2(0, frame.position.y, frame.position.x, frame.size.y), Rect2(frame.end.x, frame.position.y, size.x - frame.end.x, frame.size.y)]:
+			if bar.size.x > 0.0 and bar.size.y > 0.0:
+				draw_rect(bar.grow(0.5), Color.BLACK)
+	if picture and not cover_mode and toolbar_alpha > 0.01:
+		var top := size.y - FOOTER - 40.0
+		var clear := Color(0, 0, 0, 0)
+		var shade := Color(0, 0, 0, 0.82 * toolbar_alpha)
+		draw_polygon(PackedVector2Array([Vector2(0, top), Vector2(size.x, top), Vector2(size.x, size.y), Vector2(0, size.y)]), PackedColorArray([clear, clear, shade, shade]))
 	if not cover_mode and toolbar_alpha > 0.01:
 		for area in [Rect2(212, size.y - 96, 88, 40), Rect2(size.x - 220, size.y - 96, 88, 40)]:
 			draw_style_box(VpxTheme.flat(Color(1, 1, 1, 0.035 * toolbar_alpha), 10, 0, 0), area)
@@ -894,6 +1082,8 @@ func _input(event: InputEvent) -> void:
 			_close_menus()
 		if window_menu.visible and not window_menu.get_global_rect().has_point(point) and not more_button.get_global_rect().has_point(point):
 			_close_menus()
+		if subtitle_menu.visible and not subtitle_menu.get_global_rect().has_point(point) and not subtitle_button.get_global_rect().has_point(point):
+			_close_menus()
 		if volume.get_global_rect().grow(12).has_point(point) or mute_button.get_global_rect().has_point(point):
 			if event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 				Settings.apply("volume", clampi(Settings.volume + (5 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -5), 0, 100))
@@ -924,6 +1114,8 @@ func _input(event: InputEvent) -> void:
 				leave()
 			else:
 				_mute()
+		KEY_V:
+			_cycle_subtitles(-1 if event.shift_pressed else 1)
 		KEY_SPACE, KEY_K:
 			desktop.player.toggle_pause()
 		KEY_LEFT, KEY_RIGHT:
@@ -963,6 +1155,52 @@ func _toggle_visualizer_menu() -> void:
 		visualizer_options[visualizer_mode].grab_focus()
 
 
+func _menu_open() -> bool:
+	return visualizer_menu.visible or window_menu.visible or subtitle_menu.visible
+
+
+func _toggle_subtitle_menu() -> void:
+	var opening := not subtitle_menu.visible
+	_close_menus()
+	if not opening:
+		return
+	for option in subtitle_options:
+		option.queue_free()
+	subtitle_options.clear()
+	var tracks: Node = desktop.player.tracks
+	var labels := PackedStringArray()
+	for choice in range(-1, tracks.subtitle_tracks.size()):
+		labels.append(tracks.subtitle_label(choice))
+	for choice in range(-1, tracks.subtitle_tracks.size()):
+		var label := labels[choice + 1]
+		if labels.count(label) > 1:
+			var track: Dictionary = tracks.subtitle_tracks[choice]
+			label += " · " + (str(track["path"]).get_file() if track["kind"] == "external" else "Stream %d" % track["index"])
+		var option := _button("check" if choice == tracks.subtitle_choice else "radio_unchecked", label, _select_subtitle.bind(choice))
+		option.icon = VpxTheme.icon(str(option.get_meta("mini_icon")), ceili(16 * ui_factor))
+		option.text = label
+		option.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		option.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		option.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		option.clip_text = true
+		option.add_theme_font_size_override("font_size", 14)
+		option.add_theme_constant_override("h_separation", 10)
+		option.custom_minimum_size = Vector2(minf(size.x - 72, 280), 36)
+		option.modulate = VpxTheme.ACCENT if choice == tracks.subtitle_choice else VpxTheme.TEXT
+		option.reparent(subtitle_choices)
+		subtitle_options.append(option)
+	subtitle_menu.visible = true
+	_layout()
+	subtitle_reveal = subtitle_options[tracks.subtitle_choice + 1]
+	if keyboard_mode:
+		subtitle_reveal.grab_focus()
+
+
+func _select_subtitle(choice: int) -> void:
+	_close_menus(subtitle_button)
+	desktop.player.tracks.select_subtitle(choice)
+
+
 func _toggle_window_menu() -> void:
 	var opening := not window_menu.visible
 	_close_menus()
@@ -976,6 +1214,9 @@ func _close_menus(return_focus: Control = null) -> void:
 		visualizer_menu.hide()
 	if window_menu != null:
 		window_menu.hide()
+	if subtitle_menu != null:
+		subtitle_menu.hide()
+		subtitle_reveal = null
 	if keyboard_mode and return_focus != null:
 		return_focus.grab_focus()
 
@@ -991,6 +1232,8 @@ func _keyboard_controls() -> Array[Control]:
 	if visualizer_menu.visible:
 		for option in visualizer_options:
 			controls.append(option)
+	elif subtitle_menu.visible:
+		controls.assign(subtitle_options)
 	elif window_menu.visible:
 		controls.assign([minimize_button, close_button])
 	else:
@@ -1001,6 +1244,8 @@ func _keyboard_controls() -> Array[Control]:
 		controls.append(volume)
 		if not cover_mode and not picture:
 			controls.append(spectrum_button)
+		if not cover_mode and picture:
+			controls.append(subtitle_button)
 		controls.append(cover_button)
 		if not cover_mode:
 			controls.append_array([fade_button, pin_button, restore_button, more_button])
@@ -1022,13 +1267,13 @@ func _keyboard_input(event: InputEventKey) -> bool:
 			var next := posmod(current + (-1 if event.shift_pressed else 1), controls.size()) if current >= 0 else controls.size() - 1 if event.shift_pressed else 0
 			controls[next].grab_focus()
 		return true
-	if event.keycode == KEY_ESCAPE and (visualizer_menu.visible or window_menu.visible):
-		_close_menus(spectrum_button if visualizer_menu.visible else more_button)
+	if event.keycode == KEY_ESCAPE and _menu_open():
+		_close_menus(spectrum_button if visualizer_menu.visible else subtitle_button if subtitle_menu.visible else more_button)
 		return true
 	if not keyboard_mode:
 		return false
 	var focused := get_viewport().gui_get_focus_owner()
-	if event.keycode in [KEY_UP, KEY_DOWN] and (visualizer_menu.visible or window_menu.visible):
+	if event.keycode in [KEY_UP, KEY_DOWN] and _menu_open():
 		var choices := _keyboard_controls()
 		if not choices.is_empty():
 			choices[posmod(choices.find(focused) + (-1 if event.keycode == KEY_UP else 1), choices.size())].grab_focus()

@@ -15,6 +15,7 @@ const VIDEO_EXTENSIONS := ["mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "m2t
 const DISC_EXTENSIONS := ["iso"]
 const FormatDetector := preload("res://scripts/format_detector.gd")
 const ArchiveFiles := preload("res://scripts/archive_files.gd")
+const MediaTracks := preload("res://scripts/media_tracks.gd")
 const SEEK_STEP := 10.0
 const NAV_HEIGHT := 50
 const PRESET_HEIGHT := 58
@@ -2285,6 +2286,36 @@ func open_directory(path: String) -> void:
 	Settings.apply("last_directory", directory)
 	Settings.apply("library_source", Settings.LibrarySource.FOLDER)
 	refresh_directory()
+
+
+func open_dropped(paths: PackedStringArray) -> String:
+	var media := ""
+	var folder := ""
+	var subtitle := ""
+	for raw in paths:
+		var path := _clean_directory(raw)
+		var extension := path.get_extension().to_lower()
+		if DirAccess.dir_exists_absolute(path):
+			folder = path if folder.is_empty() else folder
+		elif extension in MediaTracks.SUBTITLE_EXTENSIONS:
+			subtitle = path if subtitle.is_empty() else subtitle
+		elif media.is_empty() and FileAccess.file_exists(path) and (extension in VIDEO_EXTENSIONS + VPXPlayer.AUDIO_EXTENSIONS + DISC_EXTENSIONS + ArchiveFiles.ARCHIVE_EXTENSIONS or PanoramaFiles.is_image(path)):
+			media = path
+	if not media.is_empty():
+		if Settings.library_source != Settings.LibrarySource.FOLDER or directory != media.get_base_dir():
+			open_directory(media.get_base_dir())
+		open_media(media)
+		return "media"
+	if not folder.is_empty():
+		open_directory(folder)
+		return "folder"
+	var current := player.current_path
+	if not subtitle.is_empty() and not current.is_empty() and not player.is_image() and current.get_extension().to_lower() not in VPXPlayer.AUDIO_EXTENSIONS:
+		var loaded: bool = player.tracks.add_external_file(subtitle)
+		status_requested.emit("Subtitle: " + subtitle.get_file() if loaded else "Could not load subtitle", false)
+		return "subtitle" if loaded else ""
+	status_requested.emit("Unsupported drop" if subtitle.is_empty() else "Play a video to add subtitles", false)
+	return ""
 
 
 func _select_source(source: int) -> void:

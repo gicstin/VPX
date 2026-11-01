@@ -2709,7 +2709,7 @@ index b40b5e5..0b6557b 100644
  		avcodec_free_context(&video_codec_context);
  	}
  	video_codec_context = avcodec_alloc_context3(decoder);
-@@ -210,51 +681,640 @@ Error VideoDecoder::recreate_codec_context() {
+@@ -210,51 +681,645 @@ Error VideoDecoder::recreate_codec_context() {
  
  	ERR_FAIL_COND_V_MSG(param_copy_result < 0, FAILED, vformat("Couldn't copy codec parameters from %s: %s", decoder->name, ffmpeg_get_error_message(param_copy_result)));
  
@@ -3177,6 +3177,11 @@ index b40b5e5..0b6557b 100644
  
 +int64_t VideoDecoder::_keyframe_ts_for_seek(int64_t p_target_ts, bool p_forward) const {
 +	if (video_stream == nullptr) {
++		return p_target_ts;
++	}
++	const int entries = avformat_index_get_entries_count(video_stream);
++	const AVIndexEntry *last = entries > 0 ? avformat_index_get_entry(video_stream, entries - 1) : nullptr;
++	if (last == nullptr || last->timestamp < p_target_ts) {
 +		return p_target_ts;
 +	}
 +	const int flags = p_forward ? 0 : AVSEEK_FLAG_BACKWARD;

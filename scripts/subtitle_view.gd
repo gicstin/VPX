@@ -39,6 +39,7 @@ var gliding := false
 var textures := {}
 var render_passes := 0
 var size_format_key := ""
+var suppressed := false
 
 
 func _ready() -> void:
@@ -109,7 +110,7 @@ func _make_label(grow: Control.GrowDirection) -> RichTextLabel:
 
 
 func _process(delta: float) -> void:
-	var cues: Array = player.tracks.active_cues() if screen.visible and not player.current_path.is_empty() else []
+	var cues: Array = player.tracks.active_cues() if screen.visible and not suppressed and not player.current_path.is_empty() else []
 	if cues.is_empty():
 		if visible:
 			visible = false

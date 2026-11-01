@@ -26,6 +26,7 @@ var player: VPXPlayer
 var mini_player: Control
 var mini_button: Button
 var backdrop: ColorRect
+var opaque_layer: CanvasLayer
 var menu_rect: TextureRect
 var osd_rect: TextureRect
 var preview_panel: PanelContainer
@@ -65,6 +66,9 @@ func _ready() -> void:
 			_show_preview_frame())
 	_build_seek_preview()
 	get_window().mouse_exited.connect(func() -> void: _set_menu_hover(false))
+	get_window().files_dropped.connect(func(files: PackedStringArray) -> void:
+		if main.ui.open_dropped(files) == "folder" and not mini_player.active:
+			main._open_menu())
 	Settings.changed.connect(func() -> void:
 		if not Settings.seek_previews:
 			_hide_seek_preview())
@@ -77,6 +81,15 @@ func _ready() -> void:
 		reticle.visible = false
 	screen.flat_desktop = true
 	screen.refresh()
+	opaque_layer = CanvasLayer.new()
+	opaque_layer.layer = 1000
+	var opaque := ColorRect.new()
+	opaque.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	opaque.set_anchors_preset(Control.PRESET_FULL_RECT)
+	opaque.material = ShaderMaterial.new()
+	opaque.material.shader = preload("res://shaders/opaque_window.gdshader")
+	opaque_layer.add_child(opaque)
+	add_child(opaque_layer)
 	mini_player = preload("res://scripts/mini_player.gd").new()
 	mini_player.desktop = self
 	add_child(mini_player)
@@ -137,6 +150,7 @@ func _process(delta: float) -> void:
 	if window.x < 1.0 or window.y < 1.0:
 		return
 	mini_button.visible = main.desktop_mode and not mini_player.active and not mini_player.busy
+	opaque_layer.visible = not mini_player.active and not mini_player.busy
 	if mini_player.active or mini_player.busy:
 		menu_rect.visible = false
 		backdrop.visible = false
@@ -197,7 +211,6 @@ func _is_flat() -> bool:
 
 
 func _fit_camera(window: Vector2) -> void:
-	camera.v_offset = 0.0
 	if not _is_flat():
 		var zoom: float = Settings.visualizer_zoom if main.resonance_field != null and main.resonance_field.active and not player.is_visualizer_overlay_active() else 1.0
 		camera.fov = rad_to_deg(2.0 * atan(tan(deg_to_rad(sphere_fov) * 0.5) / zoom))
@@ -207,12 +220,7 @@ func _fit_camera(window: Vector2) -> void:
 		return
 	camera.global_transform = Transform3D(screen.global_basis.orthonormalized(), screen.get_parent().global_position)
 	var tiles := float(Settings.flat_image_tiles()) if player.is_image() else 1.0
-	var available := window.y
-	if mini_player != null and mini_player.active and mini_player.picture and not mini_player.cover_mode:
-		available = maxf(1.0, window.y - (mini_player.HEADER + mini_player.FOOTER) * mini_player.ui_factor)
-	var height := maxf(quad.size.y * window.y / available, quad.size.x * window.y / window.x) / tiles
-	if available != window.y:
-		camera.v_offset = -(mini_player.FOOTER - mini_player.HEADER) * mini_player.ui_factor * height / (2.0 * window.y)
+	var height := maxf(quad.size.y, quad.size.x * window.y / window.x) / tiles
 	camera.fov = rad_to_deg(2.0 * atan(height * 0.5 / Settings.SCREEN_DISTANCE))
 
 

@@ -7,6 +7,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 
+## [0.0.10] - 2026-11-01
+
+### Added
+
+- Drag and drop files onto the desktop window: media opens and the current Library tab moves to its folder, a folder opens in the Library, and a subtitle file loads onto the playing video.
+- Floating mini player shows video subtitles above the controls, dropping to the picture bottom when idle, with a subtitle track menu and V to cycle tracks.
+
+### Changed
+
+- Cover mode plays video in a window matching its native aspect ratio instead of showing artwork.
+- Video in the floating mini player fills the window with opaque black letterbox bars, with controls overlaid on a fade and hidden when idle.
+
+### Fixed
+
+- Desktop window letterbox bars no longer show the desktop behind them on Wayland, whatever the background setting.
+- First seek in an MKV lands on the target at once, including while paused, instead of decoding forward from the start because the keyframe index was not loaded yet.
+
 ## [0.0.9] - 2026-10-25
 
 ### Added
