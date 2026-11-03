@@ -6,6 +6,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+
+- Click a chapter mark on the timeline to jump to its start, and hover it to see the chapter name, matching bookmark pins.
+- Opening media with the picture off the gaze recenters it, so a new video no longer opens where the menu was; offsets of a few degrees are kept.
+- The Library remembers the scroll position of each folder, including network share folders, and returns to it when you come back.
+- Show a session-start mark where this viewing session began, and a last-jump mark where you last seeked, in their own lane under the seek bar; both are clickable and named on hover.
+- Scene change markers, off by default under Menu, Marks, Timeline: a background keyframe scan marks the biggest cuts as faint dots under the seek bar, cached per file, named on hover, and it stops when the setting is turned off.
+- The bookmark-name keyboard suggests earlier bookmark names and common naming words as you type; click a suggestion to complete the current word.
+- Downmix multichannel audio to mono under Audio & subs, alongside the existing stereo fold.
+
+### Changed
+
+- Bookmark pins and chapter marks on the timeline are easier to hit: clicks count anywhere in the seek bar row, with a wider grab radius, a steady pointing cursor while aiming, and a hover highlight on the targeted mark; the seek handle keeps priority so dragging still works.
+- Seek previews use a per-file cache of keyframe thumbnails, built on first hover by a short keyframe-only pass, so the bubble shows a picture at once instead of spawning ffmpeg for every position; long or all-keyframe files are thinned to 600 tiles, the 60 most recent files are kept on disk, and files the cache cannot build still fall back to the per-position extraction.
+- Spatial audio now defaults off on the desktop and on in VR; a manual change to the toggle is kept across sessions.
+
+### Fixed
+
+- Leaving fullscreen with a double click waits for the window to settle before restoring its size and resyncs the view, so the video and UI rescale instead of staying cropped.
+- The end-of-video clock sits beside the title instead of inside the seek row, so the seek bar no longer shrinks when playback starts.
+- Multichannel stereo downmix no longer plays about 5 dB too quiet, and LFE is folded in at a lower level.
+- Binaural surround is less muffled: frontal sources keep their presence, fractional delays are interpolated more cleanly, and its level matches the stereo fold.
+
 
 ## [0.0.10] - 2026-11-01
 

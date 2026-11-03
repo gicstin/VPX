@@ -48,6 +48,7 @@ var last_seek_target := -1.0
 var idle := 0.0
 var osd_cooldown := 0.0
 var sphere_fov := SPHERE_FOV
+var resync_frames := 0
 
 
 func _ready() -> void:
@@ -149,6 +150,14 @@ func _process(delta: float) -> void:
 	var window := get_viewport().get_visible_rect().size
 	if window.x < 1.0 or window.y < 1.0:
 		return
+	var actual := DisplayServer.window_get_size()
+	if Vector2i(window) != actual and DisplayServer.window_get_mode() != DisplayServer.WINDOW_MODE_MINIMIZED:
+		resync_frames += 1
+		if resync_frames > 3:
+			resync_frames = 0
+			get_window().size = actual
+	else:
+		resync_frames = 0
 	mini_button.visible = main.desktop_mode and not mini_player.active and not mini_player.busy
 	opaque_layer.visible = not mini_player.active and not mini_player.busy
 	if mini_player.active or mini_player.busy:

@@ -120,10 +120,16 @@ func toggle_fullscreen() -> void:
 	capture()
 	var fullscreen := DisplayServer.window_get_mode() in [DisplayServer.WINDOW_MODE_FULLSCREEN, DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN]
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if fullscreen else DisplayServer.WINDOW_MODE_FULLSCREEN)
-	if fullscreen and active:
-		DisplayServer.window_set_size(state["bounds"].size)
-		DisplayServer.window_set_position(state["bounds"].position)
 	capture(false)
+	if fullscreen and active:
+		var bounds: Rect2i = state["bounds"]
+		for frame in 3:
+			await get_tree().process_frame
+			if DisplayServer.window_get_mode() != DisplayServer.WINDOW_MODE_WINDOWED:
+				return
+			DisplayServer.window_set_size(bounds.size)
+			DisplayServer.window_set_position(bounds.position)
+		get_window().size = bounds.size
 
 
 func _notification(what: int) -> void:

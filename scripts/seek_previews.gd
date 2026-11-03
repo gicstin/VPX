@@ -4,6 +4,7 @@ signal ready_for(path: String)
 signal state_changed
 
 const PREVIEW_DIR := "user://cache/previews"
+const TILE_DIR := "user://cache/tiles"
 const FRAME_SIZE := Vector2i(352, 198)
 const MAX_TEXTURES := 48
 const SETTLE_MSEC := 50
@@ -14,6 +15,12 @@ const RETRY_MSEC := 1000
 const MAX_ATTEMPTS := 3
 const QUICK_SCRIPT := "exec nice -n 15 ffmpeg -v error -nostdin -y -threads 1 -skip_loop_filter all -noaccurate_seek -skip_frame nokey -ss \"$3\" -i \"$1\" -map 0:v:0 -an -sn -dn -copyts -fps_mode passthrough -frames:v 1 -filter_threads 1 -vf \"$4\" -pix_fmt yuvj420p -q:v 5 \"$2\" 2> \"$5\""
 const EXACT_SCRIPT := "exec nice -n 15 ffmpeg -v error -nostdin -y -threads 2 -skip_loop_filter all -ss \"$3\" -i \"$1\" -map 0:v:0 -an -sn -dn -frames:v 1 -filter_threads 1 -vf \"$4\" -pix_fmt yuvj420p -q:v 5 \"$2\" 2> \"$5\""
+const PROBE_SCRIPT := "exec nice -n 15 ffprobe -v error -select_streams v:0 -skip_frame nokey -show_entries frame=pts_time -of csv=p=0 \"$1\" > \"$2\" 2> \"$3\""
+const TILE_SCRIPT := "exec nice -n 15 ffmpeg -v error -nostdin -y -threads 1 -skip_frame nokey -i \"$1\" -map 0:v:0 -an -sn -dn -fps_mode passthrough -vf \"$2\" -q:v 7 \"$3\" 2> \"$4\""
+const TILE_MAX := 600
+const TILE_KEEP := 60
+const TILE_PROBE_MSEC := 60000
+const TILE_JOB_MSEC := 900000
 
 var path := ""
 var duration := 0.0
@@ -37,10 +44,24 @@ var failed_quick := {}
 var attempts := {}
 var request_owner: Object
 var unavailable_reason := ""
+var tile_dir := ""
+var tile_ready := false
+var tile_failed := false
+var tile_stage := 0
+var tile_pid := -1
+var tile_started := 0
+var tile_times: Array[float] = []
+var tile_files := PackedStringArray()
+var tile_textures := {}
+var tile_order: Array[int] = []
+var tile_probe_times: Array[float] = []
+var tile_step := 1
 
 
 func _ready() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(PREVIEW_DIR))
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(TILE_DIR))
+	_prune_tiles()
 
 
 func _notification(what: int) -> void:
@@ -50,6 +71,15 @@ func _notification(what: int) -> void:
 
 func clear() -> void:
 	stop()
+	_cancel_tiles()
+	tile_dir = ""
+	tile_ready = false
+	tile_failed = false
+	tile_times.clear()
+	tile_files = PackedStringArray()
+	tile_textures.clear()
+	tile_order.clear()
+	tile_probe_times.clear()
 	path = ""
 	duration = 0.0
 	format_id = ""
@@ -109,6 +139,7 @@ func request(video_path: String, length: float, picture: Vector2i) -> void:
 	var key := "%s-%s-v7-%s" % [video_path.md5_text(), MediaInfo._stat_signature(video_path).md5_text().substr(0, 8), format_id]
 	output_dir = ProjectSettings.globalize_path(PREVIEW_DIR.path_join(key))
 	DirAccess.make_dir_recursive_absolute(output_dir)
+	tile_dir = ProjectSettings.globalize_path(TILE_DIR.path_join(key))
 
 
 func _format_id() -> String:
@@ -138,6 +169,15 @@ func frame(time: float, requester: Object = null) -> Texture2D:
 		request_owner = requester
 	if path.is_empty():
 		return null
+	if tile_ready:
+		var tile := _tile_frame(time)
+		if tile != null:
+			return tile
+		tile_ready = false
+		tile_failed = true
+		_dir_clear(tile_dir)
+	else:
+		_ensure_tiles()
 	var index := clampi(int(roundf(time / interval)), 0, int(ceilf(duration / interval)))
 	if desired != index:
 		desired = index
@@ -160,6 +200,12 @@ func frame(time: float, requester: Object = null) -> Texture2D:
 
 
 func _process(_delta: float) -> void:
+	_poll_tiles()
+	if tile_ready:
+		if pid > 0:
+			_cancel()
+		desired = -1
+		return
 	if pid > 0:
 		if not OS.is_process_running(pid):
 			var finished := active
@@ -298,3 +344,184 @@ func status(time: float) -> String:
 	if int(attempts.get("%d:false" % index, 0)) >= MAX_ATTEMPTS and failed_exact.has(index):
 		return "Preview unavailable · reopen to retry"
 	return "Loading preview…"
+
+
+func _ensure_tiles() -> void:
+	if tile_ready or tile_failed or tile_stage > 0 or path.is_empty() or tile_dir.is_empty():
+		return
+	DirAccess.make_dir_recursive_absolute(tile_dir)
+	var manifest := tile_dir.path_join("tiles.json")
+	if FileAccess.file_exists(manifest):
+		if _read_tiles(manifest):
+			return
+	_dir_clear(tile_dir)
+	tile_stage = 1
+	tile_started = Time.get_ticks_msec()
+	tile_pid = Shell.spawn(PROBE_SCRIPT, [path, tile_dir.path_join("keyframes.txt"), tile_dir.path_join("probe.log")])
+	if tile_pid <= 0:
+		_tiles_failed("probe could not start")
+
+
+func _poll_tiles() -> void:
+	if tile_stage <= 0 or tile_pid <= 0:
+		return
+	if OS.is_process_running(tile_pid):
+		var limit := TILE_PROBE_MSEC if tile_stage == 1 else TILE_JOB_MSEC
+		if Time.get_ticks_msec() - tile_started > limit:
+			tile_pid = -1
+			_tiles_failed("timed out")
+		return
+	tile_pid = -1
+	if tile_stage == 1:
+		_start_extract()
+	else:
+		_finish_tiles()
+
+
+func _start_extract() -> void:
+	var probe_file := tile_dir.path_join("keyframes.txt")
+	tile_probe_times.clear()
+	if FileAccess.file_exists(probe_file):
+		for line in FileAccess.get_file_as_string(probe_file).split("\n"):
+			if line.strip_edges().is_empty():
+				continue
+			tile_probe_times.append(float(line.strip_edges()))
+		DirAccess.remove_absolute(probe_file)
+	DirAccess.remove_absolute(tile_dir.path_join("probe.log"))
+	if tile_probe_times.size() < 2:
+		_tiles_failed("no keyframes found")
+		return
+	tile_stage = 2
+	tile_started = Time.get_ticks_msec()
+	tile_step = maxi(int(ceilf(tile_probe_times.size() / float(TILE_MAX))), 1)
+	var tile_filter := filter if tile_step == 1 else "select=not(mod(n\\,%d)),%s" % [tile_step, filter]
+	tile_pid = Shell.spawn(TILE_SCRIPT, [path, tile_filter, tile_dir.path_join("%05d.jpg"), tile_dir.path_join("extract.log")])
+	if tile_pid <= 0:
+		_tiles_failed("extract could not start")
+
+
+func _finish_tiles() -> void:
+	DirAccess.remove_absolute(tile_dir.path_join("extract.log"))
+	var files := PackedStringArray()
+	var dir := DirAccess.open(tile_dir)
+	if dir != null:
+		for name in dir.get_files():
+			if name.ends_with(".jpg"):
+				files.append(name)
+	files.sort()
+	if files.size() != ceili(tile_probe_times.size() / float(tile_step)):
+		_tiles_failed("frame count mismatch")
+		return
+	tile_times.clear()
+	tile_files = PackedStringArray()
+	for index in files.size():
+		tile_times.append(tile_probe_times[index * tile_step])
+		tile_files.append(files[index])
+	tile_probe_times.clear()
+	if tile_times.is_empty():
+		_tiles_failed("no tiles kept")
+		return
+	_write_tiles()
+	tile_stage = 0
+	tile_ready = true
+	ready_for.emit(path)
+
+
+func _tiles_failed(reason: String) -> void:
+	tile_stage = 0
+	tile_failed = true
+	Log.warn("preview tiles %s: %s" % [reason, path])
+
+
+func _write_tiles() -> void:
+	var file := FileAccess.open(tile_dir.path_join("tiles.json"), FileAccess.WRITE)
+	if file == null:
+		return
+	file.store_string(JSON.stringify({"times": tile_times, "files": tile_files}))
+	file.close()
+
+
+func _read_tiles(manifest: String) -> bool:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(manifest))
+	if not parsed is Dictionary:
+		return false
+	var times: Variant = parsed.get("times", [])
+	var files: Variant = parsed.get("files", [])
+	if not times is Array or not files is Array or times.is_empty() or times.size() != files.size():
+		return false
+	tile_times.clear()
+	tile_files = PackedStringArray()
+	for index in times.size():
+		tile_times.append(float(times[index]))
+		tile_files.append(str(files[index]))
+	tile_ready = true
+	return true
+
+
+func _tile_frame(time: float) -> Texture2D:
+	var index := _tile_index(time)
+	if index < 0:
+		return null
+	if tile_textures.has(index):
+		tile_order.erase(index)
+		tile_order.append(index)
+		return tile_textures[index]
+	var image := Image.load_from_file(tile_dir.path_join(tile_files[index]))
+	if image == null or image.is_empty():
+		return null
+	var texture := ImageTexture.create_from_image(image)
+	tile_textures[index] = texture
+	tile_order.append(index)
+	while tile_order.size() > MAX_TEXTURES:
+		tile_textures.erase(tile_order.pop_front())
+	return texture
+
+
+func _tile_index(time: float) -> int:
+	if tile_times.is_empty():
+		return -1
+	var low := 0
+	var high := tile_times.size() - 1
+	while low < high:
+		var middle := (low + high) / 2
+		if tile_times[middle] < time:
+			low = middle + 1
+		else:
+			high = middle
+	if low > 0 and absf(tile_times[low - 1] - time) <= absf(tile_times[low] - time):
+		return low - 1
+	return low
+
+
+func _cancel_tiles() -> void:
+	if tile_pid > 0:
+		if OS.is_process_running(tile_pid):
+			OS.kill(tile_pid)
+		tile_pid = -1
+	tile_stage = 0
+
+
+func _prune_tiles() -> void:
+	var root := ProjectSettings.globalize_path(TILE_DIR)
+	var dir := DirAccess.open(root)
+	if dir == null:
+		return
+	var stamped := []
+	for name in dir.get_directories():
+		var folder := root.path_join(name)
+		stamped.append([FileAccess.get_modified_time(folder.path_join("tiles.json")), folder])
+	if stamped.size() <= TILE_KEEP:
+		return
+	stamped.sort_custom(func(a: Array, b: Array) -> bool: return a[0] > b[0])
+	for index in range(TILE_KEEP, stamped.size()):
+		var folder: String = stamped[index][1]
+		_dir_clear(folder)
+		DirAccess.remove_absolute(folder)
+
+
+func _dir_clear(target: String) -> void:
+	var dir := DirAccess.open(target)
+	if dir == null:
+		return
+	for name in dir.get_files():
+		DirAccess.remove_absolute(target.path_join(name))

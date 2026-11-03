@@ -204,7 +204,9 @@ var visualizer_grab_mode := VisualizerGrab.DEFAULT
 var ui_size := 1.0
 var text_size := 1.0
 var accent_color := VpxTheme.DEFAULT_ACCENT
-var spatial_audio := true
+var spatial_audio := false
+var spatial_audio_explicit := false
+var audio_mono := false
 var dialogue_boost := false
 var audio_filter := AudioFilter.OFF
 var audio_stretch_quality := 0
@@ -244,6 +246,7 @@ var hide_menu_on_play := true
 var end_action := EndAction.STOP
 var resume_playback := true
 var seek_previews := true
+var scene_marks := false
 var drag_speed := 1.0
 var menu_translucent := false
 var lock_horizon := false
@@ -290,6 +293,7 @@ var library_source := LibrarySource.FOLDER
 var library_filter := LibraryFilter.ALL
 var library_query := ""
 var library_tab_session := {}
+var library_folder_scroll := {}
 var window_session := {}
 var network_servers: Array = []
 var defaults := {}
@@ -442,6 +446,8 @@ func apply(property: StringName, value: Variant) -> void:
 		if not (value is float or value is int) or not is_finite(float(value)):
 			return
 		value = clampf(float(value), ZOOM_MIN, ZOOM_MAX)
+	if property == &"spatial_audio":
+		spatial_audio_explicit = true
 	if get(property) == value:
 		return
 	set(property, value)
@@ -491,6 +497,14 @@ func preview_screen_size(value: float) -> void:
 	screen_size = clampf(value, 20.0, 140.0)
 	save_config()
 	screen_size_changed.emit()
+
+
+func set_spatial_default(for_vr: bool) -> void:
+	if spatial_audio_explicit:
+		return
+	if spatial_audio != for_vr:
+		spatial_audio = for_vr
+		save_config()
 
 
 func apply_viewing_values(values: Dictionary) -> bool:
@@ -652,6 +666,8 @@ func load_config() -> void:
 	window_session = saved_window if saved_window is Dictionary else {}
 	for property in _persisted():
 		set(property, config.get_value("player", property, get(property)))
+	if not library_folder_scroll is Dictionary:
+		library_folder_scroll = {}
 	if not config.has_section_key("player", "immersive_music_visualizer"):
 		immersive_music_visualizer = music_visualizer and int(config.get_value("player", "music_visualizer_mode", 1)) == 1
 	_validate_visualizer()
@@ -703,12 +719,12 @@ func _persisted() -> PackedStringArray:
 		"sharpness_level", "gamma", "saturation", "angle_yaw", "angle_pitch", "angle_roll",
 		"match_refresh_rate", "prefer_desktop",
 		"muted", "volume", "decode_mode", "playback_priority", "panorama_source", "photo_supersampling", "shuffle", "auto_detect", "hide_menu_on_play",
-		"end_action", "resume_playback", "seek_previews", "drag_speed", "menu_translucent", "lock_horizon", "follow_posture", "look_gain", "grip_action", "trigger_action", "chord_action",
+		"end_action", "resume_playback", "seek_previews", "scene_marks", "drag_speed", "menu_translucent", "lock_horizon", "follow_posture", "look_gain", "grip_action", "trigger_action", "chord_action",
 		"show_level", "laser_menu_only", "dim_behind_menu", "menu_follow", "video_follow", "pause_when_removed", "hover_haptics", "show_clock", "face_on_open", "auto_swap_eyes",
 		"audio_language", "subtitle_auto", "subtitle_language", "subtitle_size", "subtitle_size_by_format", "subtitle_offset", "subtitle_color", "subtitle_box", "subtitle_distance",
-		"last_directory", "last_file", "library_view", "library_flat_view", "library_favorites_only", "library_unplayed_only", "library_sort", "library_source", "library_filter", "library_tab_session", "network_servers",
+		"last_directory", "last_file", "library_view", "library_flat_view", "library_favorites_only", "library_unplayed_only", "library_sort", "library_source", "library_filter", "library_tab_session", "library_folder_scroll", "network_servers",
 		"stereo_depth", "stereo_vertical", "picture_zoom", "single_eye", "flat_image_repeat", "photo_pan_x", "photo_pan_y",
-		"auto_crop", "deband", "dither", "compositor_layer", "spatial_audio", "dialogue_boost", "audio_filter",
+		"auto_crop", "deband", "dither", "compositor_layer", "spatial_audio", "spatial_audio_explicit", "audio_mono", "dialogue_boost", "audio_filter",
 		"remote_control", "flat_video_pan", "music_visualizer", "audio_stretch_quality", "accent_color", "ui_size", "text_size",
 		"music_visualizer_mode", "immersive_music_visualizer", "visualizer_overlay", "visualizer_overlay_opacity", "visualizer_background_dim", "visualizer_atmosphere", "visualizer_preset", "visualizer_favorites", "visualizer_starred_only", "visualizer_shuffle", "visualizer_quality", "visualizer_intensity", "visualizer_sensitivity", "visualizer_motion", "visualizer_zoom", "visualizer_sync", "visualizer_auto_change", "visualizer_grab_mode",
 	])

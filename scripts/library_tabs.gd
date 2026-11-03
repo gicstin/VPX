@@ -152,6 +152,7 @@ func _activate() -> void:
 	ui.drag_active = false
 	ui.directory = state["directory"]
 	ui.directory_fallbacks = state["fallbacks"]
+	ui.pending_folder_scroll = -1
 	ui.dlna_stack.assign(state["dlna"])
 	for key in VIEW_KEYS:
 		Settings.set(key, state[key])

@@ -26,6 +26,7 @@ const RECLINE_HYSTERESIS := 10.0
 const GAIN_FADE_START := 120.0
 const GAIN_POLE_FADE := Vector2(0.2, 0.5)
 const MENU_FOLLOW_ANGLE := 55.0
+const OPEN_RECENTER_ANGLE := 8.0
 const MENU_FOLLOW_DELAY := 0.6
 const MENU_FOLLOW_RATE := 7.0
 const MENU_DIM := 0.25
@@ -434,9 +435,11 @@ func _init_xr() -> bool:
 		_log_blend_modes()
 		_connect_session_signals()
 		_watch_headset()
+		Settings.set_spatial_default(true)
 		_update_title.call_deferred()
 		return true
 	desktop_mode = true
+	Settings.set_spatial_default(false)
 	get_viewport().use_xr = false
 	if xr_interface != null and xr_interface.is_initialized():
 		xr_interface.uninitialize()
@@ -677,9 +680,7 @@ func _update_video_glide(delta: float) -> void:
 		video_glide_initializing = false
 		return
 	if not video_gliding:
-		var gaze := -camera.global_basis.z
-		var screen_direction := screen.global_position - camera.global_position if Settings.projection == Settings.ProjectionMode.FLAT else -screen.global_basis.z
-		var angle := rad_to_deg(FloatPanel.level(screen_direction).angle_to(FloatPanel.level(gaze)))
+		var angle := _screen_off_axis()
 		video_glide_away_time = video_glide_away_time + delta if angle > MENU_FOLLOW_ANGLE else 0.0
 		if video_glide_away_time > MENU_FOLLOW_DELAY:
 			video_gliding = true
@@ -712,6 +713,12 @@ func _update_video_glide(delta: float) -> void:
 		Settings.commit()
 		video_gliding = false
 		video_glide_away_time = 0.0
+
+
+func _screen_off_axis() -> float:
+	var gaze := -camera.global_basis.z
+	var direction := screen.global_position - camera.global_position if Settings.projection == Settings.ProjectionMode.FLAT else -screen.global_basis.z
+	return rad_to_deg(FloatPanel.level(direction).angle_to(FloatPanel.level(gaze)))
 
 
 func _level_head(head: Basis) -> Basis:
@@ -821,8 +828,13 @@ func _on_opened(_path: String) -> void:
 	if seek_bar != null:
 		seek_bar.close_bar()
 	var has_visual := player.is_image() or (player.has_picture() and not bool(player.stream_metadata.get("audio_only", false)))
-	if Settings.face_on_open and grab_controller == null and has_visual:
-		center_screen()
+	if has_visual and grab_controller == null:
+		var off_axis := _screen_off_axis()
+		if Settings.face_on_open:
+			center_screen()
+		elif _tracking_usable() and off_axis > OPEN_RECENTER_ANGLE:
+			Log.info("picture opened %.0f° off gaze, recentering" % off_axis)
+			center_screen()
 	if Settings.hide_menu_on_play and not player.paused:
 		panel.close()
 	_match_refresh_rate()

@@ -5,6 +5,9 @@ signal edited(text: String)
 signal cancelled
 
 const PANEL_WIDTH := 1180
+const MAX_SUGGESTIONS := 5
+const SUGGESTION_HEIGHT := 46
+const SUGGESTION_MAX_CHARS := 16
 const KEY_SIZE := Vector2(88, 72)
 const KEY_GAP := 8
 const LETTER_ROWS := ["1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"]
@@ -12,6 +15,8 @@ const SYMBOL_ROWS := ["1234567890", "-_/:.@?&=%", "~+#!$()[]'", ",;*|\\\"<>^"]
 
 var title_label: Label
 var field: LineEdit
+var suggest_row: HBoxContainer
+var suggestions := PackedStringArray()
 var rows: VBoxContainer
 var shift := false
 var symbols := false
@@ -47,17 +52,25 @@ func _ready() -> void:
 	field.add_theme_font_size_override("font_size", 28)
 	field.clear_button_enabled = true
 	field.text_changed.connect(func(text: String) -> void:
+		_refresh_suggestions()
 		if live:
 			edited.emit(text))
 	field.text_submitted.connect(func(_text: String) -> void: _submit())
 	layout.add_child(field)
+	suggest_row = HBoxContainer.new()
+	suggest_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	suggest_row.add_theme_constant_override("separation", 8)
+	suggest_row.custom_minimum_size.y = SUGGESTION_HEIGHT
+	suggest_row.clip_contents = true
+	suggest_row.visible = false
+	layout.add_child(suggest_row)
 	rows = VBoxContainer.new()
 	rows.add_theme_constant_override("separation", KEY_GAP)
 	layout.add_child(rows)
 	_build_keys()
 
 
-func open(title: String, text := "", placeholder := "", p_live := false) -> void:
+func open(title: String, text := "", placeholder := "", p_live := false, p_suggestions := PackedStringArray()) -> void:
 	size = get_viewport().get_visible_rect().size
 	title_label.text = title
 	field.text = text
@@ -66,7 +79,9 @@ func open(title: String, text := "", placeholder := "", p_live := false) -> void
 	live = p_live
 	shift = false
 	symbols = false
+	suggestions = p_suggestions
 	_relabel()
+	_refresh_suggestions()
 	move_to_front()
 	visible = true
 	field.grab_focus()
@@ -165,8 +180,58 @@ func _backspace() -> void:
 func _set_text(text: String, caret := -1) -> void:
 	field.text = text
 	field.caret_column = text.length() if caret < 0 else caret
+	_refresh_suggestions()
 	if live:
 		edited.emit(text)
+
+
+func _current_word() -> String:
+	var head := field.text.substr(0, field.caret_column)
+	var space := head.rfind(" ")
+	return head.substr(space + 1)
+
+
+func _refresh_suggestions() -> void:
+	if suggest_row == null:
+		return
+	for child in suggest_row.get_children():
+		suggest_row.remove_child(child)
+		child.queue_free()
+	var word := _current_word().to_lower()
+	var used := {}
+	for suggestion in suggestions:
+		if suggest_row.get_child_count() >= MAX_SUGGESTIONS:
+			break
+		if suggestion.is_empty() or used.has(suggestion.to_lower()):
+			continue
+		if not word.is_empty() and not suggestion.to_lower().begins_with(word):
+			continue
+		if suggestion.to_lower() == word:
+			continue
+		used[suggestion.to_lower()] = true
+		suggest_row.add_child(_suggestion(suggestion))
+	suggest_row.visible = not suggestions.is_empty()
+
+
+func _suggestion(text: String) -> Button:
+	var chip := Button.new()
+	chip.text = text.left(SUGGESTION_MAX_CHARS)
+	chip.clip_text = true
+	chip.focus_mode = FOCUS_NONE
+	chip.custom_minimum_size = Vector2(0, SUGGESTION_HEIGHT)
+	chip.add_theme_font_size_override("font_size", 22)
+	Tooltips.set_text(chip, "Use this name: " + text)
+	chip.pressed.connect(_complete.bind(text))
+	return chip
+
+
+func _complete(word: String) -> void:
+	var caret := field.caret_column
+	var head := field.text.substr(0, caret)
+	var start := head.rfind(" ") + 1
+	var tail := field.text.substr(caret)
+	_set_text(head.substr(0, start) + word + tail, start + word.length())
+	field.grab_focus()
 
 
 func _toggle_shift() -> void:

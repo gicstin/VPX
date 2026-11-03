@@ -70,6 +70,8 @@ var prefetch_serial := 0
 var image_path := ""
 var tracks: MediaTracks = MediaTracks.new()
 var chapters: Array = []
+var session_start := -1.0
+var last_jump := -1.0
 var loop_a := -1.0
 var loop_b := -1.0
 var sleep_left := 0.0
@@ -330,6 +332,9 @@ func open(path: String, options := {}) -> bool:
 	if ok:
 		load_state["status"] = "ready"
 		load_changed.emit(load_state.duplicate(true))
+		session_start = stream_position
+		last_jump = -1.0
+		marks_changed.emit()
 	elif load_state.get("status") != "failed":
 		if image != null:
 			current_path = image_path
@@ -622,6 +627,7 @@ func apply_audio_processing() -> void:
 	if playback == null:
 		return
 	playback.set_spatial_audio(Settings.spatial_audio)
+	playback.set_audio_mono(Settings.audio_mono)
 	playback.set_dialogue_boost(1.0 if Settings.dialogue_boost else 0.0)
 	playback.set_audio_filter(Settings.audio_filter)
 	if playback.has_method("set_visualizer_enabled"):
@@ -698,22 +704,36 @@ func bookmark_name(time: float) -> String:
 
 
 func bookmark_name_history() -> PackedStringArray:
-	var paths := Library.entries.keys()
-	paths.sort_custom(func(a: String, b: String) -> bool: return float(Library.entries[a].get("seen", 0)) > float(Library.entries[b].get("seen", 0)))
 	var result := PackedStringArray()
 	var used := {}
+	var current := bookmark_path()
+	_append_name_history(current, result, used)
+	if result.size() >= BOOKMARK_HISTORY_MAX:
+		return result
+	var paths := Library.entries.keys()
+	paths.sort_custom(func(a: String, b: String) -> bool: return float(Library.entries[a].get("seen", 0)) > float(Library.entries[b].get("seen", 0)))
 	for path: String in paths:
-		var history: Variant = Library.get_pref(path, "bookmark_name_history", [])
-		if not history is Array:
+		if path == current:
 			continue
-		for title: Variant in history:
-			if not title is String or title.is_empty() or used.has(title.to_lower()):
-				continue
-			result.append(title)
-			used[title.to_lower()] = true
-			if result.size() >= BOOKMARK_HISTORY_MAX:
-				return result
+		_append_name_history(path, result, used)
+		if result.size() >= BOOKMARK_HISTORY_MAX:
+			break
 	return result
+
+
+func _append_name_history(path: String, result: PackedStringArray, used: Dictionary) -> void:
+	if path.is_empty():
+		return
+	var history: Variant = Library.get_pref(path, "bookmark_name_history", [])
+	if not history is Array:
+		return
+	for title: Variant in history:
+		if not title is String or title.is_empty() or used.has(title.to_lower()):
+			continue
+		result.append(title)
+		used[title.to_lower()] = true
+		if result.size() >= BOOKMARK_HISTORY_MAX:
+			return
 
 
 func rename_bookmark(time: float, text: String) -> bool:
@@ -1299,6 +1319,9 @@ func seek_to(seconds: float) -> void:
 	observed_progress = -1
 	if not is_playing():
 		play()
+	if not is_equal_approx(last_jump, target):
+		last_jump = target
+		marks_changed.emit()
 	stream_position = target
 
 

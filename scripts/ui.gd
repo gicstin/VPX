@@ -51,6 +51,8 @@ const FLING_DECAY := 5.0
 const FLING_MIN := 30.0
 const PRIORITIZE_DELAY := 0.25
 const MAX_CRUMBS := 4
+const FOLDER_SCROLL_MAX := 400
+const BOOKMARK_WORDS := ["Intro", "Outro", "Opening", "Ending", "Credits", "Scene", "Highlight", "Favourite", "Skip", "Recap", "Trailer", "Interview", "Talk", "Action", "Fight", "Music", "Song", "Dance", "Party", "Funny", "Boring", "Best", "Start", "Middle", "End", "Part 1", "Part 2", "After credits", "Bonus"]
 const CHEAT_SHEET := [
 	["Trigger", "Click the menu"],
 	["A / X", "Play / pause, or click when pointing at the menu"],
@@ -122,6 +124,7 @@ const Keyboard := preload("res://scripts/keyboard.gd")
 const Network := preload("res://scripts/network.gd")
 const SeekPreviews := preload("res://scripts/seek_previews.gd")
 const SeekMarks := preload("res://scripts/seek_marks.gd")
+const SceneMarks := preload("res://scripts/scene_marks.gd")
 const WebVideo := preload("res://scripts/web_video.gd")
 const RemoteControl := preload("res://scripts/remote_control.gd")
 const RAIL_COLLAPSED := 64.0
@@ -202,8 +205,10 @@ var drag_last_msec := 0
 var drag_velocity := 0.0
 var fling := 0.0
 var fling_position := 0.0
+var pending_folder_scroll := -1
 var prioritize_timer := -1.0
 var now_path := ""
+var scene_marks_enabled := false
 var quick: QuickPanel
 var spirit_level: SpiritLevel
 var spirit_level_section: VBoxContainer
@@ -236,6 +241,7 @@ var removing_servers := false
 var network_titles := {}
 var previews: SeekPreviews
 var marks: SeekMarks
+var scenes: SceneMarks
 var preview_rect: TextureRect
 var preview_time := -1.0
 var photo_note_for := ""
@@ -350,6 +356,7 @@ func _ready() -> void:
 	add_child(recovery)
 	_build_settings_search()
 	_build_seek_extras()
+	scene_marks_enabled = Settings.scene_marks
 	_build_cheat_sheet()
 	_decorate()
 	_build_rail()
@@ -362,7 +369,10 @@ func _ready() -> void:
 		if not Settings.seek_previews:
 			previews.clear()
 			preview_rect.texture = null
-			preview_rect.visible = false)
+			preview_rect.visible = false
+		if Settings.scene_marks != scene_marks_enabled:
+			scene_marks_enabled = Settings.scene_marks
+			_refresh_marks())
 	Library.watch_changed.connect(_on_watch_changed)
 	player.opened.connect(_on_opened)
 	player.music_metadata_changed.connect(_refresh_now_playing)
@@ -628,6 +638,7 @@ func _build_media_page() -> void:
 	var audio := Rows.section(page, "Audio")
 	Rows.dropdown(audio, "Preferred audio language", &"audio_language", PackedStringArray(["File default"]) + Languages.names())
 	Rows.toggle(audio, "Spatial audio (surround and 360 sound follow your head)", &"spatial_audio")
+	Rows.toggle(audio, "Downmix to mono", &"audio_mono")
 	Rows.toggle(audio, "Dialogue boost", &"dialogue_boost")
 	Rows.choice(audio, "Loudness", &"audio_filter", PackedStringArray(["Off", "Even out", "Night mode"]))
 	audio_info_label = Rows.hint(audio, "")
@@ -877,7 +888,9 @@ func _build_quick_panel() -> void:
 	move_child(quick, $Sheet.get_index() + 1)
 	quick.bookmark_name_requested.connect(func(text: String) -> void:
 		keyboard_purpose = "bookmark_name"
-		keyboard.open("Bookmark name", text, "Optional name · up to 64 characters"))
+		var names := player.bookmark_name_history()
+		names.append_array(PackedStringArray(BOOKMARK_WORDS))
+		keyboard.open("Bookmark name", text, "Optional name · up to 64 characters", false, names))
 	quick.menu_requested.connect(show_main)
 	quick.settings_requested.connect(show_settings)
 	quick.recenter_requested.connect(recenter_requested.emit)
@@ -1196,12 +1209,15 @@ func _build_seek_extras() -> void:
 	previews.ready_for.connect(func(_path: String) -> void:
 		if get_viewport().render_target_update_mode != SubViewport.UPDATE_DISABLED and previews.request_owner == self and seek_bubble.visible and preview_time >= 0.0:
 			_show_bubble(preview_time, _slider_x(preview_time)))
+	scenes = SceneMarks.new()
+	add_child(scenes)
+	scenes.changed.connect(_refresh_marks)
 	marks = SeekMarks.new()
 	seek_slider.add_child(marks)
-	marks.bookmark_hovered.connect(func(time: float) -> void:
+	marks.mark_hovered.connect(func(time: float) -> void:
 		if seek_slider.editable and not seeking:
 			_show_bubble(time, _slider_x(time)))
-	marks.bookmark_selected.connect(func(time: float) -> void:
+	marks.mark_selected.connect(func(time: float) -> void:
 		if seek_slider.editable and not seeking:
 			seek_edit_serial += 1
 			player.seek_to(time)
@@ -1229,7 +1245,10 @@ func _build_seek_extras() -> void:
 func _refresh_marks() -> void:
 	var has_media := player.playback != null
 	marks_length = player.get_stream_length() if has_media else 0.0
-	marks.show_marks(marks_length, _grabber_half(), player.chapters if has_media else [], player.bookmarks() if has_media else [], Vector2(player.loop_a, player.loop_b))
+	var timed := has_media and not player.is_live()
+	if scenes != null:
+		scenes.prepare(player)
+	marks.show_marks(marks_length, _grabber_half(), player.chapters if has_media else [], player.bookmarks() if has_media else [], Vector2(player.loop_a, player.loop_b), player.session_start if timed else -1.0, player.last_jump if timed else -1.0, scenes.times if scenes != null else [])
 
 
 func _open_search() -> void:
@@ -1343,7 +1362,9 @@ func _connect_share(url: String) -> void:
 func _go_up() -> void:
 	if Settings.library_source == Settings.LibrarySource.NETWORK:
 		if not dlna_stack.is_empty():
+			_remember_folder_scroll()
 			dlna_stack.pop_back()
+			pending_folder_scroll = _saved_folder_scroll(_folder_scroll_key())
 			refresh_directory()
 		return
 	if Settings.library_source == Settings.LibrarySource.FOLDER and not _is_root(directory):
@@ -1621,7 +1642,7 @@ func _update_transport() -> void:
 	elapsed_label.text = _format_time(player.stream_position if has_media else 0.0, length)
 	total_label.text = "LIVE" if live else _format_time(length, length)
 	var playing := has_media and not player.paused and player.is_playing()
-	end_time_label.visible = playing and length > 0.0
+	end_time_label.visible = has_media and not live and length > 0.0
 	if end_time_label.visible:
 		var position := seek_slider.value if seeking else player.stream_position
 		var remaining := maxf(length - position, 0.0) / maxf(Settings.playback_speed, 0.01)
@@ -1713,6 +1734,14 @@ func _show_bubble(value: float, local_x: float) -> void:
 	var chapter := player.chapter_title(player.chapter_at(value)) if not player.chapters.is_empty() else ""
 	if not chapter.is_empty():
 		bubble_label.text += "  ·  " + chapter
+	for scene: float in marks.scenes:
+		if is_equal_approx(value, scene):
+			bubble_label.text += "  ·  scene change"
+			break
+	if marks.session_start >= 0.0 and is_equal_approx(value, marks.session_start):
+		bubble_label.text += "  ·  session start"
+	elif marks.last_jump >= 0.0 and is_equal_approx(value, marks.last_jump):
+		bubble_label.text += "  ·  last jump"
 	_show_preview(value)
 	seek_bubble.reset_size()
 	var origin := seek_slider.get_global_rect().position
@@ -1796,7 +1825,9 @@ func _refresh_audio_info() -> void:
 		return
 	var info: Dictionary = player.playback.get_audio_info()
 	audio_info_label.text = "Now playing: %s%s" % [info.get("description", "no audio"), "  ·  separate web audio" if info.get("external", false) else ""]
-	if int(info.get("channels", 0)) in [1, 2] and not bool(info.get("ambisonic", false)):
+	if bool(info.get("mono", false)):
+		audio_info_label.text += "\nDownmixed to mono."
+	elif int(info.get("channels", 0)) in [1, 2] and not bool(info.get("ambisonic", false)):
 		audio_info_label.text += "\nMono / stereo plays unchanged. Head-tracked spatial processing needs surround or ambisonic audio."
 
 
@@ -2281,11 +2312,73 @@ func open_directory(path: String) -> void:
 	cancel_disc_open()
 	if path.is_empty():
 		return
-	directory = _clean_directory(path)
+	var target := _clean_directory(path)
+	_remember_folder_scroll()
+	pending_folder_scroll = _saved_folder_scroll(target)
+	directory = target
 	directory_fallbacks = false
 	Settings.apply("last_directory", directory)
 	Settings.apply("library_source", Settings.LibrarySource.FOLDER)
 	refresh_directory()
+
+
+func _remember_folder_scroll() -> void:
+	if Settings.library_source not in [Settings.LibrarySource.FOLDER, Settings.LibrarySource.NETWORK]:
+		return
+	if pending_folder_scroll >= 0:
+		return
+	var key := _folder_scroll_key()
+	if key.is_empty():
+		return
+	var scrolls: Variant = Settings.library_folder_scroll
+	if not scrolls is Dictionary:
+		Settings.library_folder_scroll = {}
+		return
+	var scroll := maxi(file_scroll.scroll_vertical, 0)
+	if scroll <= 0:
+		scrolls.erase(key)
+		return
+	scrolls.erase(key)
+	scrolls[key] = scroll
+	while scrolls.size() > FOLDER_SCROLL_MAX:
+		scrolls.erase(scrolls.keys()[0])
+	Settings.save_config()
+
+
+func _folder_scroll_key() -> String:
+	if Settings.library_source == Settings.LibrarySource.NETWORK:
+		var ids := PackedStringArray()
+		for entry: Dictionary in dlna_stack:
+			ids.append(str(entry.get("id", "")))
+		return "dlna:" + "|".join(ids)
+	return directory
+
+
+func _saved_folder_scroll(path: String) -> int:
+	var scrolls: Variant = Settings.library_folder_scroll
+	if not scrolls is Dictionary or path.is_empty():
+		return -1
+	return maxi(int(scrolls.get(path, -1)), -1)
+
+
+func _apply_folder_scroll() -> void:
+	if pending_folder_scroll < 0:
+		return
+	var serial := paths_serial
+	for frame in 300:
+		await get_tree().process_frame
+		if serial != paths_serial:
+			return
+		if not folder_grid.is_empty() or not media_grid.is_empty():
+			break
+	if serial != paths_serial:
+		return
+	var value := pending_folder_scroll
+	pending_folder_scroll = -1
+	if value <= 0:
+		return
+	file_scroll.scroll_vertical = value
+	fling = 0.0
 
 
 func open_dropped(paths: PackedStringArray) -> String:
@@ -2381,6 +2474,7 @@ func refresh_directory(check_paths := true) -> void:
 			up_button.disabled = true
 	if scan_started_msec < 0:
 		_flush_items()
+	_apply_folder_scroll()
 	library_tabs.capture()
 
 
@@ -2480,6 +2574,7 @@ func _show_scan(result: Dictionary) -> void:
 	if not done:
 		return
 	scan_started_msec = -1
+	_apply_folder_scroll()
 	if not Settings.library_query.strip_edges().is_empty():
 		if folders.is_empty() and files.is_empty():
 			_add_hint("Nothing matches “%s” in this folder or its subfolders" % Settings.library_query)
@@ -2872,13 +2967,17 @@ func _on_network_item(path: String) -> void:
 		_connect_share(Settings.network_servers[index]["url"])
 	elif path.begins_with("dlna:") and index < network.media_servers.size():
 		var server: Dictionary = network.media_servers[index]
+		_remember_folder_scroll()
 		dlna_stack = [{"name": server["name"], "control": server["control"], "id": "0"}]
+		pending_folder_scroll = _saved_folder_scroll(_folder_scroll_key())
 		refresh_directory()
 	elif path.begins_with("upnp:") and not dlna_stack.is_empty():
 		var top: Dictionary = dlna_stack.back()
 		var containers: Array = top.get("result", {}).get("containers", [])
 		if index < containers.size():
+			_remember_folder_scroll()
 			dlna_stack.append({"name": containers[index]["title"], "control": top["control"], "id": containers[index]["id"]})
+			pending_folder_scroll = _saved_folder_scroll(_folder_scroll_key())
 			refresh_directory()
 
 
@@ -3247,7 +3346,9 @@ func _build_crumbs() -> void:
 				crumb.add_theme_color_override("font_color", VpxTheme.TEXT)
 			var depth := i
 			crumb.pressed.connect(func() -> void:
+				_remember_folder_scroll()
 				dlna_stack.resize(depth)
+				pending_folder_scroll = _saved_folder_scroll(_folder_scroll_key())
 				refresh_directory())
 			crumbs.add_child(crumb)
 		return

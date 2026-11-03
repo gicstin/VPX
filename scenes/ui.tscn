@@ -1060,6 +1060,16 @@ layout_mode = 2
 theme_type_variation = &"AccentBadgeLabel"
 theme_override_font_sizes/font_size = 20
 
+[node name="EndTimeLabel" type="Label" parent="Sheet/Margin/Layout/PlayerBar/BarRows/NowRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 4
+theme_type_variation = &"Caption"
+theme_override_font_sizes/font_size = 20
+text = "end 22:32"
+horizontal_alignment = 2
+visible = false
+
 [node name="SeekRow" type="HBoxContainer" parent="Sheet/Margin/Layout/PlayerBar/BarRows"]
 layout_mode = 2
 theme_override_constants/separation = 14
@@ -1089,16 +1099,6 @@ custom_minimum_size = Vector2(104, 0)
 theme_type_variation = &"Caption"
 theme_override_font_sizes/font_size = 22
 text = "0:00"
-
-[node name="EndTimeLabel" type="Label" parent="Sheet/Margin/Layout/PlayerBar/BarRows/SeekRow"]
-unique_name_in_owner = true
-layout_mode = 2
-custom_minimum_size = Vector2(132, 0)
-theme_type_variation = &"Caption"
-theme_override_font_sizes/font_size = 22
-text = "end 22:32"
-horizontal_alignment = 2
-visible = false
 
 [node name="ControlRow" type="HBoxContainer" parent="Sheet/Margin/Layout/PlayerBar/BarRows"]
 layout_mode = 2
