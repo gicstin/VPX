@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-11-03
+
 ### Added
 
 - Click a chapter mark on the timeline to jump to its start, and hover it to see the chapter name, matching bookmark pins.
@@ -28,7 +30,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - The end-of-video clock sits beside the title instead of inside the seek row, so the seek bar no longer shrinks when playback starts.
 - Multichannel stereo downmix no longer plays about 5 dB too quiet, and LFE is folded in at a lower level.
 - Binaural surround is less muffled: frontal sources keep their presence, fractional delays are interpolated more cleanly, and its level matches the stereo fold.
-
 
 ## [0.0.10] - 2026-11-01
 
