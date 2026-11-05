@@ -82,18 +82,18 @@ func _ui() -> void:
 	check(not controls.favorite_button.disabled and not controls.favorite_button.button_pressed, "new music path enables favourite without starring it")
 	root.get_node("Library").set_favorite(main.player.current_path, true)
 	controls.refresh()
-	check(controls.favorite_button.button_pressed and controls.favorite_button.tooltip_text == "Remove music from favourites", "favourite changes update cached icon and tooltip")
+	check(controls.favorite_button.button_pressed and root.get_node("Tooltips").get_text(controls.favorite_button) == "Remove music from favourites", "favourite changes update cached icon and tooltip")
 	root.get_node("Library").set_favorite(main.player.current_path, false)
 	controls.refresh()
-	check(not controls.favorite_button.button_pressed and controls.favorite_button.tooltip_text == "Add music to favourites", "removing favourite restores cached presentation")
+	check(not controls.favorite_button.button_pressed and root.get_node("Tooltips").get_text(controls.favorite_button) == "Add music to favourites", "removing favourite restores cached presentation")
 	settings.immersive_music_visualizer = true
 	settings.visualizer_preset = 3
 	picker._pull()
-	check(picker.tiles[3].button_pressed and picker.selected.button_pressed, "picker follows selection and enablement")
+	check(picker.tiles[3].button_pressed and picker.selected.button_pressed == picker.menu.visible, "picker follows selection and enablement")
 	picker.selected.set_pressed_no_signal(false)
 	picker.tiles[3].set_pressed_no_signal(false)
 	picker._pull()
-	check(picker.tiles[3].button_pressed and picker.selected.button_pressed, "reselecting active scene restores toggled buttons")
+	check(picker.tiles[3].button_pressed and picker.selected.button_pressed == picker.menu.visible, "reselecting active scene restores toggled buttons")
 	settings.visualizer_favorites = PackedStringArray([settings.VISUALIZER_PRESETS[3]])
 	settings.visualizer_starred_only = true
 	picker._pull()
@@ -107,7 +107,7 @@ func _ui() -> void:
 	settings.visualizer_starred_only = false
 	settings.visualizer_overlay = true
 	picker._pull()
-	check(picker.mix_controls.visible and picker.overlay_toggle.button_pressed and picker.selected.tooltip_text.contains("Overlay on media"), "overlay changes update picker controls")
+	check(picker.mix_controls.visible and picker.overlay_toggle.button_pressed and root.get_node("Tooltips").get_text(picker.selected).contains("Overlay on media"), "overlay changes update picker controls")
 	settings.immersive_music_visualizer = false
 	picker._pull()
 	check(picker.disabled_button.button_pressed and not picker.selected.button_pressed and not picker.tiles[3].button_pressed, "disabled scene clears cached selection")

@@ -265,9 +265,22 @@ func handle_input(event: InputEvent) -> bool:
 		return false
 	if mouse is InputEventMouseMotion:
 		idle = 0.0
+	var side := mouse as InputEventMouseButton
+	if side != null and side.button_index in [MOUSE_BUTTON_XBUTTON1, MOUSE_BUTTON_XBUTTON2]:
+		if side.pressed:
+			_side_button(side.button_index == MOUSE_BUTTON_XBUTTON1)
+		return true
 	if panel.is_open() or menu_pressed:
 		return _menu_input(mouse)
 	return _video_input(mouse)
+
+
+func _side_button(back: bool) -> void:
+	if panel.is_open():
+		if back:
+			main.ui.navigate_library_up()
+	elif not player.current_path.is_empty():
+		main.step_file(-1 if back else 1)
 
 
 func _menu_input(mouse: InputEventMouse) -> bool:

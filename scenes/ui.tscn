@@ -99,40 +99,46 @@ theme_type_variation = &"NavItem"
 text = "Quit"
 alignment = 0
 
-[node name="PageScroll" type="ScrollContainer" parent="Sheet/Margin/Layout/Body"]
+[node name="PageContent" type="VBoxContainer" parent="Sheet/Margin/Layout/Body"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 16
+
+[node name="PageScroll" type="ScrollContainer" parent="Sheet/Margin/Layout/Body/PageContent"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 horizontal_scroll_mode = 0
 vertical_scroll_mode = 4
 
-[node name="PageStack" type="MarginContainer" parent="Sheet/Margin/Layout/Body/PageScroll"]
+[node name="PageStack" type="MarginContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/margin_right = 16
 
-[node name="Library" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack"]
+[node name="Library" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 12
 
-[node name="LibraryBar" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library"]
+[node name="LibraryBar" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library"]
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="Sources" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar"]
+[node name="Sources" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/LibraryBar"]
 custom_minimum_size = Vector2(48, 0)
 layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"Segment"
 
-[node name="SourceNavigation" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar/Sources"]
+[node name="SourceNavigation" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/LibraryBar/Sources"]
 layout_mode = 2
 theme_override_constants/separation = 0
 
-[node name="SourceLeft" type="Button" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar/Sources/SourceNavigation"]
+[node name="SourceLeft" type="Button" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/LibraryBar/Sources/SourceNavigation"]
 unique_name_in_owner = true
 visible = false
 custom_minimum_size = Vector2(32, 48)
@@ -141,19 +147,19 @@ tooltip_text = "Scroll sources left"
 focus_mode = 0
 flat = true
 
-[node name="SourceScroll" type="ScrollContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar/Sources/SourceNavigation"]
+[node name="SourceScroll" type="ScrollContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/LibraryBar/Sources/SourceNavigation"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 horizontal_scroll_mode = 3
 vertical_scroll_mode = 0
 
-[node name="SourceRow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar/Sources/SourceNavigation/SourceScroll"]
+[node name="SourceRow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/LibraryBar/Sources/SourceNavigation/SourceScroll"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="SourceRight" type="Button" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar/Sources/SourceNavigation"]
+[node name="SourceRight" type="Button" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/LibraryBar/Sources/SourceNavigation"]
 unique_name_in_owner = true
 visible = false
 custom_minimum_size = Vector2(32, 48)
@@ -162,13 +168,13 @@ tooltip_text = "Scroll sources right"
 focus_mode = 0
 flat = true
 
-[node name="BarSpacer" type="Control" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar"]
+[node name="BarSpacer" type="Control" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/LibraryBar"]
 visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 mouse_filter = 2
 
-[node name="SortButton" type="OptionButton" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar"]
+[node name="SortButton" type="OptionButton" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/LibraryBar"]
 unique_name_in_owner = true
 layout_mode = 2
 custom_minimum_size = Vector2(200, 56)
@@ -176,16 +182,16 @@ theme_type_variation = &"CompactOption"
 focus_mode = 0
 fit_to_longest_item = false
 
-[node name="Views" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar"]
+[node name="Views" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/LibraryBar"]
 layout_mode = 2
 size_flags_vertical = 4
 theme_type_variation = &"Segment"
 
-[node name="ViewRow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar/Views"]
+[node name="ViewRow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/LibraryBar/Views"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="GridButton" type="Button" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar/Views/ViewRow"]
+[node name="GridButton" type="Button" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/LibraryBar/Views/ViewRow"]
 unique_name_in_owner = true
 layout_mode = 2
 custom_minimum_size = Vector2(60, 48)
@@ -194,7 +200,7 @@ theme_type_variation = &"Chip"
 toggle_mode = true
 icon_alignment = 1
 
-[node name="ListButton" type="Button" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/LibraryBar/Views/ViewRow"]
+[node name="ListButton" type="Button" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/LibraryBar/Views/ViewRow"]
 unique_name_in_owner = true
 layout_mode = 2
 custom_minimum_size = Vector2(60, 48)
@@ -203,11 +209,11 @@ theme_type_variation = &"Chip"
 toggle_mode = true
 icon_alignment = 1
 
-[node name="PathBar" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library"]
+[node name="PathBar" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library"]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="UpButton" type="Button" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/PathBar"]
+[node name="UpButton" type="Button" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/PathBar"]
 unique_name_in_owner = true
 layout_mode = 2
 custom_minimum_size = Vector2(56, 50)
@@ -215,100 +221,101 @@ focus_mode = 0
 theme_type_variation = &"IconButton"
 icon_alignment = 1
 
-[node name="CrumbScroll" type="ScrollContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/PathBar"]
+[node name="CrumbScroll" type="ScrollContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/PathBar"]
 layout_mode = 2
 size_flags_horizontal = 3
-horizontal_scroll_mode = 0
+horizontal_scroll_mode = 3
 vertical_scroll_mode = 0
 
-[node name="Crumbs" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/PathBar/CrumbScroll"]
+[node name="Crumbs" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/PathBar/CrumbScroll"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
+size_flags_vertical = 3
 theme_override_constants/separation = 0
 
-[node name="CountLabel" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/PathBar"]
+[node name="CountLabel" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/PathBar"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Caption"
 horizontal_alignment = 2
 
-[node name="ClockLabel" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/PathBar"]
+[node name="ClockLabel" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/PathBar"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Caption"
 custom_minimum_size = Vector2(64, 0)
 horizontal_alignment = 2
 
-[node name="FileScroll" type="ScrollContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library"]
+[node name="FileScroll" type="ScrollContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
 vertical_scroll_mode = 4
 
-[node name="FileList" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Library/FileScroll"]
+[node name="FileList" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Library/FileScroll"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 14
 
-[node name="Format" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack"]
+[node name="Format" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack"]
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="PresetsTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format"]
+[node name="PresetsTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format"]
 layout_mode = 2
 theme_type_variation = &"SectionTitle"
 text = "QUICK PRESETS"
 
-[node name="PresetGrid" type="GridContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format"]
+[node name="PresetGrid" type="GridContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/h_separation = 8
 theme_override_constants/v_separation = 8
 columns = 5
 
-[node name="LayoutTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format"]
+[node name="LayoutTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format"]
 layout_mode = 2
 theme_type_variation = &"SectionTitle"
 text = "LAYOUT"
 
-[node name="LayoutGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format"]
+[node name="LayoutGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format"]
 layout_mode = 2
 theme_type_variation = &"Group"
 
-[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/LayoutGroup"]
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format/LayoutGroup"]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="AutoDetect" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/LayoutGroup/Rows"]
+[node name="AutoDetect" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format/LayoutGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Auto-detect format"
 setting = &"auto_detect"
 
-[node name="Projection" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/LayoutGroup/Rows"]
+[node name="Projection" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format/LayoutGroup/Rows"]
 layout_mode = 2
 script = ExtResource("3")
 title = "Projection"
 setting = &"projection"
 options = PackedStringArray("Flat", "360°", "180°", "Fisheye", "EAC", "Cube")
 
-[node name="Stereo" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/LayoutGroup/Rows"]
+[node name="Stereo" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format/LayoutGroup/Rows"]
 layout_mode = 2
 script = ExtResource("3")
 title = "Stereo"
 setting = &"stereo"
 options = PackedStringArray("Mono", "Side by side", "Over under")
 
-[node name="SwapEyes" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/LayoutGroup/Rows"]
+[node name="SwapEyes" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format/LayoutGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Swap eyes"
 setting = &"swap_eyes"
 
-[node name="Fov" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/LayoutGroup/Rows"]
+[node name="Fov" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format/LayoutGroup/Rows"]
 unique_name_in_owner = true
 layout_mode = 2
 script = ExtResource("2")
@@ -319,63 +326,63 @@ max_value = 250.0
 step = 5.0
 suffix = "°"
 
-[node name="AlphaMask" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/LayoutGroup/Rows"]
+[node name="AlphaMask" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format/LayoutGroup/Rows"]
 layout_mode = 2
 script = ExtResource("3")
 title = "Alpha mask"
 setting = &"alpha_mask"
 options = PackedStringArray("None", "DeoVR corners", "Below picture")
 
-[node name="PhotoTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format"]
+[node name="PhotoTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format"]
 layout_mode = 2
 theme_type_variation = &"SectionTitle"
 text = "360° PHOTOS"
 
-[node name="PhotoGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format"]
+[node name="PhotoGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format"]
 layout_mode = 2
 theme_type_variation = &"Group"
 
-[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/PhotoGroup"]
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format/PhotoGroup"]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="PanoramaSource" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format/PhotoGroup/Rows"]
+[node name="PanoramaSource" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format/PhotoGroup/Rows"]
 layout_mode = 2
 script = ExtResource("3")
 title = "Load from"
 setting = &"panorama_source"
 options = PackedStringArray("Single 360 image", "Cube faces")
 
-[node name="FormatHint" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Format"]
+[node name="FormatHint" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Format"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Hint"
 text = "Auto-detect reads the format from the filename and the alpha mask from the picture. A format you pick by hand is remembered for that video. Load from switches a 360° photo only when the folder has both one image and six cube faces."
 autowrap_mode = 3
 
-[node name="Picture" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack"]
+[node name="Picture" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack"]
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="ScreenSection" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture"]
+[node name="ScreenSection" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="ScreenTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ScreenSection"]
+[node name="ScreenTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/ScreenSection"]
 layout_mode = 2
 theme_type_variation = &"SectionTitle"
 text = "FLAT SCREEN"
 
-[node name="ScreenGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ScreenSection"]
+[node name="ScreenGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/ScreenSection"]
 layout_mode = 2
 theme_type_variation = &"Group"
 
-[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ScreenSection/ScreenGroup"]
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/ScreenSection/ScreenGroup"]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="Size" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ScreenSection/ScreenGroup/Rows"]
+[node name="Size" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/ScreenSection/ScreenGroup/Rows"]
 layout_mode = 2
 script = ExtResource("7")
 title = "Size"
@@ -385,7 +392,7 @@ max_value = 140.0
 step = 5.0
 suffix = "°"
 
-[node name="Curve" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ScreenSection/ScreenGroup/Rows"]
+[node name="Curve" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/ScreenSection/ScreenGroup/Rows"]
 layout_mode = 2
 script = ExtResource("2")
 title = "Curve"
@@ -397,20 +404,20 @@ fast_step = 0.25
 display_scale = 100.0
 suffix = "%"
 
-[node name="ColourTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture"]
+[node name="ColourTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture"]
 layout_mode = 2
 theme_type_variation = &"SectionTitle"
 text = "COLOUR"
 
-[node name="ColourGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture"]
+[node name="ColourGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture"]
 layout_mode = 2
 theme_type_variation = &"Group"
 
-[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ColourGroup"]
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/ColourGroup"]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="Brightness" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ColourGroup/Rows"]
+[node name="Brightness" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/ColourGroup/Rows"]
 layout_mode = 2
 script = ExtResource("2")
 title = "Brightness"
@@ -421,7 +428,7 @@ step = 0.05
 display_scale = 100.0
 suffix = "%"
 
-[node name="Gamma" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ColourGroup/Rows"]
+[node name="Gamma" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/ColourGroup/Rows"]
 layout_mode = 2
 script = ExtResource("2")
 title = "Gamma (higher = brighter)"
@@ -431,7 +438,7 @@ max_value = 2.2
 step = 0.1
 decimals = 1
 
-[node name="Saturation" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ColourGroup/Rows"]
+[node name="Saturation" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/ColourGroup/Rows"]
 layout_mode = 2
 script = ExtResource("2")
 title = "Saturation"
@@ -442,27 +449,27 @@ step = 0.05
 display_scale = 100.0
 suffix = "%"
 
-[node name="Sharpness" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/ColourGroup/Rows"]
+[node name="Sharpness" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/ColourGroup/Rows"]
 layout_mode = 2
 script = ExtResource("3")
 title = "Sharpness"
 setting = &"sharpness_level"
 options = PackedStringArray("Off", "Low", "Med", "High", "Extra", "Max")
 
-[node name="QualityTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture"]
+[node name="QualityTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture"]
 layout_mode = 2
 theme_type_variation = &"SectionTitle"
 text = "EDGES & PHOTOS"
 
-[node name="QualityGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture"]
+[node name="QualityGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture"]
 layout_mode = 2
 theme_type_variation = &"Group"
 
-[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/QualityGroup"]
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/QualityGroup"]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="EdgeFade" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/QualityGroup/Rows"]
+[node name="EdgeFade" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/QualityGroup/Rows"]
 layout_mode = 2
 script = ExtResource("2")
 title = "Edge fade"
@@ -474,24 +481,24 @@ fast_step = 0.05
 display_scale = 100.0
 suffix = "%"
 
-[node name="PhotoSupersampling" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/QualityGroup/Rows"]
+[node name="PhotoSupersampling" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/QualityGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Photo supersampling"
 setting = &"photo_supersampling"
 
-[node name="PictureFooter" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture"]
+[node name="PictureFooter" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture"]
 layout_mode = 2
 theme_override_constants/separation = 16
 
-[node name="PictureHint" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/PictureFooter"]
+[node name="PictureHint" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/PictureFooter"]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"Hint"
 text = "Size is the angle the flat screen fills, so it looks the same at any distance. Curve bends it around you like a cinema screen."
 autowrap_mode = 3
 
-[node name="ResetPicture" type="Button" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Picture/PictureFooter"]
+[node name="ResetPicture" type="Button" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/PictureFooter"]
 unique_name_in_owner = true
 layout_mode = 2
 custom_minimum_size = Vector2(0, 58)
@@ -499,24 +506,24 @@ size_flags_vertical = 0
 focus_mode = 0
 text = "Reset"
 
-[node name="Angles" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack"]
+[node name="Angles" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack"]
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="OrientationTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles"]
+[node name="OrientationTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Angles"]
 layout_mode = 2
 theme_type_variation = &"SectionTitle"
 text = "ORIENTATION"
 
-[node name="OrientationGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles"]
+[node name="OrientationGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Angles"]
 layout_mode = 2
 theme_type_variation = &"Group"
 
-[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/OrientationGroup"]
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Angles/OrientationGroup"]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="Yaw" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
+[node name="Yaw" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
 layout_mode = 2
 script = ExtResource("2")
 title = "Yaw (left / right)"
@@ -528,7 +535,7 @@ step = 1.0
 fast_step = 5.0
 suffix = "°"
 
-[node name="Pitch" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
+[node name="Pitch" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
 layout_mode = 2
 script = ExtResource("2")
 title = "Pitch (up / down)"
@@ -540,7 +547,7 @@ step = 1.0
 fast_step = 5.0
 suffix = "°"
 
-[node name="Roll" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
+[node name="Roll" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
 layout_mode = 2
 script = ExtResource("2")
 title = "Roll (tilt)"
@@ -552,19 +559,19 @@ step = 1.0
 fast_step = 5.0
 suffix = "°"
 
-[node name="LockHorizon" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
+[node name="LockHorizon" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Lock horizon (no roll, even with grip + trigger)"
 setting = &"lock_horizon"
 
-[node name="FollowPosture" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
+[node name="FollowPosture" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Lying down: recenter to where you look"
 setting = &"follow_posture"
 
-[node name="LookGain" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
+[node name="LookGain" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Angles/OrientationGroup/Rows"]
 layout_mode = 2
 script = ExtResource("2")
 title = "Look-around boost (180 / 360)"
@@ -576,18 +583,18 @@ step = 0.25
 decimals = 2
 suffix = "×"
 
-[node name="AnglesFooter" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles"]
+[node name="AnglesFooter" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Angles"]
 layout_mode = 2
 theme_override_constants/separation = 16
 
-[node name="AnglesHint" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/AnglesFooter"]
+[node name="AnglesHint" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Angles/AnglesFooter"]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"Hint"
 text = "Grip and move to drag the picture with the horizon locked. Add the trigger, then twist your wrist to tilt the horizon. Set Roll (tilt) here too. Near-level angles snap flat on release. Grip while pointing at this menu moves the menu. In bed, hold B / Y while looking where you want the picture."
 autowrap_mode = 3
 
-[node name="ResetAngles" type="Button" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Angles/AnglesFooter"]
+[node name="ResetAngles" type="Button" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Angles/AnglesFooter"]
 unique_name_in_owner = true
 layout_mode = 2
 custom_minimum_size = Vector2(0, 58)
@@ -595,61 +602,61 @@ size_flags_vertical = 0
 focus_mode = 0
 text = "Reset"
 
-[node name="Passthrough" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack"]
+[node name="Passthrough" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="BackgroundTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough"]
+[node name="BackgroundTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough"]
 layout_mode = 2
 theme_type_variation = &"SectionTitle"
 text = "BACKGROUND"
 
-[node name="BackgroundGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough"]
+[node name="BackgroundGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough"]
 layout_mode = 2
 theme_type_variation = &"Group"
 
-[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup"]
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/BackgroundGroup"]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="Background" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows"]
+[node name="Background" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows"]
 layout_mode = 2
 script = ExtResource("3")
 title = "Behind the video"
 setting = &"background"
 options = PackedStringArray("Chroma key", "Passthrough", "Black", "Cinema")
 
-[node name="KeyRow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows"]
+[node name="KeyRow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows"]
 unique_name_in_owner = true
 layout_mode = 2
 custom_minimum_size = Vector2(0, 60)
 theme_override_constants/separation = 12
 
-[node name="KeyLabel" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows/KeyRow"]
+[node name="KeyLabel" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows/KeyRow"]
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Key colour"
 
-[node name="ColorSwatch" type="Panel" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows/KeyRow"]
+[node name="ColorSwatch" type="Panel" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows/KeyRow"]
 unique_name_in_owner = true
 layout_mode = 2
 custom_minimum_size = Vector2(96, 56)
 size_flags_vertical = 4
 
-[node name="PickButton" type="Button" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows/KeyRow"]
+[node name="PickButton" type="Button" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows/KeyRow"]
 unique_name_in_owner = true
 layout_mode = 2
 custom_minimum_size = Vector2(0, 56)
 focus_mode = 0
 text = "Pick from video"
 
-[node name="TuneRow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows"]
+[node name="TuneRow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 12
 
-[node name="KeyHue" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows/TuneRow"]
+[node name="KeyHue" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows/TuneRow"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
@@ -662,7 +669,7 @@ step = 1.0
 fast_step = 10.0
 suffix = "°"
 
-[node name="KeyShade" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows/TuneRow"]
+[node name="KeyShade" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/BackgroundGroup/Rows/TuneRow"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
@@ -675,35 +682,35 @@ step = 1.0
 fast_step = 5.0
 suffix = "%"
 
-[node name="CutTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough"]
+[node name="CutTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"SectionTitle"
 text = "CUT OUT A COLOUR"
 
-[node name="CutGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough"]
+[node name="CutGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Group"
 
-[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/CutGroup"]
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/CutGroup"]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="Cut" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/CutGroup/Rows"]
+[node name="Cut" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/CutGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Cut key colour out of the video"
 setting = &"cut_enabled"
 
-[node name="CutInvert" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/CutGroup/Rows"]
+[node name="CutInvert" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/CutGroup/Rows"]
 unique_name_in_owner = true
 layout_mode = 2
 script = ExtResource("4")
 title = "Invert cut"
 setting = &"cut_invert"
 
-[node name="CutSimilarity" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/CutGroup/Rows"]
+[node name="CutSimilarity" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/CutGroup/Rows"]
 unique_name_in_owner = true
 layout_mode = 2
 script = ExtResource("2")
@@ -716,7 +723,7 @@ fast_step = 0.05
 display_scale = 100.0
 suffix = "%"
 
-[node name="CutFeather" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/CutGroup/Rows"]
+[node name="CutFeather" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/CutGroup/Rows"]
 unique_name_in_owner = true
 layout_mode = 2
 script = ExtResource("2")
@@ -729,25 +736,25 @@ fast_step = 0.05
 display_scale = 100.0
 suffix = "%"
 
-[node name="MaskSection" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough"]
+[node name="MaskSection" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="MaskTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/MaskSection"]
+[node name="MaskTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/MaskSection"]
 layout_mode = 2
 theme_type_variation = &"SectionTitle"
 text = "ALPHA MASK"
 
-[node name="MaskGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/MaskSection"]
+[node name="MaskGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/MaskSection"]
 layout_mode = 2
 theme_type_variation = &"Group"
 
-[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/MaskSection/MaskGroup"]
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/MaskSection/MaskGroup"]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="MaskThreshold" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/MaskSection/MaskGroup/Rows"]
+[node name="MaskThreshold" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/MaskSection/MaskGroup/Rows"]
 unique_name_in_owner = true
 layout_mode = 2
 script = ExtResource("2")
@@ -759,7 +766,7 @@ step = 0.05
 display_scale = 100.0
 suffix = "%"
 
-[node name="MaskDarken" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/MaskSection/MaskGroup/Rows"]
+[node name="MaskDarken" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/MaskSection/MaskGroup/Rows"]
 unique_name_in_owner = true
 layout_mode = 2
 script = ExtResource("2")
@@ -770,7 +777,7 @@ max_value = 4.0
 step = 0.25
 decimals = 2
 
-[node name="MaskTrim" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Passthrough/MaskSection/MaskGroup/Rows"]
+[node name="MaskTrim" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Passthrough/MaskSection/MaskGroup/Rows"]
 unique_name_in_owner = true
 layout_mode = 2
 script = ExtResource("2")
@@ -782,182 +789,182 @@ step = 0.5
 decimals = 1
 suffix = " px"
 
-[node name="System" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack"]
+[node name="System" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="PlaybackTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System"]
+[node name="PlaybackTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System"]
 layout_mode = 2
 theme_type_variation = &"SectionTitle"
 text = "PLAYBACK"
 
-[node name="PlaybackGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System"]
+[node name="PlaybackGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System"]
 layout_mode = 2
 theme_type_variation = &"Group"
 
-[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup"]
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/PlaybackGroup"]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="Decode" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+[node name="Decode" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/PlaybackGroup/Rows"]
 layout_mode = 2
 script = ExtResource("3")
 title = "Decoder"
 setting = &"decode_mode"
 options = PackedStringArray("Auto", "Hardware", "Software")
 
-[node name="PlaybackPriority" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+[node name="PlaybackPriority" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/PlaybackGroup/Rows"]
 layout_mode = 2
 script = ExtResource("3")
 title = "Priority"
 setting = &"playback_priority"
 options = PackedStringArray("Smooth (may block)", "Sharp (may stutter)")
 
-[node name="EndAction" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+[node name="EndAction" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/PlaybackGroup/Rows"]
 layout_mode = 2
 script = ExtResource("3")
 title = "When a video ends"
 setting = &"end_action"
 options = PackedStringArray("Stop", "Repeat", "Next file")
 
-[node name="Resume" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+[node name="Resume" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/PlaybackGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Resume where you left off"
 setting = &"resume_playback"
 
-[node name="SeekPreviews" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+[node name="SeekPreviews" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/PlaybackGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Show frames while seeking"
 setting = &"seek_previews"
 
-[node name="Shuffle" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+[node name="Shuffle" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/PlaybackGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Shuffle (next picks an unseen file)"
 setting = &"shuffle"
 
-[node name="MatchRefresh" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+[node name="MatchRefresh" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/PlaybackGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Match headset refresh rate to video"
 setting = &"match_refresh_rate"
 
-[node name="MenuTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System"]
+[node name="MenuTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System"]
 layout_mode = 2
 theme_type_variation = &"SectionTitle"
 text = "MENU"
 
-[node name="MenuGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System"]
+[node name="MenuGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System"]
 layout_mode = 2
 theme_type_variation = &"Group"
 
-[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup"]
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/MenuGroup"]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="HideMenu" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+[node name="HideMenu" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/MenuGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Hide menu when a video starts"
 setting = &"hide_menu_on_play"
 
-[node name="MenuTranslucent" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+[node name="MenuTranslucent" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/MenuGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "See-through menu"
 setting = &"menu_translucent"
 
-[node name="DimBehindMenu" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+[node name="DimBehindMenu" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/MenuGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Dim the video while the menu is open"
 setting = &"dim_behind_menu"
 
-[node name="MenuFollow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+[node name="MenuFollow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/MenuGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Menu glides back when you look away"
 setting = &"menu_follow"
 
-[node name="VideoFollow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+[node name="VideoFollow" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/MenuGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Screen recenters when you look away"
 setting = &"video_follow"
 
-[node name="HoverHaptics" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+[node name="HoverHaptics" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/MenuGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Buzz when pointing at a button"
 setting = &"hover_haptics"
 
-[node name="ShowClock" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+[node name="ShowClock" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/MenuGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Show clock on library page"
 setting = &"show_clock"
 
-[node name="HoverHapticsHint" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/MenuGroup/Rows"]
+[node name="HoverHapticsHint" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/MenuGroup/Rows"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Hint"
 text = "Vibration only works on controllers that support it."
 autowrap_mode = 3
 
-[node name="FaceOnOpen" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+[node name="FaceOnOpen" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/PlaybackGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Recenter when opening media"
 setting = &"face_on_open"
 
-[node name="PauseWhenRemoved" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+[node name="PauseWhenRemoved" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/PlaybackGroup/Rows"]
 layout_mode = 2
 script = ExtResource("4")
 title = "Pause when headset presence is reported"
 setting = &"pause_when_removed"
 
-[node name="PauseWhenRemovedHint" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/PlaybackGroup/Rows"]
+[node name="PauseWhenRemovedHint" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/PlaybackGroup/Rows"]
 layout_mode = 2
 theme_type_variation = &"Hint"
 text = "Stops the video and the sound when the headset says it was taken off. A black picture while the sound keeps playing is not this switch."
 autowrap_mode = 3
 
-[node name="InfoTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System"]
+[node name="InfoTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System"]
 layout_mode = 2
 theme_type_variation = &"SectionTitle"
 text = "DIAGNOSTICS"
 
-[node name="InfoGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System"]
+[node name="InfoGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System"]
 layout_mode = 2
 theme_type_variation = &"Group"
 
-[node name="InfoLabel" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/System/InfoGroup"]
+[node name="InfoLabel" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/System/InfoGroup"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Caption"
 autowrap_mode = 3
 
-[node name="Controls" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack"]
+[node name="Controls" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack"]
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="HandsTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls"]
+[node name="HandsTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Controls"]
 layout_mode = 2
 theme_type_variation = &"SectionTitle"
 text = "CONTROLLER"
 
-[node name="HandsGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls"]
+[node name="HandsGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Controls"]
 layout_mode = 2
 theme_type_variation = &"Group"
 
-[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls/HandsGroup"]
+[node name="Rows" type="VBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Controls/HandsGroup"]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="DragSensitivity" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls/HandsGroup/Rows"]
+[node name="DragSensitivity" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Controls/HandsGroup/Rows"]
 layout_mode = 2
 script = ExtResource("2")
 title = "Drag speed (1.0× follows your hand)"
@@ -969,37 +976,37 @@ decimals = 2
 suffix = "×"
 resettable = true
 
-[node name="GripAction" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls/HandsGroup/Rows"]
+[node name="GripAction" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Controls/HandsGroup/Rows"]
 layout_mode = 2
 script = ExtResource("6")
 title = "Grip + stick ▲ ▼"
 setting = &"grip_action"
 options = PackedStringArray("Screen size", "Brightness", "Gamma", "Saturation", "Sharpness", "Volume", "Cycle 2D formats", "Cycle 3D formats", "Cycle all formats", "Subtitle track", "Audio track", "Screen curve", "3D depth", "Zoom", "Playback speed", "Chapter / bookmark")
 
-[node name="TriggerAction" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls/HandsGroup/Rows"]
+[node name="TriggerAction" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Controls/HandsGroup/Rows"]
 layout_mode = 2
 script = ExtResource("6")
 title = "Trigger + stick ▲ ▼"
 setting = &"trigger_action"
 options = PackedStringArray("Screen size", "Brightness", "Gamma", "Saturation", "Sharpness", "Volume", "Cycle 2D formats", "Cycle 3D formats", "Cycle all formats", "Subtitle track", "Audio track", "Screen curve", "3D depth", "Zoom", "Playback speed", "Chapter / bookmark")
 
-[node name="ChordAction" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls/HandsGroup/Rows"]
+[node name="ChordAction" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Controls/HandsGroup/Rows"]
 layout_mode = 2
 script = ExtResource("6")
 title = "Grip + trigger + stick ▲ ▼"
 setting = &"chord_action"
 options = PackedStringArray("Screen size", "Brightness", "Gamma", "Saturation", "Sharpness", "Volume", "Cycle 2D formats", "Cycle 3D formats", "Cycle all formats", "Subtitle track", "Audio track", "Screen curve", "3D depth", "Zoom", "Playback speed", "Chapter / bookmark")
 
-[node name="CheatTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls"]
+[node name="CheatTitle" type="Label" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Controls"]
 layout_mode = 2
 theme_type_variation = &"SectionTitle"
 text = "CHEAT SHEET"
 
-[node name="CheatGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls"]
+[node name="CheatGroup" type="PanelContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Controls"]
 layout_mode = 2
 theme_type_variation = &"Group"
 
-[node name="CheatSheet" type="GridContainer" parent="Sheet/Margin/Layout/Body/PageScroll/PageStack/Controls/CheatGroup"]
+[node name="CheatSheet" type="GridContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Controls/CheatGroup"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/h_separation = 20
@@ -1085,7 +1092,7 @@ horizontal_alignment = 2
 [node name="SeekSlider" type="HSlider" parent="Sheet/Margin/Layout/PlayerBar/BarRows/SeekRow"]
 unique_name_in_owner = true
 layout_mode = 2
-custom_minimum_size = Vector2(0, 40)
+custom_minimum_size = Vector2(0, 52)
 size_flags_horizontal = 3
 size_flags_vertical = 4
 focus_mode = 0
@@ -1233,7 +1240,7 @@ icon_alignment = 1
 [node name="VolumeSlider" type="HSlider" parent="Sheet/Margin/Layout/PlayerBar/BarRows/ControlRow/RightGroup"]
 unique_name_in_owner = true
 layout_mode = 2
-custom_minimum_size = Vector2(170, 40)
+custom_minimum_size = Vector2(170, 52)
 size_flags_vertical = 4
 focus_mode = 0
 step = 5.0

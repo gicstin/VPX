@@ -62,10 +62,17 @@ func _ready() -> void:
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.follow_focus = true
 	body.add_child(scroll)
+	var margin := MarginContainer.new()
+	margin.size_flags_horizontal = SIZE_EXPAND_FILL
+	for side in ["left", "top", "right", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, VpxTheme.FOCUS_ROOM)
+	scroll.add_child(margin)
+	VpxTheme.bleed_scroll(scroll, VpxTheme.FOCUS_ROOM, VpxTheme.FOCUS_ROOM)
+	VpxTheme.scroll_fade(scroll, 16.0, VpxTheme.SURFACE)
 	results = VBoxContainer.new()
 	results.size_flags_horizontal = SIZE_EXPAND_FILL
 	results.add_theme_constant_override("separation", 8)
-	scroll.add_child(results)
+	margin.add_child(results)
 
 
 func open(source: Control) -> void:

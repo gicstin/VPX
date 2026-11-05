@@ -11,6 +11,7 @@ var entries := {}
 var favorites := {}
 var dirty := false
 var save_timer := 0.0
+var writer: Thread
 
 
 func _ready() -> void:
@@ -100,8 +101,23 @@ func recent_folders(limit: int) -> PackedStringArray:
 	return paths
 
 
-func forget_played(path: String) -> void:
-	erase_pref(path, "played")
+func forget_recent(path: String) -> bool:
+	var entry: Dictionary = entries.get(path, {})
+	if entry.has("folder_visited"):
+		entry["is_directory"] = true
+	var touched := entry.erase("played")
+	touched = entry.erase("folder_visited") or touched
+	if touched:
+		_mark_dirty()
+	return touched
+
+
+func clear_recent() -> int:
+	var cleared := 0
+	for path: String in entries:
+		if forget_recent(path):
+			cleared += 1
+	return cleared
 
 
 func get_pref(path: String, key: String, default: Variant = null) -> Variant:
@@ -168,11 +184,13 @@ func _mark_dirty() -> void:
 
 
 func _process(delta: float) -> void:
-	if not dirty:
+	if writer != null and not writer.is_alive():
+		_finish_writer()
+	if not dirty or writer != null:
 		return
 	save_timer += delta
 	if save_timer >= SAVE_DELAY:
-		save()
+		_save_async()
 
 
 func _notification(what: int) -> void:
@@ -181,24 +199,52 @@ func _notification(what: int) -> void:
 
 
 func save() -> Error:
+	_finish_writer()
 	if not dirty:
 		return OK
 	_prune()
-	var file := FileAccess.open(PATH + ".tmp", FileAccess.WRITE)
-	if file == null:
-		Log.warn("library: cannot write %s" % PATH)
-		return FileAccess.get_open_error()
-	file.store_string(JSON.stringify({"version": 1, "files": entries}))
-	var error := file.get_error()
-	file.close()
-	if error == OK:
-		error = DirAccess.rename_absolute(ProjectSettings.globalize_path(PATH + ".tmp"), ProjectSettings.globalize_path(PATH))
+	var error := _write(JSON.stringify({"version": 1, "files": entries}))
 	if error != OK:
 		save_timer = 0.0
 		Log.warn("library: cannot save: " + error_string(error))
 		return error
 	dirty = false
 	return OK
+
+
+func _save_async() -> void:
+	_prune()
+	dirty = false
+	var snapshot := {"version": 1, "files": entries.duplicate(true)}
+	writer = Thread.new()
+	writer.start(_write_snapshot.bind(snapshot))
+
+
+func _write_snapshot(snapshot: Dictionary) -> Error:
+	return _write(JSON.stringify(snapshot))
+
+
+func _finish_writer() -> void:
+	if writer == null:
+		return
+	var error: Error = writer.wait_to_finish()
+	writer = null
+	if error != OK:
+		dirty = true
+		save_timer = 0.0
+		Log.warn("library: cannot save: " + error_string(error))
+
+
+static func _write(text: String) -> Error:
+	var file := FileAccess.open(PATH + ".tmp", FileAccess.WRITE)
+	if file == null:
+		return FileAccess.get_open_error()
+	file.store_string(text)
+	var error := file.get_error()
+	file.close()
+	if error == OK:
+		error = DirAccess.rename_absolute(ProjectSettings.globalize_path(PATH + ".tmp"), ProjectSettings.globalize_path(PATH))
+	return error
 
 
 func _load() -> void:

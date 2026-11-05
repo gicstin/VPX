@@ -69,6 +69,7 @@ func _build() -> void:
 	_bind_hold(minus, -1)
 	_bind_hold(plus, 1)
 	show_value(min_value)
+	set_process(false)
 
 
 func _bind_hold(button: Button, dir: int) -> void:
@@ -76,6 +77,7 @@ func _bind_hold(button: Button, dir: int) -> void:
 		direction = dir
 		hold_time = 0.0
 		repeat_time = 0.0
+		set_process(true)
 		nudge(dir * step))
 	button.button_up.connect(_release)
 	button.mouse_exited.connect(_release)
@@ -87,6 +89,7 @@ func _release() -> void:
 
 func _process(delta: float) -> void:
 	if direction == 0:
+		set_process(false)
 		return
 	hold_time += delta
 	if hold_time < REPEAT_DELAY:

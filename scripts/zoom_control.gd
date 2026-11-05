@@ -27,6 +27,7 @@ func _build() -> void:
 	add_child(slider)
 	Settings.zoom_changed.connect(func(_snap: bool) -> void: _pull())
 	Settings.screen_size_changed.connect(_pull)
+	set_process(true)
 
 
 func _bind_hold(button: Button, dir: int) -> void:

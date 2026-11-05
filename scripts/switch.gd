@@ -11,12 +11,17 @@ func _build() -> void:
 	button = make_button("", 110)
 	button.theme_type_variation = &"FlatIcon"
 	button.toggle_mode = true
-	button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	button.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	button.add_theme_constant_override("icon_max_width", 64)
 	for role in ICON_ROLES:
 		button.add_theme_color_override(role, Color.WHITE)
 	for state in ["normal", "pressed"]:
-		button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
+		var empty := StyleBoxEmpty.new()
+		empty.content_margin_left = 12
+		empty.content_margin_right = 12
+		empty.content_margin_top = 8
+		empty.content_margin_bottom = 8
+		button.add_theme_stylebox_override(state, empty)
 	button.toggled.connect(func(on: bool) -> void:
 		_show(on)
 		write(on))

@@ -36,8 +36,11 @@ const FONT_SIZE := 26
 const SMALL_FONT_SIZE := 21
 const TITLE_FONT_SIZE := 34
 const RADIUS := 14
+const FOCUS_ROOM := 6
+const FADE_HEIGHT := 36.0
 const ICON_SIZE := 30
 const ICON_SUPERSAMPLE := 2
+const SYMBOL_FONTS := ["DejaVu Sans", "Noto Sans Symbols 2", "Noto Sans Symbols", "Noto Sans Math", "Segoe UI Symbol", "Arial Unicode MS", "Apple Symbols"]
 const UI_FONT_KEYS := ["font_size", "normal_font_size", "bold_font_size", "italics_font_size", "bold_italics_font_size", "mono_font_size"]
 
 static var text_size := 1.0
@@ -47,6 +50,7 @@ static var ACCENT_SOFT: Color = DEFAULT_TONES[1]
 static var ON_ACCENT: Color = DEFAULT_TONES[2]
 static var SPECTRUM_END: Color = DEFAULT_TONES[3]
 static var themes: Array[WeakRef] = []
+static var symbol_fallback_ready := false
 static var accent_boxes: Array[Array] = []
 
 
@@ -103,10 +107,23 @@ static func accent_flat(radius := RADIUS, margin_h := 20, margin_v := 10, tone :
 
 static func build() -> Theme:
 	var theme := Theme.new()
+	_install_symbol_fallback(theme)
 	_populate(theme)
 	_scale_theme(theme)
 	themes.append(weakref(theme))
 	return theme
+
+
+static func _install_symbol_fallback(theme: Theme) -> void:
+	if symbol_fallback_ready:
+		return
+	symbol_fallback_ready = true
+	var font: Font = theme.default_font if theme.default_font != null else ThemeDB.fallback_font
+	if font == null or not font.fallbacks.is_empty():
+		return
+	var symbols := SystemFont.new()
+	symbols.font_names = SYMBOL_FONTS
+	font.fallbacks = [symbols]
 
 
 static func _populate(theme: Theme) -> void:
@@ -164,15 +181,82 @@ static func outlined(color: Color, border: Color, width := 2, radius := RADIUS, 
 	return box
 
 
-static func focus_ring(radius := RADIUS) -> StyleBoxFlat:
+static func focus_ring(radius := RADIUS, reach := 4) -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
 	box.draw_center = false
 	box.border_color = FOCUS
-	box.set_border_width_all(4)
-	box.set_corner_radius_all(radius + 4)
-	box.set_expand_margin_all(4)
+	box.set_border_width_all(4 if reach > 0 else 3)
+	box.set_corner_radius_all(radius + maxi(reach, 0))
+	box.set_expand_margin_all(reach)
 	box.anti_aliasing_size = 1.2
 	return box
+
+
+static func bleed_scroll(scroll: ScrollContainer, room: int, right: int) -> void:
+	var holder := scroll.get_parent()
+	var slot := scroll.get_index()
+	var wrap := MarginContainer.new()
+	for side in ["left", "top", "bottom"]:
+		wrap.add_theme_constant_override("margin_" + side, -room)
+	wrap.add_theme_constant_override("margin_right", -right)
+	wrap.size_flags_horizontal = scroll.size_flags_horizontal
+	wrap.size_flags_vertical = scroll.size_flags_vertical
+	scroll.size_flags_horizontal = Control.SIZE_FILL
+	scroll.size_flags_vertical = Control.SIZE_FILL
+	holder.add_child(wrap)
+	holder.move_child(wrap, slot)
+	scroll.reparent(wrap, false)
+
+
+static func scroll_fade(scroll: ScrollContainer, reserve := 0.0, color := BACKGROUND) -> void:
+	var gradient := Gradient.new()
+	gradient.colors = PackedColorArray([Color(color, 0.0), color])
+	var fades: Array[TextureRect] = []
+	for top in [false, true]:
+		var texture := GradientTexture2D.new()
+		texture.gradient = gradient
+		texture.fill_from = Vector2(0.0, 1.0 if top else 0.0)
+		texture.fill_to = Vector2(0.0, 0.0 if top else 1.0)
+		texture.width = 4
+		texture.height = int(FADE_HEIGHT)
+		var fade := TextureRect.new()
+		fade.texture = texture
+		fade.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		fade.stretch_mode = TextureRect.STRETCH_SCALE
+		fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		fade.top_level = true
+		fade.visible = false
+		scroll.get_parent().add_child(fade)
+		fades.append(fade)
+	var refresh := func() -> void:
+		var bar := scroll.get_v_scroll_bar()
+		var shown := scroll.is_visible_in_tree()
+		var size := Vector2(scroll.size.x - reserve, FADE_HEIGHT)
+		fades[0].visible = shown and bar.value + bar.page < bar.max_value - 1.0
+		fades[0].size = size
+		fades[0].global_position = scroll.global_position + Vector2(0.0, scroll.size.y - FADE_HEIGHT)
+		fades[1].visible = shown and bar.value > 1.0
+		fades[1].size = size
+		fades[1].global_position = scroll.global_position
+	scroll.get_v_scroll_bar().changed.connect(refresh)
+	scroll.get_v_scroll_bar().value_changed.connect(func(_value: float) -> void: refresh.call())
+	scroll.resized.connect(refresh)
+	scroll.visibility_changed.connect(refresh)
+	var clear_fades := func(control: Control) -> void:
+		if not is_instance_valid(control) or not scroll.is_ancestor_of(control):
+			return
+		var view := scroll.get_global_rect()
+		var rect := control.get_global_rect()
+		if fades[0].visible and rect.end.y > view.end.y - FADE_HEIGHT:
+			scroll.scroll_vertical += ceili(rect.end.y - (view.end.y - FADE_HEIGHT))
+		elif fades[1].visible and rect.position.y < view.position.y + FADE_HEIGHT:
+			scroll.scroll_vertical -= ceili(view.position.y + FADE_HEIGHT - rect.position.y)
+	var watch_focus := func() -> void:
+		scroll.get_viewport().gui_focus_changed.connect(func(control: Control) -> void: clear_fades.call_deferred(control))
+	if scroll.is_inside_tree():
+		watch_focus.call()
+	else:
+		scroll.tree_entered.connect(watch_focus, CONNECT_ONE_SHOT)
 
 
 static func circle(color: Color, size: int) -> Texture2D:
@@ -189,7 +273,7 @@ static func circle(color: Color, size: int) -> Texture2D:
 	return texture
 
 
-static func _button_colors(theme: Theme, type: String, normal: Color, pressed: Color) -> void:
+static func _button_colors(theme: Theme, type: String, normal: Color, pressed: Color, ring_reach := 4) -> void:
 	for role in ["font_color", "font_hover_color", "font_focus_color"]:
 		theme.set_color(role, type, normal)
 	for role in ["font_pressed_color", "font_hover_pressed_color"]:
@@ -200,7 +284,7 @@ static func _button_colors(theme: Theme, type: String, normal: Color, pressed: C
 	for role in ["icon_pressed_color", "icon_hover_pressed_color"]:
 		theme.set_color(role, type, pressed)
 	theme.set_color("icon_disabled_color", type, FAINT)
-	theme.set_stylebox("focus", type, focus_ring())
+	theme.set_stylebox("focus", type, focus_ring(RADIUS, ring_reach))
 
 
 static func _buttons(theme: Theme) -> void:
@@ -258,7 +342,7 @@ static func _nav(theme: Theme) -> void:
 	selected_hover.set_border_width_all(1)
 	theme.set_stylebox("hover_pressed", "NavItem", selected_hover)
 	theme.set_stylebox("disabled", "NavItem", _nav_style(TRANSPARENT))
-	_button_colors(theme, "NavItem", MUTED, ACCENT_HOVER)
+	_button_colors(theme, "NavItem", MUTED, ACCENT_HOVER, -3)
 	theme.set_color("font_hover_color", "NavItem", TEXT)
 	theme.set_color("icon_hover_color", "NavItem", TEXT)
 	theme.set_constant("h_separation", "NavItem", 10)
@@ -267,9 +351,18 @@ static func _nav(theme: Theme) -> void:
 	theme.set_stylebox("hover", "Crumb", hover(RAISED, 10, 10, 6))
 	theme.set_stylebox("pressed", "Crumb", flat(RAISED, 10, 10, 6))
 	theme.set_stylebox("hover_pressed", "Crumb", hover(HOVER, 10, 10, 6))
-	_button_colors(theme, "Crumb", MUTED, TEXT)
+	_button_colors(theme, "Crumb", MUTED, TEXT, 0)
 	theme.set_color("font_hover_color", "Crumb", TEXT)
 	theme.set_font_size("font_size", "Crumb", 23)
+	theme.set_type_variation("TileStar", "Button")
+	for state in ["normal", "pressed"]:
+		theme.set_stylebox(state, "TileStar", flat(BACKGROUND, 8, 4, 4))
+	for state in ["hover", "hover_pressed"]:
+		theme.set_stylebox(state, "TileStar", flat(HOVER, 8, 4, 4))
+	theme.set_color("icon_normal_color", "TileStar", TEXT)
+	theme.set_color("icon_focus_color", "TileStar", TEXT)
+	for role in ["icon_hover_color", "icon_pressed_color", "icon_hover_pressed_color"]:
+		theme.set_color(role, "TileStar", FAVORITE)
 
 
 static func _icon_buttons(theme: Theme) -> void:
@@ -307,7 +400,7 @@ static func _chips(theme: Theme) -> void:
 	theme.set_stylebox("hover", "Chip", hover(RAISED, 12, 16, 6))
 	theme.set_stylebox("pressed", "Chip", flat(ACCENT, 12, 16, 6))
 	theme.set_stylebox("hover_pressed", "Chip", hover(ACCENT_HOVER, 12, 16, 6))
-	_button_colors(theme, "Chip", MUTED, ON_ACCENT)
+	_button_colors(theme, "Chip", MUTED, ON_ACCENT, 0)
 	theme.set_color("font_hover_color", "Chip", TEXT)
 	theme.set_color("icon_hover_color", "Chip", TEXT)
 	theme.set_font_size("font_size", "Chip", 23)

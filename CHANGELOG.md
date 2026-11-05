@@ -6,6 +6,55 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-11-05
+
+### Added
+
+- Ctrl+R opens the menu on the Recent tab.
+- Right-click a Library card, or press Menu or Shift+F10 on the focused one, for a menu: play or open it, add or remove it from favourites, show it in the file manager, copy its path, or remove it from Recent.
+- Press I while a video plays to show its resolution, frame rate and decoder on the progress card, without opening the menu.
+- Click the playing title or its thumbnail under the Library to open that file's folder and focus it, which helps when it was started from Recent, Favourites or a search.
+- On the desktop, the mouse back and forward buttons go to the previous or next file while a video or song is open, and back goes up one folder while the Library is showing.
+- Z and X shift subtitle timing 0.1 s earlier or later (Shift for 0.5 s) while a video plays, with the new delay shown on the progress card; the delay is remembered per video as before.
+- Recent has a Clear recent button, pressed twice to confirm, that empties the list of recent folders and media. Favourites, resume positions and view counts stay.
+- Jump to a time: press Ctrl+G or click the elapsed time under the seek bar, then type 1:23:45, 83:20, 90, 1h30m, +30, -1:00 or 50%. Unreadable input is reported and the menu closes after the jump when it hides on play.
+- Pausing or resuming with Space, a click or the controller shows "Paused" or "Playing" on the progress card, so it no longer keeps a stale message such as the last volume level.
+- Ctrl+O opens VPX's file picker to open a media file from any folder, or to load a subtitle for the playing video; the Library moves to the chosen file's folder, as with drag and drop.
+
+### Changed
+
+- Symbols such as the arrows ▲ ▼ ◀ ▶ → ⇧ ⌫ resolve through one named fallback font instead of a system font search for every label, which cuts the first visit of the Controls page from about 38 ms to 15 ms and the Format page from about 26 ms to 17 ms.
+- The star on each visualiser scene preview uses the same star icons as the rest of the interface instead of text glyphs, which needed a fallback font per button and made the first opening of the scene gallery take 0.3 s.
+- When the menu is narrow or the text size is large, the Library source tabs show only the active source's name and the others as icons, so Folder, Recent, Favourites, Places, Network and Discover fit without scrolling; hovering names them.
+- Saving the library file (positions, favourites, view counts) no longer stalls the frame: the file is written by a worker, which cuts the frame-thread cost from about 23 ms to 6 ms for 4,000 saved files, every few seconds during playback.
+- The window title leads with the playing file name, so the taskbar and window switcher show what is playing.
+- Opening a music file without cover art no longer re-runs its thumbnail extraction every time while the file is unchanged.
+- Changing any setting no longer refreshes the controls on menu pages that are not showing: each change costs about 60% less CPU, which helps while dragging sliders and holding steppers or controller sticks. Hidden pages catch up when opened.
+- Start-up is about 0.75 s faster (2.31 s to 1.56 s until the third frame in a headless launch, and a third less CPU time): the menu page container is part of the scene instead of being re-parented, which re-entered every menu node, the visualiser scene gallery with its 111 preview tiles is built the first time it is opened instead of twice during start-up (that first opening takes about 0.06 s).
+- Library filter buttons (Search, Flat view, Filter favourites, Unplayed) drop their text and keep their icons when the menu is narrow or the text size is large, so the row stays on one line and the file list gets about 60 px more height; hovering names them.
+- Page tabs (Format, Picture, Position…) show the icon next to its label instead of at the far left of a wide pill.
+- On/off switches line up with the right edge of the other setting controls instead of floating 25 px short of it.
+- The collapsed side rail no longer shows a dark box behind its icons; its shadow now only appears while the rail is expanded.
+- Tooltips no longer sit on a dark square box: the panel's shadow was being clipped to its rectangle.
+- A stray speck of the "VPX" brand text no longer shows next to the logo in the collapsed side rail.
+- The side rail's hover tooltips are hidden while it is expanded and already shows the labels.
+- The in-app file picker no longer has a second "Back" button that only duplicated "Up"; Go uses an arrow instead of the 10-second skip icon.
+- The seek and volume sliders have a taller grab area (52 px instead of 40) without changing the layout, making them easier to hit with the laser.
+- Scrolling pages and lists, the quick panel and the settings search results fade out at the top and bottom edges while more content lies beyond, instead of cutting rows off; moving focus with the keyboard or controller scrolls the focused row clear of the fade.
+
+### Fixed
+
+- Focus outlines and hover highlights are no longer cut off at the left and right edges of the menu: first-column Library cards, the Library filter chips, the Up button, path crumbs, preset buttons, the quick panel's first buttons, the sound-visual scene previews, the settings search results and the side rail all keep their full outline.
+- The current folder in the Library path bar is no longer cut off after launching with a large text size or changing it: crumb widths refit whenever the theme changes.
+- The source title in the Library path bar (Recently played, Favourites, Places, Network) is centred with the Up button instead of sitting at the top.
+- A folder row in the list view with no detail line centres its name instead of sitting at the top.
+- Keyboard focus returns to the library card you were on, and starts on the first card, even when that card was built a moment earlier and could not take focus yet.
+- Music files without cover art show an audio waveform on their library card instead of a film icon.
+- A folder that was moved, renamed or unplugged says so, and one VPX cannot read says that, instead of one generic "cannot be opened" message.
+- The log no longer prints an engine error at launch on machines without WiVRn.
+- Library tab titles keep up to 300 px, so names like "Recently played" are no longer cut off.
+- A long folder path no longer widens the menu past the window at large UI or text sizes; the path bar scrolls to the current folder instead.
+
 ## [0.0.11] - 2026-11-03
 
 ### Added

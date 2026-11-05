@@ -2,6 +2,7 @@ extends Button
 
 signal activated(path: String, is_dir: bool)
 signal play_requested(path: String, is_dir: bool)
+signal context_requested(position: Vector2)
 
 enum Layout { CARD, ROW, CHIP }
 
@@ -168,6 +169,9 @@ func _on_gui_input(event: InputEvent) -> void:
 	if button != null and button.pressed and button.double_click and button.button_index == MOUSE_BUTTON_LEFT:
 		accept_event()
 		_request_play()
+	elif button != null and button.pressed and button.button_index == MOUSE_BUTTON_RIGHT:
+		accept_event()
+		context_requested.emit(button.global_position)
 
 
 func _on_badge_input(event: InputEvent) -> void:
@@ -327,6 +331,7 @@ func refresh() -> void:
 	if is_dir and cover.is_empty():
 		if meta_label != null:
 			meta_label.text = context
+			_sync_meta()
 		return
 	var media := media_path()
 	var info: Dictionary = MediaInfo.info(media)
@@ -346,7 +351,7 @@ func refresh() -> void:
 	var status := _status_text(media, duration, resume_at)
 	if watched_badge != null:
 		var listens := int(Library.get_pref(media, "listen_count", 0))
-		var audio := listens > 0 or media.get_slice("?", 0).get_slice("#", 0).get_extension().to_lower() in VPXPlayer.AUDIO_EXTENSIONS
+		var audio := listens > 0 or _is_audio(media)
 		var count := listens if audio else int(Library.get_pref(media, "view_count", 0))
 		watched_badge.visible = count > 0 and not image
 		watched_label.text = "%d %s%s" % [count, "listen" if audio else "view", "" if count == 1 else "s"]
@@ -380,6 +385,7 @@ func refresh() -> void:
 				parts.append(part)
 		if meta_label != null:
 			meta_label.text = "  ·  ".join(parts)
+			_sync_meta()
 		if side_label != null:
 			side_label.text = length
 	if progress != null:
@@ -387,6 +393,11 @@ func refresh() -> void:
 		progress.value = clampf(resume_at / maxf(duration, 1.0), 0.0, 1.0)
 	if info.has("failed") and thumb != null:
 		placeholder.modulate = Color(VpxTheme.FAINT, 0.6)
+
+
+func _sync_meta() -> void:
+	if layout == Layout.ROW:
+		meta_label.visible = not meta_label.text.is_empty()
 
 
 func _quality_text(media: String) -> String:
@@ -464,6 +475,18 @@ func _fit_thumb() -> void:
 	(thumb.material as ShaderMaterial).set_shader_parameter("size", Vector2(size.x - INSET * 2, height))
 
 
+static func _media_icon(media: String) -> String:
+	if PanoramaFiles.is_image(media):
+		return "photo"
+	if _is_audio(media):
+		return "audio"
+	return "film"
+
+
+static func _is_audio(media: String) -> bool:
+	return media.get_slice("?", 0).get_slice("#", 0).get_extension().to_lower() in VPXPlayer.AUDIO_EXTENSIONS
+
+
 func _thumb_frame(frame_size: Vector2, icon_size: int) -> Control:
 	var box := Control.new()
 	box.mouse_filter = MOUSE_FILTER_IGNORE
@@ -473,7 +496,7 @@ func _thumb_frame(frame_size: Vector2, icon_size: int) -> Control:
 	background.add_theme_stylebox_override("panel", VpxTheme.flat(VpxTheme.FIELD, int(THUMB_RADIUS), 0, 0))
 	background.set_anchors_preset(PRESET_FULL_RECT)
 	box.add_child(background)
-	var placeholder_icon := icon_name if icon_name != "folder" else "folder" if is_dir and not single else ("photo" if PanoramaFiles.is_image(media_path()) else "film")
+	var placeholder_icon := icon_name if icon_name != "folder" else "folder" if is_dir and not single else _media_icon(media_path())
 	placeholder = _icon_rect(placeholder_icon, icon_size, VpxTheme.FAINT)
 	placeholder.set_anchors_preset(PRESET_CENTER)
 	placeholder.offset_left = -icon_size * 0.5

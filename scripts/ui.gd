@@ -42,6 +42,12 @@ const SEARCH_MAX_DEPTH := 8
 const SEARCH_MAX_RESULTS := 400
 const ACTION_HEIGHT := 56
 const GRID_COLUMNS := 5
+const FILTER_LABELS_MIN_WIDTH := 1400.0
+const CARD_MENU_PLAY := 0
+const CARD_MENU_FAVORITE := 1
+const CARD_MENU_REVEAL := 2
+const CARD_MENU_COPY := 3
+const CARD_MENU_FORGET := 4
 const GRID_SEPARATION := 14
 const SCAN_HINT_DELAY_MSEC := 250
 const PLAYLIST_SYNC_LIMIT := 2000
@@ -81,6 +87,9 @@ const CHEAT_SHEET := [
 	["Ctrl + W", "Close Library tab"],
 	["Arrows / Enter", "Pick in the menu, Backspace goes up"],
 	["Ctrl + F", "Search the library"],
+	["Ctrl + G", "Jump to a time, such as 1:23:45, 90, +30 or 50%"],
+	["Ctrl + O", "Open a media or subtitle file from any folder"],
+	["Ctrl + R", "Show recently played"],
 	["Space", "Play / pause"],
 	["◀ ▶", "Seek 10 s, or previous / next photo; hold to repeat"],
 	["Shift + ◀ ▶", "Seek 1 min, holding runs twice as fast"],
@@ -97,6 +106,8 @@ const CHEAT_SHEET := [
 	["; '", "Brightness"],
 	["Backspace", "Reset speed and zoom"],
 	["F / V / A", "Format / subtitles / audio track, Shift reverses"],
+	["Z / X", "Subtitles earlier / later by 0.1 s, Shift for 0.5 s"],
+	["I", "Show video details: resolution, frame rate, decoder"],
 	["B / C", "Bookmark / next chapter"],
 	["L", "A–B loop, Shift clears"],
 	["M / S / R", "Mute / shuffle / recenter"],
@@ -106,12 +117,14 @@ const CHEAT_SHEET := [
 	["Mouse: right click", "Show / hide the menu"],
 	["Mouse: click outside the menu", "Close the menu"],
 	["Mouse: wheel", "Volume"],
+	["Mouse: back / forward buttons", "Previous / next file, or up one folder in the Library"],
 	["Mouse: move", "Show progress, click or drag the bar to seek"],
 	["Mouse: drag", "Pan a flat photo, or look around in 180° / 360°"],
 	["Ctrl + wheel", "Zoom in 180° / 360°"],
 	["F1", "This page"],
 ]
 const PanoramaFiles := preload("res://scripts/panorama_files.gd")
+const TimeEntry := preload("res://scripts/time_entry.gd")
 const LibraryScanner := preload("res://scripts/library_scanner.gd")
 const DiscImage := preload("res://scripts/disc_image.gd")
 const VirtualGrid := preload("res://scripts/virtual_grid.gd")
@@ -222,6 +235,14 @@ var discovery: Control
 var filter_group := ButtonGroup.new()
 var filter_buttons: Array[Button] = []
 var search_button: Button
+var source_compact := false
+var card_popup: PopupMenu
+var card_popup_path := ""
+var card_popup_is_dir := false
+var clear_recent_button: Button
+var clear_recent_armed := false
+var open_picker: Control
+var filter_labels: Dictionary[Button, String] = {}
 var query_chip: Button
 var search_timer := -1.0
 var query_before_edit := ""
@@ -251,6 +272,9 @@ var rail_slot: Control
 var rail_scroll: ScrollContainer
 var rail_overlay: Panel
 var rail_width := RAIL_COLLAPSED
+var rail_box: StyleBoxFlat
+var rail_labeled := false
+var rail_brand_name: Label
 var rail_expanded_width := RAIL_EXPANDED
 var rail_open := false
 var rail_hover_time := 0.0
@@ -281,6 +305,7 @@ var backup_picker: Control
 var forwarded_keys := {}
 var refocus := false
 var refocus_key := ""
+var reveal_pending := false
 
 @onready var tabs: VBoxContainer = %Nav
 @onready var pages: Container = %PageStack
@@ -319,6 +344,27 @@ var refocus_key := ""
 @onready var bubble_label: Label = %BubbleLabel
 
 
+@onready var sync_cut_feather: Control = %CutFeather
+@onready var sync_cut_group: Control = %CutGroup
+@onready var sync_cut_invert: Control = %CutInvert
+@onready var sync_cut_similarity: Control = %CutSimilarity
+@onready var sync_cut_title: Control = %CutTitle
+@onready var sync_grid_button: Control = %GridButton
+@onready var sync_key_row: Control = %KeyRow
+@onready var sync_list_button: Control = %ListButton
+@onready var sync_logo: Control = %Logo
+@onready var sync_mask_darken: Control = %MaskDarken
+@onready var sync_mask_section: Control = %MaskSection
+@onready var sync_reset_angles: Control = %ResetAngles
+@onready var sync_screen_section: Control = %ScreenSection
+@onready var sync_tune_row: Control = %TuneRow
+@onready var sync_angles_hint: Label = pages.get_node("Angles/AnglesFooter/AnglesHint")
+@onready var sync_orientation_group: Control = pages.get_node("Angles/OrientationGroup")
+@onready var sync_orientation_title: Control = pages.get_node("Angles/OrientationTitle")
+@onready var sync_picture_hint: Label = pages.get_node("Picture/PictureFooter/PictureHint")
+@onready var sync_curve_row: Control = pages.get_node("Picture/ScreenSection/ScreenGroup/Rows/Curve")
+
+
 func _init() -> void:
 	theme = VpxTheme.build()
 
@@ -344,6 +390,8 @@ func _ready() -> void:
 	_build_media_rename()
 	_build_library_bar()
 	_build_filter_row()
+	var crumb_bar := (crumbs.get_parent() as ScrollContainer).get_h_scroll_bar()
+	crumb_bar.changed.connect(func() -> void: crumb_bar.value = crumb_bar.max_value)
 	library_tabs = preload("res://scripts/library_tabs.gd").new()
 	%Library.add_child(library_tabs)
 	%Library.move_child(library_tabs, 0)
@@ -361,6 +409,12 @@ func _ready() -> void:
 	_decorate()
 	_build_rail()
 	_build_scroll_bars()
+	pages.add_theme_constant_override("margin_left", VpxTheme.FOCUS_ROOM)
+	pages.add_theme_constant_override("margin_top", VpxTheme.FOCUS_ROOM)
+	pages.add_theme_constant_override("margin_bottom", VpxTheme.FOCUS_ROOM)
+	VpxTheme.bleed_scroll(page_scroll, VpxTheme.FOCUS_ROOM, VpxTheme.FOCUS_ROOM)
+	VpxTheme.scroll_fade(page_scroll, SCROLL_RESERVE)
+	VpxTheme.scroll_fade(file_scroll, SCROLL_RESERVE)
 	_connect_controls()
 	_sync()
 	_update_clock()
@@ -392,6 +446,9 @@ func _ready() -> void:
 	archive_popup = PopupMenu.new()
 	archive_popup.id_pressed.connect(_on_archive_member_selected)
 	add_child(archive_popup)
+	card_popup = PopupMenu.new()
+	card_popup.id_pressed.connect(_on_card_menu_selected)
+	add_child(card_popup)
 	scanner = LibraryScanner.new(VIDEO_EXTENSIONS + VPXPlayer.AUDIO_EXTENSIONS + DISC_EXTENSIONS + ArchiveFiles.ARCHIVE_EXTENSIONS)
 	scanner.finished.connect(_on_scan_finished)
 	scanner.cover_found.connect(_on_cover_found)
@@ -405,21 +462,14 @@ func _ready() -> void:
 
 
 func _build_nav() -> void:
-	var body := page_scroll.get_parent()
-	var content := VBoxContainer.new()
-	content.name = "PageContent"
-	content.size_flags_horizontal = SIZE_EXPAND_FILL
-	content.size_flags_vertical = SIZE_EXPAND_FILL
-	content.add_theme_constant_override("separation", 16)
-	body.add_child(content)
-	body.move_child(content, page_scroll.get_index())
+	var content := page_scroll.get_parent()
 	page_tabs = PanelContainer.new()
 	page_tabs.theme_type_variation = &"Segment"
 	content.add_child(page_tabs)
+	content.move_child(page_tabs, 0)
 	var tab_row := HBoxContainer.new()
 	tab_row.add_theme_constant_override("separation", 4)
 	page_tabs.add_child(tab_row)
-	page_scroll.reparent(content, false)
 	page_scroll.size_flags_vertical = SIZE_EXPAND_FILL
 	for i in NAV_SECTIONS.size():
 		var section: Array = NAV_SECTIONS[i]
@@ -457,6 +507,7 @@ func _build_nav() -> void:
 			tab.text = title
 			tab.icon = VpxTheme.icon(PAGE_ICONS[page_name], 24)
 			tab.theme_type_variation = &"PageTab"
+			tab.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			tab.toggle_mode = true
 			tab.button_group = group
 			tab.custom_minimum_size.y = NAV_HEIGHT
@@ -479,8 +530,9 @@ func _build_rail() -> void:
 	body.move_child(rail_slot, rail.get_index())
 	rail_overlay = Panel.new()
 	rail_overlay.theme_type_variation = &"RailOverlay"
-	rail_overlay.clip_contents = true
 	add_child(rail_overlay)
+	rail_box = rail_overlay.get_theme_stylebox("panel").duplicate() as StyleBoxFlat
+	rail_overlay.add_theme_stylebox_override("panel", rail_box)
 	move_child(rail_overlay, $Sheet.get_index() + 1)
 	rail_scroll = ScrollContainer.new()
 	rail_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -495,7 +547,8 @@ func _build_rail() -> void:
 	brand.alignment = BoxContainer.ALIGNMENT_BEGIN
 	brand.add_theme_constant_override("separation", 0)
 	%Logo.custom_minimum_size.x = RAIL_COLLAPSED
-	brand.get_node("BrandName").clip_text = true
+	rail_brand_name = brand.get_node("BrandName")
+	rail_brand_name.clip_text = true
 	brand.get_node("BrandName").size_flags_horizontal = SIZE_EXPAND_FILL
 	for button in nav_buttons + [%ModeButton, %CloseButton, %QuitButton]:
 		button.clip_text = true
@@ -562,16 +615,27 @@ func _layout_rail() -> void:
 	rail_overlay.global_position = rail_slot.global_position
 	rail_overlay.size = Vector2(rail_width, rail_slot.size.y)
 	rail_scroll.size = rail_overlay.size
+	var open := clampf((rail_width - RAIL_COLLAPSED) / maxf(rail_expanded_width - RAIL_COLLAPSED, 1.0), 0.0, 1.0)
+	rail_box.shadow_color.a = VpxTheme.SHADOW.a * open
+	var labeled := rail_width > RAIL_COLLAPSED + 60.0
+	if labeled != rail_labeled:
+		rail_labeled = labeled
+		for i in nav_buttons.size():
+			nav_buttons[i].tooltip_text = "" if labeled else NAV_TITLES[i]
 	var rail: Control = rail_scroll.get_child(0)
 	rail.custom_minimum_size.x = maxf(rail_width - rail_scroll.get_v_scroll_bar().size.x, 0.0)
 	settings_heading.modulate.a = clampf((rail_width - 140.0) / 80.0, 0.0, 1.0)
+	rail_brand_name.modulate.a = clampf((rail_width - RAIL_COLLAPSED - 8.0) / 60.0, 0.0, 1.0)
 
 
 func _build_scroll_bars() -> void:
 	var gutter := MarginContainer.new()
 	gutter.size_flags_horizontal = SIZE_EXPAND_FILL
 	gutter.add_theme_constant_override("margin_right", int(SCROLL_RESERVE))
+	for side in ["left", "top", "bottom"]:
+		gutter.add_theme_constant_override("margin_" + side, VpxTheme.FOCUS_ROOM)
 	file_scroll.add_child(gutter)
+	VpxTheme.bleed_scroll(file_scroll, VpxTheme.FOCUS_ROOM, 0)
 	file_list.get_parent().reparent(gutter, false)
 	for scroll: ScrollContainer in [page_scroll, file_scroll]:
 		var bar := scroll.get_v_scroll_bar()
@@ -923,7 +987,7 @@ func show_settings() -> void:
 
 func show_page(page: Node) -> void:
 	page_scroll.scroll_vertical = 0
-	pages.add_theme_constant_override("margin_right", 0 if page == %Library else int(SCROLL_RESERVE))
+	pages.add_theme_constant_override("margin_right", VpxTheme.FOCUS_ROOM + (0 if page == %Library else int(SCROLL_RESERVE)))
 	for child in pages.get_children():
 		child.visible = child == page
 	for i in NAV_SECTIONS.size():
@@ -971,6 +1035,7 @@ func _build_library_bar() -> void:
 		button.toggled.connect(func(on: bool) -> void:
 			if on:
 				_select_source(i))
+		Tooltips.set_text(button, SOURCES[i][0])
 		%SourceRow.add_child(button)
 		source_buttons.append(button)
 	var source_scroll: ScrollContainer = %SourceScroll
@@ -1015,6 +1080,13 @@ func _build_library_bar() -> void:
 	up_button.icon = VpxTheme.icon("up", 26)
 
 
+func _refresh_source_labels() -> void:
+	for i in source_buttons.size():
+		var named := not source_compact or i == Settings.library_source
+		source_buttons[i].text = SOURCES[i][0] if named else ""
+		source_buttons[i].custom_minimum_size.x = 0.0 if named else 64.0
+
+
 func _build_filter_row() -> void:
 	var row := HFlowContainer.new()
 	row.add_theme_constant_override("h_separation", 10)
@@ -1046,6 +1118,15 @@ func _build_filter_row() -> void:
 		Settings.apply("library_unplayed_only", on)
 		refresh_directory())
 	row.add_child(unplayed_filter_button)
+	for button: Button in [search_button, flat_view_button, favorites_filter_button, unplayed_filter_button]:
+		filter_labels[button] = button.text
+		if button != search_button:
+			Tooltips.set_text(button, "%s: %s" % [button.text, button.tooltip_text])
+	clear_recent_button = _action_button("Clear recent", "close")
+	Tooltips.set_text(clear_recent_button, "Clear recent: remove everything from Recent. Favourites, resume positions and view counts stay.")
+	clear_recent_button.pressed.connect(_clear_recent_pressed)
+	filter_labels[clear_recent_button] = clear_recent_button.text
+	row.add_child(clear_recent_button)
 	query_chip = _action_button("", "close")
 	Tooltips.set_text(query_chip, "Clear library search")
 	query_chip.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -1203,7 +1284,45 @@ func _build_settings_search() -> void:
 	tabs.add_child(button)
 
 
+func time_jump_available() -> bool:
+	return player.playback != null and not player.is_image() and player.can_seek() and not player._audio_only_playing()
+
+
+func open_time_jump() -> bool:
+	if not time_jump_available():
+		return false
+	keyboard_purpose = "time_jump"
+	keyboard.open("Jump to time", "", "1:23:45 · 90 · +30 · -1:00 · 50%")
+	return true
+
+
+func _jump_to_time(text: String) -> void:
+	var target := TimeEntry.parse(text, player.stream_position, player.get_stream_length())
+	if target < 0.0 or not time_jump_available():
+		status_requested.emit("Time not understood: %s" % text, false)
+		return
+	player.seek_to(target)
+	status_requested.emit("Jumped to %s" % _format_time(target, player.get_stream_length()), false)
+	if Settings.hide_menu_on_play and not player.paused:
+		close_requested.emit()
+
+
 func _build_seek_extras() -> void:
+	for control: Control in [now_thumb, now_title]:
+		control.mouse_filter = Control.MOUSE_FILTER_STOP
+		control.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		Tooltips.set_text(control, "Show in Library")
+		control.gui_input.connect(func(event: InputEvent) -> void:
+			var click := event as InputEventMouseButton
+			if click != null and click.pressed and click.button_index == MOUSE_BUTTON_LEFT:
+				reveal_current())
+	elapsed_label.mouse_filter = Control.MOUSE_FILTER_STOP
+	elapsed_label.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	Tooltips.set_text(elapsed_label, "Jump to a time (Ctrl+G)")
+	elapsed_label.gui_input.connect(func(event: InputEvent) -> void:
+		var click := event as InputEventMouseButton
+		if click != null and click.pressed and click.button_index == MOUSE_BUTTON_LEFT:
+			open_time_jump())
 	previews = SeekPreviews.new()
 	add_child(previews)
 	previews.ready_for.connect(func(_path: String) -> void:
@@ -1292,6 +1411,8 @@ func _on_keyboard_submitted(text: String) -> void:
 			_set_query(text)
 		"bookmark_name":
 			quick.set_bookmark_name_text(text)
+		"time_jump":
+			_jump_to_time(text)
 		"rename_media":
 			rename_name.text = text
 			_validate_rename_name(text)
@@ -1453,7 +1574,7 @@ func _decorate() -> void:
 func _sync() -> void:
 	_apply_accessibility()
 	clock_label.visible = Settings.show_clock
-	%Logo.modulate = VpxTheme.ACCENT
+	sync_logo.modulate = VpxTheme.ACCENT
 	if speed_button != null:
 		var index := SPEEDS.find(Settings.playback_speed)
 		speed_button.select(maxi(index, 0))
@@ -1466,28 +1587,28 @@ func _sync() -> void:
 	_refresh_integrations()
 	_refresh_audio_info()
 	_refresh_photo_source_note()
-	%ScreenSection.visible = Settings.projection == Settings.ProjectionMode.FLAT
+	sync_screen_section.visible = Settings.projection == Settings.ProjectionMode.FLAT
 	var flat_photo := player.is_image() and Settings.projection == Settings.ProjectionMode.FLAT
 	spirit_level_section.visible = SpiritLevel.applicable(player, Settings.projection == Settings.ProjectionMode.FLAT)
 	photo_repeat_row.visible = flat_photo
-	pages.get_node("Picture/ScreenSection/ScreenGroup/Rows/Curve").visible = not flat_photo or Settings.flat_image_repeat == 0
+	sync_curve_row.visible = not flat_photo or Settings.flat_image_repeat == 0
 	photo_pan_section.visible = Settings.projection == Settings.ProjectionMode.FLAT
-	pages.get_node("Angles/OrientationGroup").visible = not flat_photo
-	pages.get_node("Angles/OrientationTitle").visible = not flat_photo
+	sync_orientation_group.visible = not flat_photo
+	sync_orientation_title.visible = not flat_photo
 	page_buttons["Angles"].text = "Pan" if flat_photo else "Position"
-	pages.get_node("Angles/AnglesFooter/AnglesHint").text = "Drag to pan the flat photo. Grip and drag in the headset, or drag with the mouse on desktop." if flat_photo else "Grip and move to drag the picture with the horizon locked. Add the trigger, then twist your wrist to tilt the horizon. Set Roll (tilt) here too. Near-level angles snap flat on release. Grip while pointing at this menu moves the menu. In bed, hold B / Y while looking where you want the picture."
-	%ResetAngles.text = "Reset pan" if flat_photo else "Reset"
-	pages.get_node("Picture/PictureFooter/PictureHint").text = "Repeat fills more of your surroundings with the same flat photo. Curve is off while repeat is on." if flat_photo and Settings.flat_image_repeat > 0 else "Size is the angle the flat screen fills, so it looks the same at any distance. Curve bends it around you like a cinema screen."
+	sync_angles_hint.text = "Drag to pan the flat photo. Grip and drag in the headset, or drag with the mouse on desktop." if flat_photo else "Grip and move to drag the picture with the horizon locked. Add the trigger, then twist your wrist to tilt the horizon. Set Roll (tilt) here too. Near-level angles snap flat on release. Grip while pointing at this menu moves the menu. In bed, hold B / Y while looking where you want the picture."
+	sync_reset_angles.text = "Reset pan" if flat_photo else "Reset"
+	sync_picture_hint.text = "Repeat fills more of your surroundings with the same flat photo. Curve is off while repeat is on." if flat_photo and Settings.flat_image_repeat > 0 else "Size is the angle the flat screen fills, so it looks the same at any distance. Curve bends it around you like a cinema screen."
 	var keyed := Settings.background == Settings.Background.CHROMA_KEY
-	%KeyRow.visible = keyed
-	%TuneRow.visible = keyed
-	%CutTitle.visible = keyed
-	%CutGroup.visible = keyed
-	for row in [%CutInvert, %CutSimilarity, %CutFeather]:
+	sync_key_row.visible = keyed
+	sync_tune_row.visible = keyed
+	sync_cut_title.visible = keyed
+	sync_cut_group.visible = keyed
+	for row in [sync_cut_invert, sync_cut_similarity, sync_cut_feather]:
 		row.visible = Settings.cut_enabled
 	var masked := Settings.alpha_mask != Settings.AlphaMask.NONE
-	%MaskSection.visible = masked
-	%MaskDarken.visible = masked and Settings.background != Settings.Background.CHROMA_KEY
+	sync_mask_section.visible = masked
+	sync_mask_darken.visible = masked and Settings.background != Settings.Background.CHROMA_KEY
 	var matching := Settings.matching_preset()
 	for i in preset_buttons.size():
 		preset_buttons[i].set_pressed_no_signal(i == matching)
@@ -1502,7 +1623,7 @@ func _sync() -> void:
 		_refresh_now_playing()
 	Tooltips.set_text(shuffle_button, ("Disable" if Settings.shuffle else "Enable") + " shuffled playback (S)")
 	Tooltips.set_text(mute_button, ("Unmute" if Settings.muted or Settings.volume == 0 else "Mute") + " (M) · Wheel or thumbstick adjusts volume; right-click toggles mute")
-	Tooltips.set_text(%ResetAngles, "Reset photo pan" if Settings.projection == Settings.ProjectionMode.FLAT and (player.is_image() or Settings.flat_video_pan) else "Reset yaw, pitch and roll to defaults")
+	Tooltips.set_text(sync_reset_angles, "Reset photo pan" if Settings.projection == Settings.ProjectionMode.FLAT and (player.is_image() or Settings.flat_video_pan) else "Reset yaw, pitch and roll to defaults")
 	shuffle_button.set_pressed_no_signal(Settings.shuffle)
 	mute_button.set_pressed_no_signal(Settings.muted)
 	mute_button.icon = VpxTheme.icon("volume_off" if Settings.muted or Settings.volume == 0 else "volume")
@@ -1515,17 +1636,21 @@ func _sync() -> void:
 	Tooltips.set_text(end_button, "At end: " + str(END_ACTIONS[end_index][1]) + " · Click for " + str(END_ACTIONS[(end_index + 1) % END_ACTIONS.size()][1]))
 	for i in source_buttons.size():
 		source_buttons[i].set_pressed_no_signal(i == Settings.library_source)
+	_refresh_source_labels()
 	for i in filter_buttons.size():
 		filter_buttons[i].set_pressed_no_signal(i == Settings.library_filter)
 	_refresh_query_chip()
-	%GridButton.set_pressed_no_signal(Settings.library_view == Settings.LibraryView.GRID)
-	%ListButton.set_pressed_no_signal(Settings.library_view == Settings.LibraryView.LIST)
+	sync_grid_button.set_pressed_no_signal(Settings.library_view == Settings.LibraryView.GRID)
+	sync_list_button.set_pressed_no_signal(Settings.library_view == Settings.LibraryView.LIST)
 	var discovering := Settings.library_source == Settings.LibrarySource.DISCOVER
 	discovery.visible = discovering
 	search_button.get_parent().visible = not discovering
 	sort_button.visible = not discovering
 	up_button.visible = not discovering
 	flat_view_button.visible = Settings.library_source == Settings.LibrarySource.FOLDER
+	clear_recent_button.visible = Settings.library_source == Settings.LibrarySource.RECENT
+	if not clear_recent_button.visible:
+		_disarm_clear_recent()
 	flat_view_button.set_pressed_no_signal(Settings.library_flat_view)
 	favorites_filter_button.visible = Settings.library_source == Settings.LibrarySource.FOLDER
 	favorites_filter_button.set_pressed_no_signal(Settings.library_favorites_only)
@@ -1858,6 +1983,11 @@ func _update_stats() -> void:
 			"Adaptive quality tier %d" % tier,
 			"Log: %s" % ProjectSettings.globalize_path(Log.LOG_PATH),
 		]))
+
+
+func stats_text() -> String:
+	_update_stats()
+	return stats_label.text
 
 
 func _image_stats() -> String:
@@ -2411,6 +2541,90 @@ func open_dropped(paths: PackedStringArray) -> String:
 	return ""
 
 
+func open_file_picker() -> bool:
+	if is_instance_valid(open_picker) and not open_picker.is_queued_for_deletion():
+		return true
+	var patterns := PackedStringArray()
+	for extension: String in VIDEO_EXTENSIONS + VPXPlayer.AUDIO_EXTENSIONS + DISC_EXTENSIONS + ArchiveFiles.ARCHIVE_EXTENSIONS + PanoramaFiles.IMAGE_EXTENSIONS + MediaTracks.SUBTITLE_EXTENSIONS:
+		patterns.append("*." + extension)
+	var start := directory if DirAccess.dir_exists_absolute(directory) else OS.get_system_dir(OS.SYSTEM_DIR_MOVIES)
+	if start.is_empty():
+		start = PlatformPaths.home()
+	open_picker = QuickPanel.SubtitleFilePicker.new()
+	add_child(open_picker)
+	open_picker.configure(start, PackedStringArray([",".join(patterns) + "; Media and subtitles"]), "Open media", "Open")
+	open_picker.file_selected.connect(func(path: String) -> void:
+		open_picker.queue_free()
+		open_dropped(PackedStringArray([path])))
+	open_picker.canceled.connect(open_picker.queue_free)
+	return true
+
+
+func _show_card_menu(position: Vector2, card: Button) -> void:
+	var target: String = card.media_path()
+	if target.is_empty():
+		target = card.path
+	var folder: bool = card.is_dir and not card.single
+	card_popup_path = card.path if folder else target
+	card_popup_is_dir = folder
+	card_popup.clear()
+	card_popup.add_item("Open folder" if folder else "Play", CARD_MENU_PLAY)
+	card_popup.add_item("Remove from favourites" if Library.is_favorite(card_popup_path) else "Add to favourites", CARD_MENU_FAVORITE)
+	if not _is_virtual(card_popup_path) and not card_popup_path.contains("://"):
+		card_popup.add_item("Show in file manager", CARD_MENU_REVEAL)
+		card_popup.add_item("Copy path", CARD_MENU_COPY)
+	if Settings.library_source == Settings.LibrarySource.RECENT:
+		card_popup.add_item("Remove from Recent", CARD_MENU_FORGET)
+	card_popup.reset_size()
+	card_popup.popup(Rect2i(Vector2i(position), Vector2i.ZERO))
+
+
+func _on_card_menu_selected(id: int) -> void:
+	var target := card_popup_path
+	match id:
+		CARD_MENU_PLAY:
+			_on_item_activated(target, card_popup_is_dir)
+		CARD_MENU_FAVORITE:
+			set_favorite(target, not Library.is_favorite(target))
+			if Settings.library_source == Settings.LibrarySource.FAVORITES:
+				refresh_directory(false)
+		CARD_MENU_REVEAL:
+			OS.shell_show_in_file_manager(target, true)
+		CARD_MENU_COPY:
+			DisplayServer.clipboard_set(target)
+			status_requested.emit("Path copied", false)
+		CARD_MENU_FORGET:
+			Library.forget_recent(target)
+			refresh_directory(false)
+
+
+func _clear_recent_pressed() -> void:
+	if not clear_recent_armed:
+		clear_recent_armed = true
+		clear_recent_button.text = "Press again to clear"
+		clear_recent_button.custom_minimum_size.x = 0.0
+		get_tree().create_timer(4.0).timeout.connect(_disarm_clear_recent)
+		return
+	_disarm_clear_recent()
+	var cleared := Library.clear_recent()
+	status_requested.emit("Recent cleared" if cleared > 0 else "Recent was already empty", false)
+	refresh_directory()
+
+
+func _disarm_clear_recent() -> void:
+	if not clear_recent_armed:
+		return
+	clear_recent_armed = false
+	var compact := search_button.text.is_empty()
+	clear_recent_button.text = "" if compact else filter_labels[clear_recent_button]
+	clear_recent_button.custom_minimum_size.x = 60.0 if compact else 0.0
+
+
+func show_recent() -> void:
+	show_library()
+	_select_source(Settings.LibrarySource.RECENT)
+
+
 func _select_source(source: int) -> void:
 	if Settings.library_source == source:
 		return
@@ -2540,12 +2754,23 @@ func _end_scan_hint() -> void:
 		scan_hint = null
 
 
+func _scan_error_text(result: Dictionary) -> String:
+	if result.get("message") == "Operation timed out":
+		return "This folder stopped responding. Choose another location or retry."
+	match result.get("reason", ""):
+		"missing":
+			return "This folder no longer exists. It may have been moved, renamed or unplugged."
+		"denied":
+			return "VPX is not allowed to open this folder."
+	return "This folder cannot be opened"
+
+
 func _show_scan(result: Dictionary) -> void:
 	var done: bool = result["done"]
 	if result.get("error", false):
 		scan_started_msec = -1
 		_end_scan_hint()
-		_add_hint("This folder stopped responding. Choose another location or retry." if result.get("message") == "Operation timed out" else "This folder cannot be opened")
+		_add_hint(_scan_error_text(result))
 		return
 	if result["kind"] == "folder" and result["path"] != directory:
 		directory = result["path"]
@@ -2669,7 +2894,7 @@ func _refresh_saved_listing() -> void:
 		for grid: VirtualGrid in [folder_grid, media_grid]:
 			var index := grid.items.find(focus_path)
 			if index >= 0:
-				grid.control_at(index).grab_focus()
+				_focus_control(grid.control_at(index))
 				break
 
 
@@ -3052,6 +3277,7 @@ func _build_card(key: String, parent: VirtualGrid) -> Control:
 				_refresh_saved_listing.call_deferred())
 	card.activated.connect(_on_item_activated)
 	card.play_requested.connect(_on_item_play)
+	card.context_requested.connect(_show_card_menu.bind(card))
 	card.toggled.connect(func(_on: bool) -> void: _highlight_current())
 	cards[key] = card
 	if is_dir and scanned and not folder_covers.has(key):
@@ -3359,6 +3585,7 @@ func _build_crumbs() -> void:
 		label.clip_text = true
 		label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		crumbs.add_child(label)
 		return
 	var root := _path_root(directory)
@@ -3408,14 +3635,19 @@ func _prepare_crumb(button: Button, is_last: bool) -> void:
 	button.clip_text = true
 	button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_fit_crumb(button, is_last)
+	button.theme_changed.connect(_fit_crumb.bind(button, is_last))
+	button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	if is_last:
+		button.add_theme_stylebox_override("normal", VpxTheme.accent_flat(10, 10, 6, &"soft"))
+
+
+func _fit_crumb(button: Button, is_last: bool) -> void:
 	var font := get_theme_font("font", &"Crumb")
 	var font_size := get_theme_font_size("font_size", &"Crumb")
 	var text_width := font.get_string_size(button.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
 	var icon_width := 34.0 if button.icon != null or button.text == "Home" else 0.0
 	button.custom_minimum_size.x = clampf(ceilf(text_width) + 24.0 + icon_width, 64.0, 320.0 if is_last else 240.0)
-	button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	if is_last:
-		button.add_theme_stylebox_override("normal", VpxTheme.accent_flat(10, 10, 6, &"soft"))
 
 
 func _crumb(text: String, path: String, is_last := false) -> Button:
@@ -3501,7 +3733,7 @@ func _make_focusable(node: Variant, recursive := true) -> void:
 
 func handle_key(event: InputEventKey) -> bool:
 	var modal_picker: Control
-	var candidates: Array = [recovery.picker if recovery != null else null, backup_picker, quick.picker]
+	var candidates: Array = [recovery.picker if recovery != null else null, backup_picker, open_picker, quick.picker]
 	for candidate: Variant in candidates:
 		if is_instance_valid(candidate) and candidate.visible and not candidate.is_queued_for_deletion():
 			modal_picker = candidate
@@ -3574,6 +3806,13 @@ func handle_key(event: InputEventKey) -> bool:
 				show_library()
 				_open_search()
 			return true
+		KEY_MENU, KEY_F10:
+			if event.keycode == KEY_F10 and not event.shift_pressed:
+				return false
+			if focus is MediaCard:
+				_show_card_menu(focus.get_global_rect().get_center(), focus)
+				return true
+			return false
 		KEY_UP when ctrl:
 			if focus is MediaCard and not focus.media_path().is_empty():
 				set_favorite(focus.media_path(), not Library.is_favorite(focus.media_path()))
@@ -3621,6 +3860,21 @@ func step_page(direction: int) -> void:
 		_focus_start()
 
 
+func reveal_current() -> bool:
+	var path := player.current_path
+	if path.is_empty() or path.contains("://"):
+		return false
+	var folder := _clean_directory(path.get_base_dir())
+	show_library()
+	if Settings.library_source != Settings.LibrarySource.FOLDER or directory != folder:
+		open_directory(folder)
+		pending_folder_scroll = -1
+	refocus_key = path
+	refocus = true
+	reveal_pending = true
+	return true
+
+
 func _update_refocus() -> void:
 	if recovery != null and recovery.visible:
 		return
@@ -3628,11 +3882,22 @@ func _update_refocus() -> void:
 		return
 	if not %Library.visible or quick.visible:
 		refocus = false
+		reveal_pending = false
 		return
+	if reveal_pending:
+		var listed := folder_grid.items.has(refocus_key) or media_grid.items.has(refocus_key)
+		if not listed and scan_started_msec >= 0:
+			return
+		reveal_pending = false
 	var start := _library_start()
 	if start != null:
-		start.grab_focus()
+		_focus_control(start)
 		refocus = false
+
+
+func _focus_control(control: Control) -> void:
+	_make_focusable(control, false)
+	control.grab_focus()
 
 
 func _focus_start() -> void:
@@ -3642,7 +3907,7 @@ func _focus_start() -> void:
 	if %Library.visible:
 		var start := _library_start()
 		if start != null:
-			start.grab_focus()
+			_focus_control(start)
 			return
 	for page in pages.get_children():
 		if page.visible and _first_focusable(page):
@@ -3710,15 +3975,15 @@ func _grid_key(card: Control, event: InputEventKey) -> bool:
 		if grid != media_grid or other == null or other.is_empty():
 			return false
 		var last_row := (other.items.size() - 1) / other.columns * other.columns
-		other.control_at(mini(last_row + mini(column, other.columns - 1), other.items.size() - 1)).grab_focus()
+		_focus_control(other.control_at(mini(last_row + mini(column, other.columns - 1), other.items.size() - 1)))
 		return true
 	if target >= count:
 		var last_row_start := (count - 1) / grid.columns * grid.columns
 		if index >= last_row_start and grid == folder_grid and other != null and not other.is_empty():
-			other.control_at(mini(column, other.items.size() - 1)).grab_focus()
+			_focus_control(other.control_at(mini(column, other.items.size() - 1)))
 			return true
 		target = count - 1
-	grid.control_at(target).grab_focus()
+	_focus_control(grid.control_at(target))
 	return true
 
 
@@ -3955,11 +4220,14 @@ func _build_settings_backup() -> void:
 
 func close_pickers() -> void:
 	quick.close_picker()
+	card_popup.hide()
 	settings_search.close()
 	if keyboard_purpose == "settings_search":
 		keyboard.close()
 	if is_instance_valid(backup_picker):
 		backup_picker.cancel()
+	if is_instance_valid(open_picker) and not open_picker.is_queued_for_deletion():
+		open_picker.cancel()
 
 
 func _apply_accessibility() -> void:
@@ -3982,5 +4250,11 @@ func _apply_accessibility() -> void:
 				card.apply_text_size()
 			grid._relayout()
 	%PresetGrid.columns = mini(5, columns)
+	var compact := wanted.x < FILTER_LABELS_MIN_WIDTH or Settings.text_size > 1.2
+	for button in filter_labels:
+		button.text = "" if compact else filter_labels[button]
+		button.custom_minimum_size.x = 60.0 if compact else 0.0
+	source_compact = compact
+	_refresh_source_labels()
 	volume_slider.custom_minimum_size.x = 90.0 if wanted.x < 1400.0 else 170.0
 	end_label.visible = wanted.x >= 1400.0 and Settings.text_size <= 1.2

@@ -20,6 +20,356 @@ class TestDisc extends DiscImage:
 		return await super._command("python3", ["-c", code])
 
 
+func _test_scan_errors() -> void:
+	var ui = main.ui
+	var missing: String = ui._scan_error_text({"reason": "missing"})
+	var denied: String = ui._scan_error_text({"reason": "denied"})
+	check(missing.contains("no longer exists") and denied.contains("not allowed") and missing != denied, "folder errors name the cause")
+	check(ui._scan_error_text({"message": "Operation timed out"}).contains("stopped responding"), "timeout keeps its own message")
+	check(ui._scan_error_text({}) == "This folder cannot be opened", "unknown folder error stays generic")
+
+
+func _test_library_scale() -> void:
+	var ui = main.ui
+	var settings := root.get_node("Settings")
+	ui.show_library()
+	for combo in [[1.0, 1.0, 300.0], [1.25, 1.0, 180.0], [1.0, 1.5, 280.0], [1.25, 1.5, 100.0]]:
+		settings.apply("ui_size", combo[0])
+		settings.apply("text_size", combo[1])
+		for i in 20:
+			await process_frame
+		var viewport := Vector2(ui.get_viewport().size_2d_override)
+		var sheet: Vector2 = ui.get_node("Sheet").size
+		var label := "ui %.2f text %.1f" % [combo[0], combo[1]]
+		check(sheet.x <= viewport.x + 0.5, "library fits width at " + label)
+		check(ui.file_scroll.size.y >= combo[2], "library keeps %d px of list at %s (%d)" % [combo[2], label, ui.file_scroll.size.y])
+		check(ui.search_button.text.is_empty() == (viewport.x < 1400.0 or combo[1] > 1.2), "filter labels follow width at " + label)
+		var last: Button
+		for crumb in ui.crumbs.get_children():
+			if crumb is Button:
+				last = crumb
+		var needed: float = ui.get_theme_font("font", &"Crumb").get_string_size(last.text, HORIZONTAL_ALIGNMENT_LEFT, -1, ui.get_theme_font_size("font_size", &"Crumb")).x + 24.0
+		check(last.custom_minimum_size.x >= minf(needed, 320.0) - 0.5, "current folder crumb fits its name at " + label)
+		var named := 0
+		for source in ui.source_buttons:
+			named += int(not source.text.is_empty())
+		check(named == (1 if (viewport.x < 1400.0 or combo[1] > 1.2) else ui.source_buttons.size()), "source tabs keep only the active name when compact at " + label)
+	settings.apply("ui_size", 1.0)
+	settings.apply("text_size", 1.0)
+	await process_frame
+
+
+func _test_window_title() -> void:
+	var player = main.player
+	var previous: String = player.current_path
+	player.current_path = ""
+	check(not main._window_title().contains(" — VPX") or main._window_title().begins_with("VPX"), "idle window title is the app name")
+	player.current_path = "/media/Some Show/Episode 04.mkv"
+	check(main._window_title().begins_with("Episode 04 — VPX"), "window title leads with the playing media")
+	player.current_path = previous
+
+
+func _test_art_retry() -> void:
+	var info := root.get_node("MediaInfo")
+	var path := directory.path_join("no-art.mp3")
+	DirAccess.make_dir_recursive_absolute(directory)
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	file.store_string("not really audio")
+	file.close()
+	var signature: String = info._stat_signature(path)
+	info.entries[path] = {"sig": signature, "audio": true, "thumb_failed": true, "thumb_failed_at": Time.get_unix_time_from_system()}
+	info.request(path, true)
+	check(info.entries.has(path) and info.entries[path].has("thumb_failed"), "audio without art keeps its failed thumbnail while the file is unchanged")
+	info.entries[path] = {"sig": "stale", "audio": true, "thumb_failed": true, "thumb_failed_at": Time.get_unix_time_from_system()}
+	info.request(path, true)
+	check(not info.entries.get(path, {}).has("thumb_failed"), "changed audio file retries its thumbnail")
+	info.invalidate(path)
+	DirAccess.remove_absolute(path)
+
+
+func _test_stepper_hold() -> void:
+	var stepper = main.ui.key_shade
+	var settings := root.get_node("Settings")
+	var original: Color = settings.chroma_key_color
+	var plus: Button
+	for child in stepper.get_children():
+		if child is Button and child.text == "+":
+			plus = child
+	check(plus != null and not stepper.is_processing(), "idle stepper does not process")
+	var before: float = stepper.value
+	plus.button_down.emit()
+	check(stepper.is_processing(), "pressed stepper processes")
+	var waited := 0.0
+	while waited < 1.0:
+		await process_frame
+		waited += 1.0 / 60.0
+	check(stepper.value >= before + 3.0 or stepper.value == stepper.max_value, "held stepper repeats (%.0f -> %.0f)" % [before, stepper.value])
+	plus.button_up.emit()
+	await process_frame
+	await process_frame
+	check(not stepper.is_processing(), "released stepper stops processing")
+	settings.apply("chroma_key_color", original)
+
+
+func _test_time_entry() -> void:
+	var parser := load("res://scripts/time_entry.gd")
+	var cases := [
+		["1:23:45", 0.0, 7200.0, 5025.0], ["83:20", 0.0, 7200.0, 5000.0], ["90", 0.0, 7200.0, 90.0], ["90s", 0.0, 7200.0, 90.0],
+		["1h30m", 0.0, 7200.0, 5400.0], ["1h30", 0.0, 7200.0, 5400.0], ["2m30", 0.0, 7200.0, 150.0], ["1h 5m 3", 0.0, 7200.0, 3903.0], ["1h 5m 3s", 0.0, 7200.0, 3903.0], ["2m", 0.0, 7200.0, 120.0], ["+30", 100.0, 7200.0, 130.0],
+		["-1:00", 100.0, 7200.0, 40.0], ["-500", 100.0, 7200.0, 0.0], ["50%", 0.0, 200.0, 100.0], ["99999", 0.0, 200.0, 200.0],
+		["1,5", 0.0, 200.0, 1.5], ["12:3:4:5", 0.0, 200.0, -1.0], ["abc", 0.0, 200.0, -1.0], ["", 0.0, 200.0, -1.0],
+		["1:xx", 0.0, 200.0, -1.0], ["+", 0.0, 200.0, -1.0], ["-1:-2", 0.0, 200.0, -1.0], ["50%", 0.0, 0.0, -1.0], ["+50%", 0.0, 200.0, -1.0],
+	]
+	var bad := PackedStringArray()
+	for entry in cases:
+		var got: float = parser.parse(entry[0], entry[1], entry[2])
+		if not is_equal_approx(got, entry[3]):
+			bad.append("%s -> %s" % [entry[0], got])
+	check(bad.is_empty(), "time entry parses clock, unit, relative and percent forms %s" % [bad])
+	var messages := []
+	var capture := func(message: String, _busy: bool) -> void: messages.append(message)
+	main.ui.status_requested.connect(capture)
+	main.ui._jump_to_time("not a time")
+	main.ui.status_requested.disconnect(capture)
+	check(messages.size() == 1 and messages[0].begins_with("Time not understood"), "unreadable jump time is reported")
+
+
+func _test_clear_recent() -> void:
+	var library := root.get_node("Library")
+	var ui = main.ui
+	library.mark_played("/tmp/vpx-recent-probe.mp4")
+	library.set_pref("/tmp/vpx-recent-probe.mp4", "view_count", 3)
+	library.set_favorite("/tmp/vpx-recent-probe.mp4", true)
+	library.mark_folder_visited("/tmp/vpx-recent-probe-dir")
+	check("/tmp/vpx-recent-probe.mp4" in library.recent_paths(100), "played media is listed as recent")
+	ui._clear_recent_pressed()
+	check(ui.clear_recent_armed and "/tmp/vpx-recent-probe.mp4" in library.recent_paths(100), "first press only arms Clear recent")
+	ui._clear_recent_pressed()
+	check(not ui.clear_recent_armed and library.recent_paths(100).is_empty() and library.recent_folders(100).is_empty(), "second press clears recent media and folders")
+	check(library.is_favorite("/tmp/vpx-recent-probe.mp4") and int(library.get_pref("/tmp/vpx-recent-probe.mp4", "view_count", 0)) == 3, "clearing recent keeps favourites and view counts")
+	check(library.get_pref("/tmp/vpx-recent-probe-dir", "is_directory", false), "cleared folders stay known as folders")
+	library.forget("/tmp/vpx-recent-probe.mp4")
+	library.forget("/tmp/vpx-recent-probe-dir")
+	library.favorites.erase("/tmp/vpx-recent-probe.mp4")
+
+
+func _test_subtitle_delay_keys() -> void:
+	var settings := root.get_node("Settings")
+	var player = main.player
+	var previous: String = player.current_path
+	var delay: float = settings.subtitle_delay
+	player.current_path = "/media/probe.mp4"
+	settings.apply("subtitle_delay", 0.0)
+	var press := func(code: Key, shift := false) -> void:
+		var event := InputEventKey.new()
+		event.keycode = code
+		event.pressed = true
+		event.shift_pressed = shift
+		main._handle_key(event)
+	press.call(KEY_X)
+	press.call(KEY_X)
+	check(is_equal_approx(settings.subtitle_delay, 0.2), "X delays subtitles by 0.1 s per press (%.2f)" % settings.subtitle_delay)
+	press.call(KEY_Z, true)
+	check(is_equal_approx(settings.subtitle_delay, -0.3), "Shift+Z brings subtitles 0.5 s earlier (%.2f)" % settings.subtitle_delay)
+	settings.apply("subtitle_delay", 29.9)
+	press.call(KEY_X, true)
+	check(is_equal_approx(settings.subtitle_delay, 30.0), "subtitle delay stops at 30 s")
+	settings.apply("subtitle_delay", delay)
+	player.current_path = previous
+	root.get_node("Library").forget("/media/probe.mp4")
+
+
+func _test_mouse_back_button() -> void:
+	var ui = main.ui
+	var child := directory.path_join("side-button")
+	DirAccess.make_dir_recursive_absolute(child)
+	main.panel.open()
+	ui.show_library()
+	ui.open_directory(child)
+	for i in 30:
+		await process_frame
+	check(ui.directory.simplify_path() == child.simplify_path(), "test folder is open before the back button")
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_XBUTTON1
+	press.pressed = true
+	check(main.desktop_view.handle_input(press), "mouse back button is consumed")
+	for i in 30:
+		await process_frame
+	check(ui.directory.simplify_path() == directory.simplify_path(), "mouse back button goes up one Library folder (%s)" % ui.directory)
+	DirAccess.remove_absolute(child)
+
+
+func _test_reveal_current() -> void:
+	var ui = main.ui
+	var player = main.player
+	var folder := directory.path_join("reveal")
+	DirAccess.make_dir_recursive_absolute(folder)
+	for index in 40:
+		var file := FileAccess.open(folder.path_join("clip_%02d.mp4" % index), FileAccess.WRITE)
+		file.close()
+	var wanted := folder.path_join("clip_33.mp4")
+	var previous: String = player.current_path
+	player.current_path = wanted
+	ui.open_directory(directory)
+	for i in 30:
+		await process_frame
+	check(ui.reveal_current(), "now playing can be shown in the Library")
+	for i in 90:
+		await process_frame
+	var focused: Control = ui.get_viewport().gui_get_focus_owner()
+	check(ui.directory.simplify_path() == folder.simplify_path(), "show in Library opens the file's folder")
+	check(focused != null and focused.has_method("media_path") and focused.media_path() == wanted, "show in Library focuses the playing file")
+	check(not player.current_path.contains("://") and not ui.reveal_pending, "reveal finishes")
+	player.current_path = "https://example.com/stream.mp4"
+	check(not ui.reveal_current(), "streams cannot be shown in the Library")
+	player.current_path = previous
+	for index in 40:
+		DirAccess.remove_absolute(folder.path_join("clip_%02d.mp4" % index))
+	DirAccess.remove_absolute(folder)
+
+
+func _test_cheat_sheet_and_stats() -> void:
+	var ui = main.ui
+	var sheet: Node = ui.get_node("%CheatSheet")
+	var shortcuts := ""
+	for child in sheet.get_children():
+		if child is Label:
+			shortcuts += child.text + "\n"
+	check(shortcuts.contains("Jump to a time") and shortcuts.contains("Subtitles earlier") and shortcuts.contains("Show video details"), "cheat sheet lists the new shortcuts")
+	check(not ui.stats_text().is_empty(), "video details text is available")
+
+
+func _test_card_menu() -> void:
+	var ui = main.ui
+	var library := root.get_node("Library")
+	var folder := directory.path_join("card-menu")
+	DirAccess.make_dir_recursive_absolute(folder)
+	var media := folder.path_join("clip.mp4")
+	var file := FileAccess.open(media, FileAccess.WRITE)
+	file.close()
+	ui.open_directory(folder)
+	for i in 40:
+		await process_frame
+	var card: Button = ui.cards.get(media)
+	check(card != null, "test card is built")
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_RIGHT
+	click.pressed = true
+	click.global_position = Vector2(120, 140)
+	card.gui_input.emit(click)
+	await process_frame
+	var labels := []
+	for index in ui.card_popup.item_count:
+		labels.append(ui.card_popup.get_item_text(index))
+	check(ui.card_popup_path == media and "Play" in labels and "Add to favourites" in labels and "Copy path" in labels, "right click opens the card menu %s" % [labels])
+	ui._on_card_menu_selected(ui.CARD_MENU_FAVORITE)
+	check(library.is_favorite(media), "card menu adds a favourite")
+	ui._on_card_menu_selected(ui.CARD_MENU_FAVORITE)
+	check(not library.is_favorite(media), "card menu removes a favourite")
+	ui._on_card_menu_selected(ui.CARD_MENU_COPY)
+	check(DisplayServer.clipboard_get() == media or DisplayServer.get_name() == "headless", "card menu copies the path")
+	library.mark_played(media)
+	check(library.forget_recent(media) and not (media in library.recent_paths(100)), "card menu can drop an item from Recent")
+	ui.card_popup.hide()
+	ui.card_popup_path = ""
+	ui._focus_control(card)
+	var menu_key := InputEventKey.new()
+	menu_key.keycode = KEY_F10
+	menu_key.shift_pressed = true
+	menu_key.pressed = true
+	check(ui.handle_key(menu_key) and ui.card_popup_path == media, "Shift+F10 opens the menu for the focused card")
+	ui.card_popup.hide()
+	library.forget(media)
+	DirAccess.remove_absolute(media)
+	DirAccess.remove_absolute(folder)
+
+
+func _test_library_async_save() -> void:
+	var library := root.get_node("Library")
+	library.save()
+	var probes := []
+	for index in 4000:
+		var key := "/probe/library/Episode %04d.mkv" % index
+		library.entries[key] = {"position": 12.5, "duration": 3600.0, "view_count": 2, "played": 1700000000.0 + index, "seen": 1700000000.0, "format": {"projection": 0, "stereo": 0}}
+		probes.append(key)
+	library._mark_dirty()
+	var started := Time.get_ticks_usec()
+	var text: String = JSON.stringify({"version": 1, "files": library.entries})
+	var serialize_usec := Time.get_ticks_usec() - started
+	started = Time.get_ticks_usec()
+	library._save_async()
+	var handoff_usec := Time.get_ticks_usec() - started
+	check(not library.dirty and library.writer != null, "library save hands the write to a worker")
+	check(handoff_usec * 2 < serialize_usec, "worker hand-off is much cheaper than serialising on the frame (%d us vs %d us)" % [handoff_usec, serialize_usec])
+	library.set_pref("/probe/library/late.mkv", "position", 7.0)
+	check(library.dirty, "changes during a write stay dirty")
+	check(library.save() == OK and library.writer == null and not library.dirty, "synchronous save joins the worker and flushes late changes")
+	var saved: String = FileAccess.get_file_as_string("user://library.json")
+	check(saved.contains("Episode 3999.mkv") and saved.contains("late.mkv") and JSON.parse_string(saved) is Dictionary, "saved library file holds every entry and parses")
+	for key in probes:
+		library.entries.erase(key)
+	library.entries.erase("/probe/library/late.mkv")
+	library._mark_dirty()
+	library.save()
+	check(text.length() > 0, "serialised sample is not empty")
+
+
+func _test_open_picker() -> void:
+	var ui = main.ui
+	var press := InputEventKey.new()
+	press.keycode = KEY_O
+	press.ctrl_pressed = true
+	press.pressed = true
+	main._handle_key(press)
+	for i in 5:
+		await process_frame
+	check(is_instance_valid(ui.open_picker) and ui.open_picker.visible and main.panel.is_open(), "Ctrl+O opens the in-app file picker with the menu")
+	main._handle_key(press)
+	check(ui.open_picker.get_parent() == ui and ui.get_children().filter(func(child: Node) -> bool: return child == ui.open_picker).size() == 1, "second Ctrl+O reuses the picker")
+	var messages := []
+	var capture := func(message: String, _busy: bool) -> void: messages.append(message)
+	ui.status_requested.connect(capture)
+	var subtitle := directory.path_join("probe.srt")
+	var file := FileAccess.open(subtitle, FileAccess.WRITE)
+	file.close()
+	var previous: String = main.player.current_path
+	main.player.current_path = ""
+	ui.open_picker.file_selected.emit(subtitle)
+	await process_frame
+	ui.status_requested.disconnect(capture)
+	check(messages.size() == 1 and messages[0].begins_with("Play a video"), "picked subtitle goes through the drop path (%s)" % [messages])
+	await process_frame
+	await process_frame
+	check(not is_instance_valid(ui.open_picker), "picker closes after a choice")
+	main._handle_key(press)
+	for i in 3:
+		await process_frame
+	ui.close_pickers()
+	for i in 3:
+		await process_frame
+	check(not is_instance_valid(ui.open_picker) or ui.open_picker.is_queued_for_deletion() or not ui.open_picker.visible, "closing pickers cancels the open picker")
+	main.player.current_path = previous
+	DirAccess.remove_absolute(subtitle)
+
+
+func _test_recent_shortcut() -> void:
+	var ui = main.ui
+	var settings := root.get_node("Settings")
+	ui.show_library()
+	settings.apply("library_source", settings.LibrarySource.FOLDER)
+	var press := InputEventKey.new()
+	press.keycode = KEY_R
+	press.ctrl_pressed = true
+	press.pressed = true
+	check(main._handle_key(press), "Ctrl+R is handled")
+	for i in 5:
+		await process_frame
+	check(settings.library_source == settings.LibrarySource.RECENT and main.panel.is_open(), "Ctrl+R opens the menu on Recent")
+	ui._select_source(settings.LibrarySource.FOLDER)
+	for i in 5:
+		await process_frame
+
+
 func _initialize() -> void:
 	_run.call_deferred()
 
@@ -78,6 +428,21 @@ func _run() -> void:
 	await _test_backup_roundtrip()
 	await _test_seek()
 	await _test_disc_cancellation()
+	_test_scan_errors()
+	await _test_library_scale()
+	_test_window_title()
+	await _test_art_retry()
+	await _test_stepper_hold()
+	_test_time_entry()
+	_test_clear_recent()
+	_test_subtitle_delay_keys()
+	await _test_mouse_back_button()
+	await _test_reveal_current()
+	await _test_cheat_sheet_and_stats()
+	await _test_card_menu()
+	await _test_library_async_save()
+	await _test_open_picker()
+	await _test_recent_shortcut()
 	main.queue_free()
 	await create_timer(0.4).timeout
 	print("Critical UI regression: %d failures" % failures)

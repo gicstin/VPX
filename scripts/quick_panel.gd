@@ -72,8 +72,12 @@ func _ready() -> void:
 	layout.add_child(scroll)
 	var stack := MarginContainer.new()
 	stack.size_flags_horizontal = SIZE_EXPAND_FILL
-	stack.add_theme_constant_override("margin_right", 14)
+	stack.add_theme_constant_override("margin_right", 14 + VpxTheme.FOCUS_ROOM)
+	for side in ["left", "top", "bottom"]:
+		stack.add_theme_constant_override("margin_" + side, VpxTheme.FOCUS_ROOM)
 	scroll.add_child(stack)
+	VpxTheme.bleed_scroll(scroll, VpxTheme.FOCUS_ROOM, VpxTheme.FOCUS_ROOM)
+	VpxTheme.scroll_fade(scroll, 16.0, Color(VpxTheme.SURFACE, BACKGROUND_ALPHA))
 	for builder in [_build_screen, _build_picture, _build_format, _build_audio, _build_subtitles, _build_marks]:
 		var page := VBoxContainer.new()
 		page.add_theme_constant_override("separation", 10)
@@ -623,12 +627,8 @@ class SubtitleFilePicker extends Control:
 		var toolbar := HBoxContainer.new()
 		toolbar.add_theme_constant_override("separation", 8)
 		body.add_child(toolbar)
-		var back := _button("Back", "back")
-		Tooltips.set_text(back, "Go to parent folder")
-		back.custom_minimum_size.x = 110
-		back.pressed.connect(_go_parent)
-		toolbar.add_child(back)
 		var up := _button("Up", "up")
+		up.custom_minimum_size.x = 110
 		Tooltips.set_text(up, "Go to parent folder")
 		up.pressed.connect(_go_parent)
 		toolbar.add_child(up)
@@ -638,7 +638,7 @@ class SubtitleFilePicker extends Control:
 		path_field.text_changed.connect(func(_text: String) -> void: _cancel_path())
 		path_field.text_submitted.connect(_open_path)
 		toolbar.add_child(path_field)
-		var go := _button("Go", "forward")
+		var go := _button("Go", "chevron_right")
 		Tooltips.set_text(go, "Open the folder path to the left")
 		go.custom_minimum_size.x = 76
 		go.pressed.connect(func() -> void: _open_path(path_field.text))

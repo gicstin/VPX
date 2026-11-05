@@ -200,7 +200,8 @@ func _scan_folder(request: Dictionary) -> void:
 				path = fallback
 				break
 	if dir == null:
-		_post({"serial": serial, "lane": "listing", "kind": "folder", "path": path, "folders": PackedStringArray(), "files": PackedStringArray(), "done": true, "error": true})
+		var reason := "denied" if DirAccess.dir_exists_absolute(path) else "missing"
+		_post({"serial": serial, "lane": "listing", "kind": "folder", "path": path, "folders": PackedStringArray(), "files": PackedStringArray(), "done": true, "error": true, "reason": reason})
 		return
 	if request.get("recursive", false):
 		_scan_tree(request, path)

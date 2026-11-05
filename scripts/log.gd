@@ -72,6 +72,8 @@ func _log_wivrn_stream() -> void:
 	if state_home.is_empty():
 		state_home = OS.get_environment("HOME").path_join(".local/state")
 	var directory := state_home.path_join(WIVRN_LOG_SUBDIR)
+	if not DirAccess.dir_exists_absolute(directory):
+		return
 	var newest := ""
 	for name in DirAccess.get_files_at(directory):
 		if name.begins_with("server_logs_") and name > newest:

@@ -2,6 +2,7 @@ extends Node3D
 
 const MENU_DISTANCE := 1.5
 const DESKTOP_VIEW := preload("res://scripts/desktop_view.gd")
+const MediaCard := preload("res://scripts/media_card.gd")
 const DisplayMode := preload("res://scripts/display_mode.gd")
 const VRSeekBar := preload("res://scripts/vr_seek_bar.gd")
 const MusicPanel := preload("res://scripts/music_panel.gd")
@@ -284,6 +285,8 @@ func _ready() -> void:
 		_create_desktop_view()
 	_create_mode_controls()
 	player.ended.connect(_on_ended)
+	player.opened.connect(func(_path: String) -> void: _update_title())
+	player.music_changed.connect(_update_title)
 	player.sleep_finished.connect(func() -> void: _show_status("Sleep timer — paused"))
 	if not OS.has_environment(DisplayMode.SESSION_ENV):
 		_parse_arguments()
@@ -459,8 +462,14 @@ func _init_xr() -> bool:
 
 
 func _update_title() -> void:
+	DisplayServer.window_set_title(_window_title())
+
+
+func _window_title() -> String:
 	var connected := hmd_state == 1 or (hmd_state == -1 and not desktop_mode)
-	DisplayServer.window_set_title("VPX %s — %s%s" % [Log.version_label(), "Desktop" if desktop_mode else "VR", " (HMD Connected)" if connected else ""])
+	var media := player.music_path if not player.music_path.is_empty() else player.current_path
+	var playing := "" if media.is_empty() else MediaCard.pretty_name(media) + " — "
+	return "%sVPX %s — %s%s" % [playing, Log.version_label(), "Desktop" if desktop_mode else "VR", " (HMD Connected)" if connected else ""]
 
 
 func _wivrn_headset_connected() -> int:
@@ -868,6 +877,8 @@ func toggle_pause() -> void:
 		return
 	_suppress_vr_seek()
 	player.toggle_pause()
+	if player.playback != null:
+		_show_status("Paused" if player.paused else "Playing")
 
 
 func seek_relative(seconds: float) -> void:
@@ -1669,6 +1680,21 @@ func _handle_key(event: InputEventKey) -> bool:
 		KEY_F when ctrl:
 			_open_menu()
 			ui.handle_key(event)
+		KEY_G when ctrl:
+			if not event.echo:
+				if ui.time_jump_available():
+					_open_menu()
+					ui.open_time_jump()
+				else:
+					_show_status("Nothing to jump in")
+		KEY_R when ctrl:
+			if not event.echo:
+				_open_menu()
+				ui.show_recent()
+		KEY_O when ctrl:
+			if not event.echo:
+				_open_menu()
+				ui.open_file_picker()
 		KEY_SPACE, KEY_K:
 			if not event.echo:
 				toggle_pause()
@@ -1738,6 +1764,15 @@ func _handle_key(event: InputEventKey) -> bool:
 			_key_action(Settings.StickAction.SUBTITLE_TRACK, -1 if event.shift_pressed else 1)
 		KEY_A:
 			_key_action(Settings.StickAction.AUDIO_TRACK, -1 if event.shift_pressed else 1)
+		KEY_I:
+			if not event.echo and not player.current_path.is_empty() and not player._audio_only_playing():
+				_show_status(ui.stats_text())
+		KEY_Z, KEY_X:
+			if not player.is_image() and not player._audio_only_playing() and not player.current_path.is_empty():
+				var amount := 0.5 if event.shift_pressed else 0.1
+				var delay := snappedf(clampf(Settings.subtitle_delay + (amount if event.keycode == KEY_X else -amount), -30.0, 30.0), 0.1)
+				Settings.apply("subtitle_delay", delay)
+				_show_status("Subtitle delay %+.1f s" % delay)
 		KEY_C:
 			if not player._audio_only_playing() and not player.step_mark(-1 if event.shift_pressed else 1):
 				_show_status("No chapters or bookmarks")

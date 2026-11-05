@@ -138,7 +138,7 @@ func request(path: String, refresh_signature := false) -> void:
 		signatures.erase(path)
 	requested[path] = true
 	var entry := info(path)
-	if refresh_signature and not entry.is_empty() and (entry.has("failed") or entry.has("thumb_failed")):
+	if refresh_signature and not entry.is_empty() and (entry.has("failed") or entry.has("thumb_failed")) and not _art_missing(path, entry):
 		entries.erase(path)
 		_mark_dirty()
 		entry = {}
@@ -156,6 +156,10 @@ func request(path: String, refresh_signature := false) -> void:
 		return
 	queued[path] = true
 	queue.append(path)
+
+
+func _art_missing(path: String, entry: Dictionary) -> bool:
+	return entry.has("thumb_failed") and not entry.has("failed") and entry.get("audio", false) and entry.get("sig", "") == _stat_signature(path)
 
 
 func prioritize(paths: PackedStringArray) -> void:

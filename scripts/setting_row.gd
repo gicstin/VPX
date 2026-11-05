@@ -11,6 +11,8 @@ const COMPACT_BUTTON_WIDTH := 60
 @export var setting: StringName
 @export var compact := false
 
+var stale := false
+
 
 func _ready() -> void:
 	custom_minimum_size.y = ROW_HEIGHT
@@ -30,7 +32,8 @@ func _ready() -> void:
 		add_child(label)
 	_build()
 	if setting != &"":
-		Settings.changed.connect(_pull)
+		Settings.changed.connect(_on_settings_changed)
+		visibility_changed.connect(_on_visibility_changed)
 		_pull()
 
 
@@ -40,6 +43,25 @@ func _build() -> void:
 
 func _pull() -> void:
 	pass
+
+
+func _on_settings_changed() -> void:
+	if _on_shown_page():
+		stale = false
+		_pull()
+	else:
+		stale = true
+
+
+func _on_visibility_changed() -> void:
+	if stale and _on_shown_page():
+		stale = false
+		_pull()
+
+
+func _on_shown_page() -> bool:
+	var parent := get_parent() as CanvasItem
+	return parent == null or parent.is_visible_in_tree()
 
 
 func _label_expands() -> bool:

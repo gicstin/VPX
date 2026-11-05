@@ -16,7 +16,7 @@ func setup(owner_ui) -> void:
 	bar = TabBar.new()
 	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bar.custom_minimum_size.y = 48
-	bar.max_tab_width = 220
+	bar.max_tab_width = 300
 	bar.tab_close_display_policy = TabBar.CLOSE_BUTTON_SHOW_ALWAYS
 	bar.tab_changed.connect(select)
 	bar.tab_close_pressed.connect(close)

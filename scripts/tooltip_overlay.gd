@@ -24,7 +24,6 @@ func _ready() -> void:
 	panel.theme = VpxTheme.build()
 	panel.theme_type_variation = &"TooltipSurface"
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.clip_contents = true
 	panel.hide()
 	add_child(panel)
 	if get_viewport() is Window:

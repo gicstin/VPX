@@ -22,6 +22,7 @@ func check(ok: bool, label: String) -> void:
 func run() -> void:
 	root.size = Vector2i(1280, 1000)
 	var settings := root.get_node("Settings")
+	var tips := root.get_node("Tooltips")
 	settings.set_process(false)
 	settings.visualizer_starred_only = false
 	settings.visualizer_shuffle = false
@@ -117,7 +118,7 @@ func run() -> void:
 	settings.apply("immersive_music_visualizer", true)
 
 	settings.apply("visualizer_preset", 18)
-	check(desktop.root.scene_picker.selected.tooltip_text.contains("Laser Show") and vr.view.scene_picker.selected.tooltip_text.contains("Laser Show"), "desktop and VR scene previews stay in sync")
+	check(tips.get_text(desktop.root.scene_picker.selected).contains("Laser Show") and tips.get_text(vr.view.scene_picker.selected).contains("Laser Show"), "desktop and VR scene previews stay in sync")
 	var host := Control.new()
 	settings.apply("accent_color", Color.WHITE)
 	host.theme = VpxTheme.build()
@@ -128,7 +129,7 @@ func run() -> void:
 	host.add_child(picker)
 	await process_frame
 	check(picker.tiles.size() == settings.VISUALIZER_PRESETS.size(), "all scene thumbnails available")
-	check(picker.disabled_button.text == "Disable Visualisation", "disable action uses requested label")
+	check(picker.disabled_button.text == "Disable visuals", "disable action uses requested label")
 	var caption: PanelContainer = picker.tiles[0].get_child(0).get_child(1)
 	var caption_background: StyleBoxFlat = caption.get_theme_stylebox("panel")
 	check(caption_background.bg_color.get_luminance() < 0.1 and caption.get_child(0).get_theme_color("font_color").get_luminance() > 0.7, "scene captions retain dark background and light text with white accent")
@@ -144,11 +145,11 @@ func run() -> void:
 	check(regions_valid, "all thumbnails map to their scene")
 	var last_preview: AtlasTexture = picker.thumbnail(settings.VISUALIZER_PRESET_MAX)
 	check(last_preview.region.end.y <= last_preview.atlas.get_height(), "preview atlas includes final studio row")
-	check(settings.VISUALIZER_STUDIO_GUIDES[-1] in picker.tiles[settings.VISUALIZER_PRESET_MAX].tooltip_text, "final thumbnail explains its audio response")
+	check(settings.VISUALIZER_STUDIO_GUIDES[-1] in tips.get_text(picker.tiles[settings.VISUALIZER_PRESET_MAX]), "final thumbnail explains its audio response")
 	var guides_valid := true
 	for index in range(settings.VISUALIZER_STUDIO_START, settings.VISUALIZER_PRESETS.size()):
 		var tile: Button = picker.tiles[index]
-		var info: Control = tile._make_custom_tooltip(tile.tooltip_text)
+		var info: Control = tile._make_custom_tooltip(tips.get_text(tile))
 		guides_valid = guides_valid and info.get_child_count() == 2 and info.get_child(0).text == settings.VISUALIZER_PRESETS[index] and info.get_child(1).autowrap_mode == TextServer.AUTOWRAP_WORD_SMART and "\n" in info.get_child(1).text
 		info.free()
 	check(guides_valid, "every studio card builds a wrapped hover information box")
@@ -180,7 +181,7 @@ func run() -> void:
 		var row: HBoxContainer = slider.get_parent()
 		slider.value = slider.min_value
 		var reset: Button = row.get_child(3)
-		resets_valid = resets_valid and row.get_child(2) is Label and reset.icon != null and "to default" in reset.tooltip_text
+		resets_valid = resets_valid and row.get_child(2) is Label and reset.icon != null and "to default" in tips.get_text(reset)
 		reset.pressed.emit()
 		resets_valid = resets_valid and is_equal_approx(float(settings.get(setting_key)), float(settings.defaults[setting_key]))
 	picker.adjustments[&"visualizer_zoom"].value = 2.0
@@ -198,9 +199,9 @@ func run() -> void:
 	check(not picker.tuning.visible and not picker.controls_button.button_pressed, "reopening picker returns to previews with controls collapsed")
 
 	picker.tiles[47].pressed.emit()
-	check(settings.visualizer_preset == 47 and picker.selected.text == "Terrain Canyon ▾" and picker.gallery.visible, "thumbnail selects scene and keeps gallery open")
+	check(settings.visualizer_preset == 47 and picker.selected.text == "Terrain Canyon ▴" and picker.gallery.visible, "thumbnail selects scene and keeps gallery open")
 	settings.apply("visualizer_preset", 4)
-	check(picker.selected.text == "Wave Architecture ▾" and picker.tiles[4].button_pressed and not picker.tiles[47].button_pressed, "picker tracks shortcut changes")
+	check(picker.selected.text == "Wave Architecture ▴" and picker.tiles[4].button_pressed and not picker.tiles[47].button_pressed, "picker tracks shortcut changes")
 	picker.close()
 	picker.selected.pressed.emit()
 	await process_frame
@@ -208,7 +209,7 @@ func run() -> void:
 	await process_frame
 	var chosen: Button = picker.tiles[4]
 	check(picker.disabled_button.get_parent() == picker.starred_filter.get_parent() and picker.menu.get_child(0) == picker.disabled_button.get_parent(), "disable and compact starred filter share pinned action row")
-	check(is_equal_approx(picker.disabled_button.position.y, picker.starred_filter.position.y) and picker.starred_filter.size.x <= 60.0, "starred filter uses one compact button beside disable")
+	check(is_equal_approx(picker.disabled_button.position.y, picker.starred_filter.position.y) and picker.starred_filter.size.x <= 80.0, "starred filter uses one compact button beside disable")
 	check(chosen.global_position.y >= picker.gallery.global_position.y and chosen.global_position.y + chosen.size.y <= picker.gallery.global_position.y + picker.gallery.size.y, "gallery opens with selected scene fully visible")
 	var scene_selections := [0]
 	picker.scene_selected.connect(func() -> void: scene_selections[0] += 1)
