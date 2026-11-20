@@ -20,6 +20,10 @@ const ITALIC_SKEW := 0.2
 const BOLD_EMBOLDEN := 0.7
 const OUTLINE_RATIO := 0.14
 const RENDER_PASSES := 2
+const EYE_DISTANCE := 0.063
+const MAX_LIFT := 1.2
+const LIFT_APPROACH := 8.0
+const LIFT_RECEDE := 1.5
 
 var player: VPXPlayer
 var screen: MeshInstance3D
@@ -40,6 +44,7 @@ var textures := {}
 var render_passes := 0
 var size_format_key := ""
 var suppressed := false
+var lift := 0.0
 
 
 func _ready() -> void:
@@ -116,8 +121,10 @@ func _process(delta: float) -> void:
 			visible = false
 			shown_key = ""
 			textures.clear()
+		screen.depth_probe.wanted = false
 		return
 	_update_geometry()
+	screen.depth_probe.wanted = _depth_enabled() and Settings.subtitle_depth_auto
 	var format_key := _format_key()
 	if size_format_key != format_key:
 		size_format_key = format_key
@@ -245,7 +252,12 @@ func _add_bitmap(cue: Dictionary, width: float, picture_px: float) -> void:
 
 func _place(delta: float) -> void:
 	if _flat():
-		global_transform = screen.global_transform.translated_local(Vector3(0.0, 0.0, SURFACE_LIFT))
+		var base := screen.global_transform.translated_local(Vector3(0.0, 0.0, SURFACE_LIFT))
+		var target := _target_lift()
+		lift = lerpf(lift, target, 1.0 - exp(-delta * (LIFT_APPROACH if target > lift else LIFT_RECEDE)))
+		var head := camera.global_position
+		var shrink := 1.0 - lift / maxf(head.distance_to(base.origin), 0.5)
+		global_transform = Transform3D(base.basis.scaled(Vector3.ONE * shrink), head + (base.origin - head) * shrink)
 		material.set_shader_parameter("flat_curve", screen.curve_inverse_radius())
 		return
 	material.set_shader_parameter("flat_curve", 0.0)
@@ -260,6 +272,27 @@ func _place(delta: float) -> void:
 		gliding = angle > FOLLOW_SETTLE
 	global_position = camera.global_position + follow * Settings.subtitle_distance
 	look_at(camera.global_position, FloatPanel.frame.y, true)
+
+
+func _depth_enabled() -> bool:
+	return get_viewport().use_xr and _flat() and Settings.stereo != Settings.Stereo.MONO and not Settings.single_eye
+
+
+func _target_lift() -> float:
+	if not _depth_enabled():
+		return 0.0
+	var total := Settings.subtitle_depth
+	var probe: DepthProbe = screen.depth_probe
+	if Settings.subtitle_depth_auto and probe.valid:
+		var shift: float = probe.disparity + Settings.stereo_depth / maxf(Settings.screen_size, 1.0)
+		total += scene_lift(screen.displayed_zoom * shift * picture.x, camera.global_position.distance_to(screen.global_position))
+	return minf(total, MAX_LIFT)
+
+
+static func scene_lift(parallax: float, distance: float) -> float:
+	if parallax >= 0.0:
+		return 0.0
+	return distance * -parallax / (EYE_DISTANCE - parallax)
 
 
 func recenter() -> void:

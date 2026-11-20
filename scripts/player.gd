@@ -917,7 +917,13 @@ func is_visualizer_overlay_active() -> bool:
 
 
 func enter_immersive_music() -> void:
-	if Settings.visualizer_overlay or not _audio_only_playing() or not is_image():
+	if Settings.visualizer_overlay:
+		return
+	close_image()
+
+
+func close_image() -> void:
+	if not _audio_only_playing() or not is_image():
 		return
 	cancel_open()
 	current_path = music_path

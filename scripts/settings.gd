@@ -16,7 +16,7 @@ enum PanoramaSource { SINGLE, CUBE }
 enum StickAction { SCREEN_SIZE, BRIGHTNESS, GAMMA, SATURATION, SHARPNESS, VOLUME, FORMAT_2D, FORMAT_3D, FORMAT_ALL, SUBTITLE_TRACK, AUDIO_TRACK, SCREEN_CURVE, STEREO_DEPTH, PICTURE_ZOOM, PLAYBACK_SPEED, CHAPTER }
 enum LibraryView { GRID, LIST }
 enum SubtitleAuto { OFF, FOREIGN, ALWAYS }
-enum LibrarySort { NAME, DATE, SIZE, PLAY_COUNT }
+enum LibrarySort { NAME, DATE, SIZE, PLAY_COUNT, LAST_WATCHED }
 enum LibrarySource { FOLDER, RECENT, FAVORITES, PLACES, NETWORK, DISCOVER }
 enum SleepTimer { OFF, MIN_15, MIN_30, MIN_45, MIN_60, MIN_90, END_OF_VIDEO }
 enum LibraryFilter { ALL, FLAT_2D, FLAT_3D, VR_180, VR_360, PHOTOS }
@@ -226,6 +226,7 @@ var edge_fade := 0.1
 var screen_size := 67.0
 var screen_curve := 0.0
 var brightness := 1.0
+var hdr_exposure := 0.0
 var sharpness_level := 0
 var gamma := 1.0
 var saturation := 1.0
@@ -276,6 +277,8 @@ var subtitle_offset := 0.0
 var subtitle_color := 0
 var subtitle_box := false
 var subtitle_distance := 2.5
+var subtitle_depth := 0.25
+var subtitle_depth_auto := true
 var audio_delay := 0.0
 var subtitle_delay := 0.0
 var format_path := ""
@@ -715,13 +718,13 @@ func _persisted() -> PackedStringArray:
 	return PackedStringArray([
 		"projection", "stereo", "swap_eyes", "fisheye_fov", "alpha_mask", "background",
 		"chroma_key_color", "cut_enabled", "cut_invert", "cut_similarity",
-		"cut_feather", "mask_threshold", "mask_trim", "mask_darken", "edge_fade", "screen_size", "screen_curve", "brightness",
+		"cut_feather", "mask_threshold", "mask_trim", "mask_darken", "edge_fade", "screen_size", "screen_curve", "brightness", "hdr_exposure",
 		"sharpness_level", "gamma", "saturation", "angle_yaw", "angle_pitch", "angle_roll",
 		"match_refresh_rate", "prefer_desktop",
 		"muted", "volume", "decode_mode", "playback_priority", "panorama_source", "photo_supersampling", "shuffle", "auto_detect", "hide_menu_on_play",
 		"end_action", "resume_playback", "seek_previews", "scene_marks", "drag_speed", "menu_translucent", "lock_horizon", "follow_posture", "look_gain", "grip_action", "trigger_action", "chord_action",
 		"show_level", "laser_menu_only", "dim_behind_menu", "menu_follow", "video_follow", "pause_when_removed", "hover_haptics", "show_clock", "face_on_open", "auto_swap_eyes",
-		"audio_language", "subtitle_auto", "subtitle_language", "subtitle_size", "subtitle_size_by_format", "subtitle_offset", "subtitle_color", "subtitle_box", "subtitle_distance",
+		"audio_language", "subtitle_auto", "subtitle_language", "subtitle_size", "subtitle_size_by_format", "subtitle_offset", "subtitle_color", "subtitle_box", "subtitle_distance", "subtitle_depth", "subtitle_depth_auto",
 		"last_directory", "last_file", "library_view", "library_flat_view", "library_favorites_only", "library_unplayed_only", "library_sort", "library_source", "library_filter", "library_tab_session", "library_folder_scroll", "network_servers",
 		"stereo_depth", "stereo_vertical", "picture_zoom", "single_eye", "flat_image_repeat", "photo_pan_x", "photo_pan_y",
 		"auto_crop", "deband", "dither", "compositor_layer", "spatial_audio", "spatial_audio_explicit", "audio_mono", "dialogue_boost", "audio_filter",

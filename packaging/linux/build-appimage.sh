@@ -45,7 +45,7 @@ die() { printf '\033[1;31merror: %s\033[0m\n' "$*" >&2; exit 1; }
 for tool in git curl tar make cmake cc c++ pkg-config python3 rsync objdump strip bzip2 xz openssl "$GODOT"; do
 	command -v "$tool" >/dev/null || die "missing tool: $tool"
 done
-for module in dav1d libva libva-drm libdrm openssl srt zlib vulkan libjpeg dvdread dvdnav libxml-2.0; do
+for module in dav1d libva libva-drm libdrm openssl srt zlib vulkan libjpeg OpenEXR dvdread dvdnav libxml-2.0; do
 	pkg-config --exists "$module" || die "missing development package: $module"
 done
 
@@ -228,6 +228,7 @@ else
 	git -C "$EXT" apply "$ROOT/addons/ffmpeg/radio-metadata.patch"
 	git -C "$EXT" apply "$ROOT/addons/ffmpeg/music-analysis.patch"
 	git -C "$EXT" apply "$ROOT/addons/ffmpeg/audio-downmix.patch"
+	git -C "$EXT" apply "$ROOT/addons/ffmpeg/hdr-image.patch"
 	(cd "$EXT/gdextension_build" && scons --site-dir="$BUILD/site_scons" -j"$JOBS" platform=linux target=template_release \
 		ffmpeg_path="$FFMPEG_PREFIX" dsd_path="$DSD_PREFIX" debug_symbols=no)
 	(cd "$EXT/gdextension_build" && scons --site-dir="$BUILD/site_scons" -j"$JOBS" platform=linux target=template_debug \
@@ -363,6 +364,7 @@ cp /usr/share/licenses/libxml2/Copyright "$APPDIR/usr/share/licenses/VPX/libxml2
 cp /usr/share/licenses/spdx/MPL-2.0.txt "$APPDIR/usr/share/licenses/VPX/SRT-MPL-2.0.txt"
 cp "$DSD_SRC/LICENSE" "$APPDIR/usr/share/licenses/VPX/DSD-Nexus-LGPL-2.1.txt"
 cp /usr/share/doc/libdvdread/COPYING "$APPDIR/usr/share/licenses/VPX/libdvdread-COPYING.txt"
+cp /usr/share/licenses/openexr/LICENSE.md "$APPDIR/usr/share/licenses/VPX/OpenEXR-BSD-3-Clause.txt"
 cp /usr/share/doc/libdvdnav/COPYING "$APPDIR/usr/share/licenses/VPX/libdvdnav-COPYING.txt"
 if [ ! -x "$TOOLS/appimagetool" ]; then
 	curl -fL --retry 3 -o "$TOOLS/appimagetool" "$APPIMAGETOOL_URL"

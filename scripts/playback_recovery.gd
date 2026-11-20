@@ -4,6 +4,7 @@ const REVEAL_DELAY := 0.25
 const Network := preload("res://scripts/network.gd")
 const WebVideo := preload("res://scripts/web_video.gd")
 const QuickPanel := preload("res://scripts/quick_panel.gd")
+const PanoramaFiles := preload("res://scripts/panorama_files.gd")
 
 var ui: Control
 var player: VPXPlayer
@@ -25,6 +26,7 @@ var details_button: Button
 var details: Label
 var picker: Control
 var request_mode := "media"
+var quiet := false
 var mount_source := ""
 var previous_focus: WeakRef
 
@@ -109,6 +111,8 @@ func begin(path: String, extra := {}, mode := "media") -> void:
 		for key in ["stream", "audio", "headers"]:
 			options.erase(key)
 	request_mode = mode
+	if not PanoramaFiles.is_image(path) or mode != "media":
+		_end_quiet()
 	status = "opening"
 	kind = ""
 	elapsed = 0.0
@@ -158,15 +162,18 @@ func fail(text: String, technical := "", failure_kind := "decode") -> void:
 			fix_button.text = "Edit link" if source.begins_with("http") else "Network sources"
 			fix_button.show()
 	_focus_actions()
+	_end_quiet()
 	_reveal()
 	retry_button.grab_focus()
 
 
 func complete(playing := true) -> void:
 	status = "ready"
+	var was_quiet := quiet
+	_end_quiet()
 	_restore_focus()
 	hide()
-	if playing:
+	if playing and not was_quiet:
 		ui.recovery_finished.emit()
 
 
@@ -191,6 +198,7 @@ func _on_load_changed(state: Dictionary) -> void:
 			complete()
 		"cancelled":
 			status = "cancelled"
+			_end_quiet()
 			_restore_focus()
 			hide()
 
@@ -199,9 +207,23 @@ func _process(delta: float) -> void:
 	if status != "opening":
 		return
 	elapsed += delta
-	if elapsed >= REVEAL_DELAY and not visible:
-		_reveal()
-		cancel_button.grab_focus()
+	if elapsed >= REVEAL_DELAY and not visible and not quiet:
+		if _loads_in_place():
+			quiet = true
+			ui.image_loading.emit(true)
+		else:
+			_reveal()
+			cancel_button.grab_focus()
+
+
+func _loads_in_place() -> bool:
+	return request_mode == "media" and PanoramaFiles.is_image(source) and ui.menu_open_check.is_valid() and not ui.menu_open_check.call()
+
+
+func _end_quiet() -> void:
+	if quiet:
+		quiet = false
+		ui.image_loading.emit(false)
 
 
 func _reveal() -> void:
@@ -249,6 +271,7 @@ func cancel() -> void:
 	ui.network.cancel_mount()
 	player.cancel_open()
 	status = "cancelled"
+	_end_quiet()
 	if is_instance_valid(picker):
 		picker.cancel()
 	_restore_focus()

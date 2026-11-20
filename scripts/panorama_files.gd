@@ -1,6 +1,7 @@
 extends RefCounted
 
-const IMAGE_EXTENSIONS := ["jpg", "jpeg", "png", "webp"]
+const IMAGE_EXTENSIONS := ["jpg", "jpeg", "png", "webp", "exr", "hdr"]
+const HDR_EXTENSIONS := ["exr", "hdr"]
 const CUBE_ORDER := ["right", "left", "up", "down", "front", "back"]
 const FACE_NAMES := {
 	"front": "front", "back": "back", "left": "left", "right": "right", "up": "up", "down": "down",

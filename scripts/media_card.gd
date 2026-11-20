@@ -348,6 +348,8 @@ func refresh() -> void:
 	var format := _format_text(media, info, image)
 	var resolution := VPXPlayer.resolution_label(width, height) if width > 0 else ""
 	var length := MediaInfo.duration_text(duration) if duration > 0.0 else ""
+	if length.is_empty() and image and media.get_extension().to_lower() in PanoramaFiles.HDR_EXTENSIONS:
+		length = media.get_extension().to_upper()
 	var status := _status_text(media, duration, resume_at)
 	if watched_badge != null:
 		var listens := int(Library.get_pref(media, "listen_count", 0))

@@ -14,10 +14,11 @@ const TAB_HEIGHT := 52
 const TRACK_HEIGHT := 56
 const BACKGROUND_ALPHA := VpxTheme.OVERLAY_ALPHA
 const TABS := [["Screen", "screen"], ["Picture", "picture"], ["Format", "format"], ["Audio", "audio"], ["Subtitles", "subtitles"], ["Marks", "bookmark"]]
-const PICTURE_SETTINGS := ["brightness", "gamma", "saturation", "sharpness_level"]
+const PICTURE_SETTINGS := ["brightness", "hdr_exposure", "gamma", "saturation", "sharpness_level"]
 const SCREEN_SETTINGS := ["screen_size", "screen_curve", "edge_fade"]
 const Rows := preload("res://scripts/rows.gd")
 const Languages := preload("res://scripts/languages.gd")
+const PanoramaFiles := preload("res://scripts/panorama_files.gd")
 const MediaTracks := preload("res://scripts/media_tracks.gd")
 
 var player: VPXPlayer
@@ -33,6 +34,7 @@ var subtitle_settings: Control
 var preset_buttons: Array[Button] = []
 var flat_rows: Array[Control] = []
 var immersive_rows: Array[Control] = []
+var hdr_rows: Array[Control] = []
 var screen_hint: Label
 var current_tab := 0
 var sleep_hint: Label
@@ -190,6 +192,7 @@ func _build_screen(page: VBoxContainer) -> void:
 func _build_picture(page: VBoxContainer) -> void:
 	var rows := Rows.section(page, "Colour")
 	Rows.stepper(rows, "Brightness", &"brightness", 0.2, 2.0, 0.05, {"scale": 100.0, "suffix": "%"})
+	hdr_rows.append(Rows.stepper(rows, "HDR exposure", &"hdr_exposure", -8.0, 8.0, 0.5, {"decimals": 1, "suffix": " EV"}))
 	Rows.stepper(rows, "Gamma", &"gamma", 0.4, 2.2, 0.1, {"decimals": 1})
 	Rows.stepper(rows, "Saturation", &"saturation", 0.0, 2.0, 0.05, {"scale": 100.0, "suffix": "%"})
 	Rows.choice(rows, "Sharpness", &"sharpness_level", PackedStringArray(["Off", "Low", "Med", "High", "Extra", "Max"]))
@@ -1034,6 +1037,9 @@ func _sync() -> void:
 	for row in immersive_rows:
 		row.visible = not flat
 	screen_hint.visible = not flat
+	var hdr := player.is_image() and player.current_path.get_extension().to_lower() in PanoramaFiles.HDR_EXTENSIONS
+	for row in hdr_rows:
+		row.visible = hdr
 	var matching := Settings.matching_preset()
 	for i in preset_buttons.size():
 		preset_buttons[i].set_pressed_no_signal(i == matching)

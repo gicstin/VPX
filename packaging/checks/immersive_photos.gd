@@ -88,6 +88,13 @@ func run() -> void:
 	main.photo_bar.root.scene_picker.disabled_button.pressed.emit()
 	await frames()
 	check(main.player.is_image() and not main.resonance_field.active, "Disabled preserves the photo")
+	var close_button: Button = main.photo_bar.root.close_image_button
+	check(close_button.visible, "close button shows over a photo with music")
+	close_button.pressed.emit()
+	await frames()
+	check(not main.player.is_image() and main.player.is_playing() and main.player.current_path == audio_path, "close button closes the photo and keeps music")
+	check(await main.player.open(photo_path), "photo reopens after close")
+	await frames()
 	main.photo_bar.root.immersive_button.pressed.emit()
 	main.photo_bar.root.scene_picker.tiles[1].pressed.emit()
 	await frames()

@@ -1,0 +1,1413 @@
+diff --git a/gdextension_build/SConstruct b/gdextension_build/SConstruct
+index 76d6352..7744221 100644
+--- a/gdextension_build/SConstruct
++++ b/gdextension_build/SConstruct
+@@ -83,7 +83,7 @@ if env["dsd_path"]:
+     env.Append(LIBPATH=[f"{env['dsd_path']}/lib"])
+     env.Append(LIBS=["dsd"])
+     env.Append(CPPDEFINES=["SACDVFS_USING_DLL"])
+-env.Append(LIBS=["jpeg"])
++env.Append(LIBS=["jpeg", "OpenEXRCore"])
+ env.Prepend(CPPPATH=f"{ffmpeg_path}/include")
+ env.Append(LIBPATH=[f"{ffmpeg_path}/lib"])
+ 
+diff --git a/vpx_panorama.h b/vpx_panorama.h
+index d894814..57ddb7e 100644
+--- a/vpx_panorama.h
++++ b/vpx_panorama.h
+@@ -7,6 +7,7 @@
+ 
+ #include <godot_cpp/classes/image.hpp>
+ #include <godot_cpp/classes/ref_counted.hpp>
++#include <godot_cpp/classes/rendering_device.hpp>
+ #include <godot_cpp/classes/texture.hpp>
+ #include <godot_cpp/variant/dictionary.hpp>
+ #include <godot_cpp/variant/packed_byte_array.hpp>
+@@ -23,9 +24,11 @@
+ using namespace godot;
+ 
+ class PanoramaPinnedPool;
++class PanoramaHdrSink;
+ 
+ class VPXPanorama : public RefCounted {
+ 	GDCLASS(VPXPanorama, RefCounted);
++	friend class PanoramaHdrSink;
+ 
+ public:
+ 	enum Layout {
+@@ -115,6 +118,8 @@ private:
+ 	int image_height = 0;
+ 	int scale_denom = 1;
+ 	bool rgb_planes = false;
++	int hdr_state = -1;
++	int sample_bytes = 1;
+ 	bool image_path = false;
+ 	PlaneGeometry geometry[PLANE_COUNT];
+ 	std::vector<LayerStore> stores[PLANE_COUNT];
+@@ -162,12 +167,17 @@ private:
+ 	int64_t slowest_poll_usec = 0;
+ 	int slowest_poll_stage = 0;
+ 
++	RenderingDevice::DataFormat _plane_rd_format() const { return sample_bytes > 1 ? RenderingDevice::DATA_FORMAT_R16_SFLOAT : RenderingDevice::DATA_FORMAT_R8_UNORM; }
++	VkFormat _plane_vk_format() const { return sample_bytes > 1 ? VK_FORMAT_R16_SFLOAT : VK_FORMAT_R8_UNORM; }
+ 	void _fail(const String &p_message);
+ 	void _decode_tiled();
+ 	void _launch_cube();
+ 	void _decode_face(int p_face);
+ 	void _finish_worker();
+ 	bool _decode_file(const String &p_path, int p_slot);
++	bool _decode_hdr(const String &p_path, int p_slot);
++	bool _claim_format(bool p_hdr);
++	String _begin_hdr(int p_slot, int p_width, int p_height);
+ 	void _scatter_row(int p_plane, int p_slot, int p_row, const uint8_t *p_src);
+ 	void _prepare_tiles(int p_width, int p_height, const int p_ratio_x[PLANE_COUNT], const int p_ratio_y[PLANE_COUNT]);
+ 	void _prepare_face(int p_slot, int p_width, int p_height, const int p_ratio_x[PLANE_COUNT], const int p_ratio_y[PLANE_COUNT]);
+@@ -202,6 +212,7 @@ protected:
+ 
+ public:
+ 	static Dictionary probe(const String &p_path);
++	static String write_hdr_preview(const String &p_path, const String &p_output, int p_width, float p_exposure);
+ 
+ 	Error start(const PackedStringArray &p_paths, int p_layout, bool p_wrap);
+ 	int poll();
+diff --git a/vpx_panorama.cpp b/vpx_panorama.cpp
+index 41aa351..cb2e67d 100644
+--- a/vpx_panorama.cpp
++++ b/vpx_panorama.cpp
+@@ -1,6 +1,7 @@
+ #ifdef GDEXTENSION
+ 
+ #include "vpx_panorama.h"
++#include "vpx_hdr_image.h"
+ #include "gdextension_build/gdex_print.h"
+ 
+ #include <godot_cpp/classes/engine.hpp>
+@@ -36,9 +37,10 @@ typedef RenderingDevice RD;
+ 
+ static const char *const PANORAMA_MIP_SHADER = R"(
+ #version 450
++#define HDR %d
+ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+-layout(r8, set = 0, binding = 0) uniform restrict readonly image2D src_image;
+-layout(r8, set = 0, binding = 1) uniform restrict writeonly image2D dst_image;
++layout(%s, set = 0, binding = 0) uniform restrict readonly image2D src_image;
++layout(%s, set = 0, binding = 1) uniform restrict writeonly image2D dst_image;
+ layout(push_constant, std430) uniform Params {
+ 	ivec4 sizes;
+ 	ivec4 axis;
+@@ -71,25 +73,45 @@ void main() {
+ 	int last = (horizontal ? src_size.x : src_size.y) - 1;
+ 	float sum = 0.0;
+ 	float weight = 0.0;
++	float lo = 1e30;
++	float hi = 0.0;
+ 	for (int i = 0; i < TAPS; i++) {
+ 		int s = first + i;
+-		float w = lanczos((float(s) + 0.5 - center) / ratio);
++		float d = (float(s) + 0.5 - center) / ratio;
++		float w = lanczos(d);
+ 		ivec2 coord = horizontal ? ivec2(clamp(s, 0, last), p.y) : ivec2(p.x, clamp(s, 0, last));
+-		sum += w * imageLoad(src_image, coord).r;
++		float v = imageLoad(src_image, coord).r;
++		sum += w * v;
+ 		weight += w;
++#if HDR
++		if (abs(d) < 1.0) {
++			lo = min(lo, v);
++			hi = max(hi, v);
++		}
++#endif
+ 	}
++#if HDR
++	imageStore(dst_image, p, vec4(clamp(sum / weight, lo, hi)));
++#else
+ 	imageStore(dst_image, p, vec4(clamp(sum / weight, 0.0, 1.0)));
++#endif
+ }
+ )";
+ 
+ static const int64_t DEFAULT_MIP_BUDGET = 300000000;
++static const int HDR_MAX_THREADS = 12;
+ 
+ struct PanoramaMipPipeline {
+ 	RID shader;
+ 	RID pipeline;
+ };
+ 
+-static PanoramaMipPipeline *panorama_mip = nullptr;
++static PanoramaMipPipeline *panorama_mip[2] = {};
++
++static String mip_shader_source(bool p_hdr) {
++	const char *format = p_hdr ? "r16f" : "r8";
++	return vformat(String(PANORAMA_MIP_SHADER), p_hdr ? 1 : 0, format, format, VPXPanorama::MIP_TAPS);
++}
+ 
+ struct PanoramaAsyncMips {
+ 	std::shared_ptr<VpxVulkanDevice> vk;
+@@ -111,10 +133,10 @@ struct PanoramaAsyncMips {
+ 	PFN_vkCmdBindDescriptorSets vkCmdBindDescriptorSets = nullptr;
+ 	PFN_vkCmdPushConstants vkCmdPushConstants = nullptr;
+ 	PFN_vkCmdDispatch vkCmdDispatch = nullptr;
+-	VkShaderModule module = VK_NULL_HANDLE;
++	VkShaderModule module[2] = {};
+ 	VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
+ 	VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+-	VkPipeline pipeline = VK_NULL_HANDLE;
++	VkPipeline pipeline[2] = {};
+ 
+ 	template <typename T>
+ 	bool load(T &r_proc, const char *p_name) {
+@@ -123,8 +145,13 @@ struct PanoramaAsyncMips {
+ 	}
+ 
+ 	~PanoramaAsyncMips() {
+-		if (pipeline != VK_NULL_HANDLE) {
+-			vkDestroyPipeline(vk->device, pipeline, nullptr);
++		for (int i = 0; i < 2; i++) {
++			if (pipeline[i] != VK_NULL_HANDLE) {
++				vkDestroyPipeline(vk->device, pipeline[i], nullptr);
++			}
++			if (module[i] != VK_NULL_HANDLE) {
++				vkDestroyShaderModule(vk->device, module[i], nullptr);
++			}
+ 		}
+ 		if (pipeline_layout != VK_NULL_HANDLE) {
+ 			vkDestroyPipelineLayout(vk->device, pipeline_layout, nullptr);
+@@ -132,9 +159,6 @@ struct PanoramaAsyncMips {
+ 		if (set_layout != VK_NULL_HANDLE) {
+ 			vkDestroyDescriptorSetLayout(vk->device, set_layout, nullptr);
+ 		}
+-		if (module != VK_NULL_HANDLE) {
+-			vkDestroyShaderModule(vk->device, module, nullptr);
+-		}
+ 	}
+ };
+ 
+@@ -364,31 +388,48 @@ static ResampleTaps resample_taps(int p_src, int p_dst) {
+ 	return taps;
+ }
+ 
+-static void resample_plane(const uint8_t *p_src, int p_src_width, int p_src_height, uint8_t *p_dst, int p_dst_width, int p_dst_height) {
++static inline float sample_value(uint8_t p_value) {
++	return p_value;
++}
++
++static inline float sample_value(uint16_t p_value) {
++	return vpx_float_from_half(p_value);
++}
++
++static inline void store_sample(float p_value, uint8_t &r_out) {
++	r_out = (uint8_t)std::clamp((int)std::lround(p_value), 0, 255);
++}
++
++static inline void store_sample(float p_value, uint16_t &r_out) {
++	r_out = vpx_half_from_float(p_value);
++}
++
++template <typename T>
++static void resample_plane(const T *p_src, int p_src_width, int p_src_height, T *p_dst, int p_dst_width, int p_dst_height) {
+ 	const ResampleTaps across = resample_taps(p_src_width, p_dst_width);
+ 	const ResampleTaps down = resample_taps(p_src_height, p_dst_height);
+ 	std::vector<float> rows((size_t)p_dst_width * p_src_height);
+ 	for (int y = 0; y < p_src_height; y++) {
+-		const uint8_t *line = p_src + (size_t)y * p_src_width;
++		const T *line = p_src + (size_t)y * p_src_width;
+ 		float *out = rows.data() + (size_t)y * p_dst_width;
+ 		for (int x = 0; x < p_dst_width; x++) {
+ 			const float *w = across.weights.data() + (size_t)x * across.stride;
+ 			float sum = 0.0f;
+ 			for (int k = 0; k < across.count[x]; k++) {
+-				sum += w[k] * line[std::clamp(across.first[x] + k, 0, p_src_width - 1)];
++				sum += w[k] * sample_value(line[std::clamp(across.first[x] + k, 0, p_src_width - 1)]);
+ 			}
+ 			out[x] = sum;
+ 		}
+ 	}
+ 	for (int y = 0; y < p_dst_height; y++) {
+ 		const float *w = down.weights.data() + (size_t)y * down.stride;
+-		uint8_t *out = p_dst + (size_t)y * p_dst_width;
++		T *out = p_dst + (size_t)y * p_dst_width;
+ 		for (int x = 0; x < p_dst_width; x++) {
+ 			float sum = 0.0f;
+ 			for (int k = 0; k < down.count[y]; k++) {
+ 				sum += w[k] * rows[(size_t)std::clamp(down.first[y] + k, 0, p_src_height - 1) * p_dst_width + x];
+ 			}
+-			out[x] = (uint8_t)std::clamp((int)std::lround(sum), 0, 255);
++			store_sample(sum, out[x]);
+ 		}
+ 	}
+ }
+@@ -397,20 +438,21 @@ static bool is_jpeg(const std::vector<uint8_t> &p_bytes) {
+ 	return p_bytes.size() > 3 && p_bytes[0] == 0xFF && p_bytes[1] == 0xD8 && p_bytes[2] == 0xFF;
+ }
+ 
+-static const PanoramaMipPipeline *ensure_mip_pipeline(RD *p_rd) {
+-	if (panorama_mip != nullptr) {
+-		return panorama_mip;
++static const PanoramaMipPipeline *ensure_mip_pipeline(RD *p_rd, bool p_hdr) {
++	PanoramaMipPipeline *&mip = panorama_mip[p_hdr ? 1 : 0];
++	if (mip != nullptr) {
++		return mip;
+ 	}
+ 	Ref<RDShaderSource> source;
+ 	source.instantiate();
+-	source->set_stage_source(RD::SHADER_STAGE_COMPUTE, vformat(String(PANORAMA_MIP_SHADER), VPXPanorama::MIP_TAPS));
++	source->set_stage_source(RD::SHADER_STAGE_COMPUTE, mip_shader_source(p_hdr));
+ 	Ref<RDShaderSPIRV> spirv = p_rd->shader_compile_spirv_from_source(source);
+ 	const String compile_error = spirv->get_stage_compile_error(RD::SHADER_STAGE_COMPUTE);
+ 	ERR_FAIL_COND_V_MSG(!compile_error.is_empty(), nullptr, "Panorama mip shader: " + compile_error);
+-	panorama_mip = new PanoramaMipPipeline();
+-	panorama_mip->shader = p_rd->shader_create_from_spirv(spirv);
+-	panorama_mip->pipeline = p_rd->compute_pipeline_create(panorama_mip->shader);
+-	return panorama_mip;
++	mip = new PanoramaMipPipeline();
++	mip->shader = p_rd->shader_create_from_spirv(spirv);
++	mip->pipeline = p_rd->compute_pipeline_create(mip->shader);
++	return mip;
+ }
+ 
+ static bool copy_queue_computes(const std::shared_ptr<VpxVulkanDevice> &p_vk) {
+@@ -431,14 +473,17 @@ static PanoramaAsyncMips *ensure_async_mips(RD *p_rd, const std::shared_ptr<VpxV
+ 	if (panorama_async_failed || !p_vk || OS::get_singleton()->has_environment("VPX_PANO_RD_MIPS") || !copy_queue_computes(p_vk)) {
+ 		return nullptr;
+ 	}
+-	Ref<RDShaderSource> source;
+-	source.instantiate();
+-	source->set_stage_source(RD::SHADER_STAGE_COMPUTE, vformat(String(PANORAMA_MIP_SHADER), VPXPanorama::MIP_TAPS));
+-	Ref<RDShaderSPIRV> spirv = p_rd->shader_compile_spirv_from_source(source);
+-	const PackedByteArray code = spirv->get_stage_bytecode(RD::SHADER_STAGE_COMPUTE);
++	PackedByteArray code[2];
++	for (int i = 0; i < 2; i++) {
++		Ref<RDShaderSource> source;
++		source.instantiate();
++		source->set_stage_source(RD::SHADER_STAGE_COMPUTE, mip_shader_source(i == 1));
++		Ref<RDShaderSPIRV> spirv = p_rd->shader_compile_spirv_from_source(source);
++		code[i] = spirv->get_stage_bytecode(RD::SHADER_STAGE_COMPUTE);
++	}
+ 	PanoramaAsyncMips *async = new PanoramaAsyncMips();
+ 	async->vk = p_vk;
+-	bool ok = !code.is_empty() && async->load(async->vkCreateShaderModule, "vkCreateShaderModule") && async->load(async->vkDestroyShaderModule, "vkDestroyShaderModule") &&
++	bool ok = !code[0].is_empty() && !code[1].is_empty() && async->load(async->vkCreateShaderModule, "vkCreateShaderModule") && async->load(async->vkDestroyShaderModule, "vkDestroyShaderModule") &&
+ 			async->load(async->vkCreateDescriptorSetLayout, "vkCreateDescriptorSetLayout") && async->load(async->vkDestroyDescriptorSetLayout, "vkDestroyDescriptorSetLayout") &&
+ 			async->load(async->vkCreatePipelineLayout, "vkCreatePipelineLayout") && async->load(async->vkDestroyPipelineLayout, "vkDestroyPipelineLayout") &&
+ 			async->load(async->vkCreateComputePipelines, "vkCreateComputePipelines") && async->load(async->vkDestroyPipeline, "vkDestroyPipeline") &&
+@@ -447,12 +492,12 @@ static PanoramaAsyncMips *ensure_async_mips(RD *p_rd, const std::shared_ptr<VpxV
+ 			async->load(async->vkCreateImageView, "vkCreateImageView") && async->load(async->vkDestroyImageView, "vkDestroyImageView") &&
+ 			async->load(async->vkCmdBindPipeline, "vkCmdBindPipeline") && async->load(async->vkCmdBindDescriptorSets, "vkCmdBindDescriptorSets") &&
+ 			async->load(async->vkCmdPushConstants, "vkCmdPushConstants") && async->load(async->vkCmdDispatch, "vkCmdDispatch");
+-	if (ok) {
++	for (int i = 0; i < 2 && ok; i++) {
+ 		VkShaderModuleCreateInfo module_info = {};
+ 		module_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+-		module_info.codeSize = code.size();
+-		module_info.pCode = reinterpret_cast<const uint32_t *>(code.ptr());
+-		ok = async->vkCreateShaderModule(p_vk->device, &module_info, nullptr, &async->module) == VK_SUCCESS;
++		module_info.codeSize = code[i].size();
++		module_info.pCode = reinterpret_cast<const uint32_t *>(code[i].ptr());
++		ok = async->vkCreateShaderModule(p_vk->device, &module_info, nullptr, &async->module[i]) == VK_SUCCESS;
+ 	}
+ 	if (ok) {
+ 		VkDescriptorSetLayoutBinding bindings[2] = {};
+@@ -480,15 +525,15 @@ static PanoramaAsyncMips *ensure_async_mips(RD *p_rd, const std::shared_ptr<VpxV
+ 		layout_info.pPushConstantRanges = &range;
+ 		ok = async->vkCreatePipelineLayout(p_vk->device, &layout_info, nullptr, &async->pipeline_layout) == VK_SUCCESS;
+ 	}
+-	if (ok) {
++	for (int i = 0; i < 2 && ok; i++) {
+ 		VkComputePipelineCreateInfo pipeline_info = {};
+ 		pipeline_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+ 		pipeline_info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+ 		pipeline_info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+-		pipeline_info.stage.module = async->module;
++		pipeline_info.stage.module = async->module[i];
+ 		pipeline_info.stage.pName = "main";
+ 		pipeline_info.layout = async->pipeline_layout;
+-		ok = async->vkCreateComputePipelines(p_vk->device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &async->pipeline) == VK_SUCCESS;
++		ok = async->vkCreateComputePipelines(p_vk->device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &async->pipeline[i]) == VK_SUCCESS;
+ 	}
+ 	if (!ok) {
+ 		print_line("Panorama mips: async compute unavailable, using the render queue");
+@@ -508,21 +553,32 @@ void vpx_panorama_release_shared() {
+ 		delete panorama_pool;
+ 		panorama_pool = nullptr;
+ 	}
+-	if (panorama_mip == nullptr) {
+-		return;
+-	}
+ 	RenderingServer *rs = RenderingServer::get_singleton();
+ 	RD *rd = rs != nullptr ? rs->get_rendering_device() : nullptr;
+-	if (rd != nullptr) {
+-		rd->free_rid(panorama_mip->pipeline);
+-		rd->free_rid(panorama_mip->shader);
++	for (PanoramaMipPipeline *&mip : panorama_mip) {
++		if (mip == nullptr) {
++			continue;
++		}
++		if (rd != nullptr) {
++			rd->free_rid(mip->pipeline);
++			rd->free_rid(mip->shader);
++		}
++		delete mip;
++		mip = nullptr;
+ 	}
+-	delete panorama_mip;
+-	panorama_mip = nullptr;
+ }
+ 
+ Dictionary VPXPanorama::probe(const String &p_path) {
+ 	Dictionary result;
++	int hdr_width = 0;
++	int hdr_height = 0;
++	if (vpx_hdr_size(p_path, hdr_width, hdr_height)) {
++		result["width"] = hdr_width;
++		result["height"] = hdr_height;
++		result["components"] = 3;
++		result["hdr"] = true;
++		return result;
++	}
+ 	FILE *file = open_image_file(p_path);
+ 	if (file == nullptr) {
+ 		return result;
+@@ -548,6 +604,10 @@ Dictionary VPXPanorama::probe(const String &p_path) {
+ 	return result;
+ }
+ 
++String VPXPanorama::write_hdr_preview(const String &p_path, const String &p_output, int p_width, float p_exposure) {
++	return vpx_write_hdr_preview(p_path, p_output, p_width, p_exposure);
++}
++
+ VPXPanorama::VPXPanorama() {
+ }
+ 
+@@ -647,8 +707,8 @@ void VPXPanorama::_decode_tiled() {
+ void VPXPanorama::_build_images(int p_slot) {
+ 	for (int p = 0; p < PLANE_COUNT; p++) {
+ 		LayerStore &store = stores[p][p_slot];
+-		const int height = (int)(store.size / std::max(store.width, 1));
+-		Ref<Image> image = Image::create_from_data(store.width, height, false, Image::FORMAT_R8, store.bytes);
++		const int height = (int)(store.size / std::max(store.width * sample_bytes, 1));
++		Ref<Image> image = Image::create_from_data(store.width, height, false, sample_bytes > 1 ? Image::FORMAT_RH : Image::FORMAT_R8, store.bytes);
+ 		_release_store(store);
+ 		if (image.is_null()) {
+ 			_fail("cannot build panorama image");
+@@ -705,7 +765,12 @@ void VPXPanorama::_decode_face(int p_face) {
+ 				continue;
+ 			}
+ 			LayerStore &store = stores[p][p_face];
+-			resample_plane(temp.pixels.data(), temp.width, temp.height, store.data, store.width, (int)(store.size / std::max(store.width, 1)));
++			const int height = (int)(store.size / std::max(store.width * sample_bytes, 1));
++			if (sample_bytes > 1) {
++				resample_plane(reinterpret_cast<const uint16_t *>(temp.pixels.data()), temp.width, temp.height, reinterpret_cast<uint16_t *>(store.data), store.width, height);
++			} else {
++				resample_plane(temp.pixels.data(), temp.width, temp.height, store.data, store.width, height);
++			}
+ 			std::vector<uint8_t>().swap(temp.pixels);
+ 		}
+ 		if (image_path) {
+@@ -726,7 +791,7 @@ void VPXPanorama::_finish_worker() {
+ void VPXPanorama::_allocate_store(LayerStore &r_store, int p_width, int p_height) {
+ 	const int64_t begin = panorama_usec();
+ 	r_store.width = p_width;
+-	r_store.size = (int64_t)p_width * p_height;
++	r_store.size = (int64_t)p_width * p_height * sample_bytes;
+ 	if (pool) {
+ 		r_store.pinned = pool->acquire((VkDeviceSize)r_store.size);
+ 	}
+@@ -787,7 +852,7 @@ void VPXPanorama::_prepare_face(int p_slot, int p_width, int p_height, const int
+ 			FaceTemp &temp = face_temps[p_slot][p];
+ 			temp.width = (p_width + p_ratio_x[p] - 1) / p_ratio_x[p];
+ 			temp.height = (p_height + p_ratio_y[p] - 1) / p_ratio_y[p];
+-			temp.pixels.resize((size_t)temp.width * temp.height);
++			temp.pixels.resize((size_t)temp.width * temp.height * sample_bytes);
+ 		}
+ 		p_width = cube_target;
+ 		p_height = cube_target;
+@@ -836,18 +901,20 @@ void VPXPanorama::_fill_neutral_chroma(int p_slot) {
+ void VPXPanorama::_scatter_row(int p_plane, int p_slot, int p_row, const uint8_t *p_src) {
+ 	if (layout == LAYOUT_CUBE) {
+ 		FaceTemp &temp = face_temps[p_slot][p_plane];
++		const size_t bytes = (size_t)sample_bytes;
+ 		if (!temp.pixels.empty()) {
+-			memcpy(temp.pixels.data() + (size_t)p_row * temp.width, p_src, temp.width);
++			memcpy(temp.pixels.data() + (size_t)p_row * temp.width * bytes, p_src, temp.width * bytes);
+ 			return;
+ 		}
+ 		LayerStore &store = stores[p_plane][p_slot];
+-		memcpy(store.data + (int64_t)p_row * store.width, p_src, store.width);
++		memcpy(store.data + (int64_t)p_row * store.width * sample_bytes, p_src, store.width * bytes);
+ 		return;
+ 	}
+ 	const PlaneGeometry &g = geometry[p_plane];
+ 	const int w = g.width;
++	const int sb = sample_bytes;
+ 	for (int t = 0; t < tiles; t++) {
+-		uint8_t *dst = stores[p_plane][t].data + (int64_t)p_row * g.tile_width;
++		uint8_t *dst = stores[p_plane][t].data + (int64_t)p_row * g.tile_width * sb;
+ 		const int start = t * g.core - g.gutter;
+ 		int c = 0;
+ 		while (c < g.tile_width) {
+@@ -856,23 +923,106 @@ void VPXPanorama::_scatter_row(int p_plane, int p_slot, int p_row, const uint8_t
+ 			if (wrap) {
+ 				s = ((s % w) + w) % w;
+ 				n = std::min(g.tile_width - c, w - s);
+-				memcpy(dst + c, p_src + s, n);
+-			} else if (s < 0) {
+-				n = std::min(g.tile_width - c, -s);
+-				memset(dst + c, p_src[0], n);
+-			} else if (s >= w) {
+-				n = g.tile_width - c;
+-				memset(dst + c, p_src[w - 1], n);
++				memcpy(dst + (size_t)c * sb, p_src + (size_t)s * sb, (size_t)n * sb);
++			} else if (s < 0 || s >= w) {
++				n = s < 0 ? std::min(g.tile_width - c, -s) : g.tile_width - c;
++				const uint8_t *edge = p_src + (size_t)(s < 0 ? 0 : w - 1) * sb;
++				for (int i = 0; i < n; i++) {
++					memcpy(dst + (size_t)(c + i) * sb, edge, sb);
++				}
+ 			} else {
+ 				n = std::min(g.tile_width - c, w - s);
+-				memcpy(dst + c, p_src + s, n);
++				memcpy(dst + (size_t)c * sb, p_src + (size_t)s * sb, (size_t)n * sb);
+ 			}
+ 			c += n;
+ 		}
+ 	}
+ }
+ 
++class PanoramaHdrSink : public VpxHdrSink {
++public:
++	VPXPanorama *owner = nullptr;
++	int slot = 0;
++
++	String begin(int p_width, int p_height) override {
++		return owner->_begin_hdr(slot, p_width, p_height);
++	}
++
++	void row(int p_y, const uint16_t *p_r, const uint16_t *p_g, const uint16_t *p_b) override {
++		const uint16_t *planes[VPXPanorama::PLANE_COUNT] = { p_r, p_g, p_b };
++		for (int p = 0; p < VPXPanorama::PLANE_COUNT; p++) {
++			owner->_scatter_row(p, slot, p_y, reinterpret_cast<const uint8_t *>(planes[p]));
++		}
++	}
++};
++
++bool VPXPanorama::_claim_format(bool p_hdr) {
++	bool clash = false;
++	{
++		std::lock_guard<std::mutex> lock(mutex);
++		if (hdr_state < 0) {
++			hdr_state = p_hdr ? 1 : 0;
++			sample_bytes = p_hdr ? 2 : 1;
++			rgb_planes = rgb_planes || p_hdr;
++		} else {
++			clash = hdr_state != (p_hdr ? 1 : 0);
++		}
++	}
++	if (clash) {
++		_fail("cube faces mix HDR and SDR images");
++	}
++	return !clash;
++}
++
++String VPXPanorama::_begin_hdr(int p_slot, int p_width, int p_height) {
++	const bool cube = layout == LAYOUT_CUBE;
++	if (p_height > max_size || (cube && p_width > max_size)) {
++		return vformat("%dx%d exceeds the GPU texture limit %d", p_width, p_height, max_size);
++	}
++	const int ones[PLANE_COUNT] = { 1, 1, 1 };
++	if (cube) {
++		_prepare_face(p_slot, p_width, p_height, ones, ones);
++	} else {
++		_prepare_tiles(p_width, p_height, ones, ones);
++	}
++	return String();
++}
++
++bool VPXPanorama::_decode_hdr(const String &p_path, int p_slot) {
++	if (!_claim_format(true)) {
++		return false;
++	}
++	const int64_t begin = panorama_usec();
++	PanoramaHdrSink sink;
++	sink.owner = this;
++	sink.slot = p_slot;
++	sink.cancelled = &cancelled;
++	const int cores = std::clamp((int)std::thread::hardware_concurrency() / 2, 1, HDR_MAX_THREADS);
++	const int threads = layout == LAYOUT_CUBE ? std::max(1, cores / 3) : cores;
++	int64_t read = 0;
++	const String failure = vpx_decode_hdr(p_path, sink, threads, &read);
++	read_usec.fetch_add(read);
++	if (!failure.is_empty()) {
++		_fail(p_path.get_file() + ": " + failure);
++		return false;
++	}
++	if (cancelled.load()) {
++		return false;
++	}
++	int64_t elapsed = panorama_usec() - begin - read;
++	int64_t previous = decode_usec.load();
++	while (elapsed > previous && !decode_usec.compare_exchange_weak(previous, elapsed)) {
++	}
++	return true;
++}
++
+ bool VPXPanorama::_decode_file(const String &p_path, int p_slot) {
++	if (vpx_is_hdr_path(p_path)) {
++		return _decode_hdr(p_path, p_slot);
++	}
++	if (!_claim_format(false)) {
++		return false;
++	}
+ 	const int64_t begin = panorama_usec();
+ 	std::vector<uint8_t> bytes;
+ 	if (!read_file(p_path, bytes)) {
+@@ -1226,7 +1376,7 @@ int VPXPanorama::_poll() {
+ bool VPXPanorama::_prepare_gpu() {
+ 	RD *rd = RenderingServer::get_singleton()->get_rendering_device();
+ 	ERR_FAIL_NULL_V(rd, false);
+-	ERR_FAIL_NULL_V(ensure_mip_pipeline(rd), false);
++	ERR_FAIL_NULL_V(ensure_mip_pipeline(rd, sample_bytes > 1), false);
+ 	gpu_prepared = true;
+ 	Ref<RDTextureView> view;
+ 	view.instantiate();
+@@ -1240,7 +1390,7 @@ bool VPXPanorama::_prepare_gpu() {
+ 		const Vector2i size = _scratch_size();
+ 		Ref<RDTextureFormat> scratch_format;
+ 		scratch_format.instantiate();
+-		scratch_format->set_format(RD::DATA_FORMAT_R8_UNORM);
++		scratch_format->set_format(_plane_rd_format());
+ 		scratch_format->set_texture_type(RD::TEXTURE_TYPE_2D);
+ 		scratch_format->set_width(size.x);
+ 		scratch_format->set_height(size.y);
+@@ -1257,7 +1407,7 @@ bool VPXPanorama::_prepare_gpu() {
+ 			const PlaneGeometry &g = geometry[p];
+ 			Ref<RDTextureFormat> format;
+ 			format.instantiate();
+-			format->set_format(RD::DATA_FORMAT_R8_UNORM);
++			format->set_format(_plane_rd_format());
+ 			format->set_texture_type(layout == LAYOUT_CUBE ? RD::TEXTURE_TYPE_CUBE : RD::TEXTURE_TYPE_2D_ARRAY);
+ 			format->set_width(g.tile_width);
+ 			format->set_height(g.height);
+@@ -1300,7 +1450,7 @@ void VPXPanorama::_allocate_owned_images() {
+ 		image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+ 		image_info.flags = layout == LAYOUT_CUBE ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0;
+ 		image_info.imageType = VK_IMAGE_TYPE_2D;
+-		image_info.format = VK_FORMAT_R8_UNORM;
++		image_info.format = _plane_vk_format();
+ 		image_info.extent = { (uint32_t)g.tile_width, (uint32_t)g.height, 1 };
+ 		image_info.mipLevels = (uint32_t)mips[p];
+ 		image_info.arrayLayers = (uint32_t)layers;
+@@ -1341,7 +1491,7 @@ void VPXPanorama::_allocate_owned_images() {
+ 	VkImageCreateInfo scratch_info = {};
+ 	scratch_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+ 	scratch_info.imageType = VK_IMAGE_TYPE_2D;
+-	scratch_info.format = VK_FORMAT_R8_UNORM;
++	scratch_info.format = _plane_vk_format();
+ 	scratch_info.extent = { (uint32_t)size.x, (uint32_t)size.y, 1 };
+ 	scratch_info.mipLevels = 1;
+ 	scratch_info.arrayLayers = 1;
+@@ -1409,14 +1559,14 @@ bool VPXPanorama::_import_owned_images() {
+ 		const PlaneGeometry &g = geometry[p];
+ 		const int64_t usage = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
+ 		const Variant imported = rd->call("texture_create_from_extension", layout == LAYOUT_CUBE ? RD::TEXTURE_TYPE_CUBE : RD::TEXTURE_TYPE_2D_ARRAY,
+-				RD::DATA_FORMAT_R8_UNORM, RD::TEXTURE_SAMPLES_1, usage, (int64_t)(uint64_t)owned_images[p], g.tile_width, g.height, 1, layers, mips[p]);
++				_plane_rd_format(), RD::TEXTURE_SAMPLES_1, usage, (int64_t)(uint64_t)owned_images[p], g.tile_width, g.height, 1, layers, mips[p]);
+ 		rids[p] = imported;
+ 		if (!rids[p].is_valid()) {
+ 			return false;
+ 		}
+ 	}
+ 	const Vector2i size = _scratch_size();
+-	scratch = rd->texture_create_from_extension(RD::TEXTURE_TYPE_2D, RD::DATA_FORMAT_R8_UNORM, RD::TEXTURE_SAMPLES_1,
++	scratch = rd->texture_create_from_extension(RD::TEXTURE_TYPE_2D, _plane_rd_format(), RD::TEXTURE_SAMPLES_1,
+ 			RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, (uint64_t)scratch_image, size.x, size.y, 1, 1);
+ 	return scratch.is_valid();
+ }
+@@ -1539,7 +1689,7 @@ bool VPXPanorama::_record_async_mips() {
+ 				view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+ 				view_info.image = owned_images[p];
+ 				view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+-				view_info.format = VK_FORMAT_R8_UNORM;
++				view_info.format = _plane_vk_format();
+ 				view_info.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, (uint32_t)level, 1, (uint32_t)layer, 1 };
+ 				VkImageView view = VK_NULL_HANDLE;
+ 				if (async->vkCreateImageView(vk->device, &view_info, nullptr, &view) != VK_SUCCESS) {
+@@ -1554,7 +1704,7 @@ bool VPXPanorama::_record_async_mips() {
+ 	scratch_view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+ 	scratch_view_info.image = scratch_image;
+ 	scratch_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+-	scratch_view_info.format = VK_FORMAT_R8_UNORM;
++	scratch_view_info.format = _plane_vk_format();
+ 	scratch_view_info.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+ 	VkImageView scratch_view = VK_NULL_HANDLE;
+ 	if (async->vkCreateImageView(vk->device, &scratch_view_info, nullptr, &scratch_view) != VK_SUCCESS) {
+@@ -1610,7 +1760,7 @@ bool VPXPanorama::_record_async_mips() {
+ 	scratch_barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+ 	vk->vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, PLANE_COUNT + 1, to_general);
+ 
+-	async->vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, async->pipeline);
++	async->vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, async->pipeline[sample_bytes > 1 ? 1 : 0]);
+ 	VkMemoryBarrier between = {};
+ 	between.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+ 	between.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+@@ -1705,7 +1855,7 @@ bool VPXPanorama::_upload_staged() {
+ 		const PlaneGeometry &g = geometry[p];
+ 		Ref<RDTextureFormat> staging;
+ 		staging.instantiate();
+-		staging->set_format(RD::DATA_FORMAT_R8_UNORM);
++		staging->set_format(_plane_rd_format());
+ 		staging->set_texture_type(RD::TEXTURE_TYPE_2D);
+ 		staging->set_width(g.tile_width);
+ 		staging->set_height(g.height);
+@@ -1805,8 +1955,9 @@ void VPXPanorama::_run_mips() {
+ 	std::vector<RID> sets;
+ 	Ref<RDTextureView> slice_view;
+ 	slice_view.instantiate();
++	const PanoramaMipPipeline *mip = panorama_mip[sample_bytes > 1 ? 1 : 0];
+ 	const int64_t list = rd->compute_list_begin();
+-	rd->compute_list_bind_compute_pipeline(list, panorama_mip->pipeline);
++	rd->compute_list_bind_compute_pipeline(list, mip->pipeline);
+ 	int64_t spent = 0;
+ 	while (next_mip_job < mip_jobs.size() && (spent == 0 || spent < mip_budget)) {
+ 		const MipJob &job = mip_jobs[next_mip_job++];
+@@ -1821,7 +1972,7 @@ void VPXPanorama::_run_mips() {
+ 		const Vector2i dst(level_extent(g.tile_width, job.level), level_extent(g.height, job.level));
+ 		const Vector2i half(dst.x, src.y);
+ 		const bool horizontal = job.pass == 0;
+-		const RID set = horizontal ? mip_uniform_set(rd, panorama_mip->shader, chain[job.level - 1], scratch) : mip_uniform_set(rd, panorama_mip->shader, scratch, chain[job.level]);
++		const RID set = horizontal ? mip_uniform_set(rd, mip->shader, chain[job.level - 1], scratch) : mip_uniform_set(rd, mip->shader, scratch, chain[job.level]);
+ 		sets.push_back(set);
+ 		rd->compute_list_bind_uniform_set(list, set, 0);
+ 		rd->compute_list_set_push_constant(list, horizontal ? mip_push_constant(src, half, 0, job.row) : mip_push_constant(half, dst, 1, job.row), 32);
+@@ -1934,6 +2085,7 @@ Dictionary VPXPanorama::get_info() {
+ 	info["layers"] = layers;
+ 	info["wrap"] = wrap;
+ 	info["rgb"] = rgb_planes;
++	info["hdr"] = sample_bytes > 1;
+ 	info["scale_denom"] = scale_denom;
+ 	info["ready"] = stage == STAGE_READY;
+ 	info["stage"] = (int)stage;
+@@ -1952,7 +2104,7 @@ Dictionary VPXPanorama::get_info() {
+ 		plane["core"] = g.core;
+ 		plane["gutter"] = g.gutter;
+ 		planes.push_back(plane);
+-		bytes += (int64_t)g.tile_width * g.height * layers * 4 / 3;
++		bytes += (int64_t)g.tile_width * g.height * layers * sample_bytes * 4 / 3;
+ 	}
+ 	info["planes"] = planes;
+ 	info["vram_bytes"] = bytes;
+@@ -1973,6 +2125,7 @@ Dictionary VPXPanorama::get_info() {
+ 
+ void VPXPanorama::_bind_methods() {
+ 	ClassDB::bind_static_method("VPXPanorama", D_METHOD("probe", "path"), &VPXPanorama::probe);
++	ClassDB::bind_static_method("VPXPanorama", D_METHOD("write_hdr_preview", "path", "output", "width", "exposure"), &VPXPanorama::write_hdr_preview);
+ 	ClassDB::bind_method(D_METHOD("start", "paths", "layout", "wrap"), &VPXPanorama::start);
+ 	ClassDB::bind_method(D_METHOD("poll"), &VPXPanorama::poll);
+ 	ClassDB::bind_method(D_METHOD("is_decoded"), &VPXPanorama::is_decoded);
+diff --git a/vpx_hdr_image.h b/vpx_hdr_image.h
+new file mode 100644
+index 0000000..4715095
+--- /dev/null
++++ b/vpx_hdr_image.h
+@@ -0,0 +1,32 @@
++#ifndef VPX_HDR_IMAGE_H
++#define VPX_HDR_IMAGE_H
++
++#ifdef GDEXTENSION
++
++#include <godot_cpp/variant/string.hpp>
++
++#include <atomic>
++#include <cstdint>
++
++using namespace godot;
++
++class VpxHdrSink {
++public:
++	std::atomic<bool> *cancelled = nullptr;
++
++	bool is_cancelled() const { return cancelled != nullptr && cancelled->load(); }
++	virtual String begin(int p_width, int p_height) = 0;
++	virtual void row(int p_y, const uint16_t *p_r, const uint16_t *p_g, const uint16_t *p_b) = 0;
++	virtual ~VpxHdrSink() {}
++};
++
++bool vpx_is_hdr_path(const String &p_path);
++bool vpx_hdr_size(const String &p_path, int &r_width, int &r_height);
++String vpx_decode_hdr(const String &p_path, VpxHdrSink &p_sink, int p_threads, int64_t *r_read_usec);
++uint16_t vpx_half_from_float(float p_value);
++float vpx_float_from_half(uint16_t p_half);
++void vpx_hdr_tonemap(float &r_r, float &r_g, float &r_b, float p_exposure);
++String vpx_write_hdr_preview(const String &p_path, const String &p_output, int p_width, float p_exposure);
++
++#endif // GDEXTENSION
++#endif // VPX_HDR_IMAGE_H
+diff --git a/vpx_hdr_image.cpp b/vpx_hdr_image.cpp
+new file mode 100644
+index 0000000..0bd2d3a
+--- /dev/null
++++ b/vpx_hdr_image.cpp
+@@ -0,0 +1,663 @@
++#ifdef GDEXTENSION
++
++#include "vpx_hdr_image.h"
++
++#include <godot_cpp/classes/image.hpp>
++#include <godot_cpp/variant/packed_byte_array.hpp>
++
++#include <OpenEXR/openexr.h>
++
++#include <algorithm>
++#include <chrono>
++#include <cmath>
++#include <cstdio>
++#include <cstring>
++#include <functional>
++#include <mutex>
++#include <string>
++#include <thread>
++#include <vector>
++
++static const float HALF_MAX = 65504.0f;
++static const int RADIANCE_BAND = 32;
++static const int PREVIEW_LOCKS = 64;
++static const int PREVIEW_THREADS = 4;
++
++static inline int64_t hdr_usec() {
++	return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
++}
++
++static inline uint32_t float_bits(float p_value) {
++	uint32_t bits;
++	memcpy(&bits, &p_value, 4);
++	return bits;
++}
++
++static inline float bits_float(uint32_t p_bits) {
++	float value;
++	memcpy(&value, &p_bits, 4);
++	return value;
++}
++
++uint16_t vpx_half_from_float(float p_value) {
++	float v = p_value > 0.0f ? p_value : 0.0f;
++	v = v < HALF_MAX ? v : HALF_MAX;
++	uint32_t f = float_bits(v);
++	if (f < (113u << 23)) {
++		const float magic = bits_float(((127 - 15) + (23 - 10) + 1) << 23);
++		return (uint16_t)(float_bits(bits_float(f) + magic) - float_bits(magic));
++	}
++	const uint32_t odd = (f >> 13) & 1;
++	f += ((uint32_t)(15 - 127) << 23) + 0xfff;
++	f += odd;
++	return (uint16_t)(f >> 13);
++}
++
++static inline uint16_t clean_half(uint16_t p_half) {
++	if (p_half & 0x8000) {
++		return 0;
++	}
++	if ((p_half & 0x7c00) == 0x7c00) {
++		return (p_half & 0x3ff) ? 0 : 0x7bff;
++	}
++	return p_half;
++}
++
++float vpx_float_from_half(uint16_t p_half) {
++	const uint32_t shifted = 0x7c00u << 13;
++	uint32_t o = (uint32_t)(p_half & 0x7fff) << 13;
++	const uint32_t exponent = shifted & o;
++	o += (uint32_t)(127 - 15) << 23;
++	if (exponent == shifted) {
++		o += (uint32_t)(128 - 16) << 23;
++	} else if (exponent == 0) {
++		o += 1u << 23;
++		o = float_bits(bits_float(o) - bits_float(113u << 23));
++	}
++	o |= (uint32_t)(p_half & 0x8000) << 16;
++	return bits_float(o);
++}
++
++void vpx_hdr_tonemap(float &r_r, float &r_g, float &r_b, float p_exposure) {
++	const float wr = 0.2126f, wg = 0.7152f, wb = 0.0722f;
++	float r = std::max(r_r, 0.0f) * p_exposure;
++	float g = std::max(r_g, 0.0f) * p_exposure;
++	float b = std::max(r_b, 0.0f) * p_exposure;
++	const float luma = r * wr + g * wg + b * wb;
++	const float mapped = luma * (1.0f + luma / 36.0f) / (1.0f + luma);
++	const float scale = mapped / std::max(luma, 1e-6f);
++	r *= scale;
++	g *= scale;
++	b *= scale;
++	const float peak = std::max(r, std::max(g, b));
++	if (peak > 1.0f) {
++		r /= peak;
++		g /= peak;
++		b /= peak;
++		const float lost = std::min(mapped, 1.0f) - (r * wr + g * wg + b * wb);
++		const float room = (1.0f - r) * wr + (1.0f - g) * wg + (1.0f - b) * wb;
++		const float t = room > 1e-6f ? std::clamp(lost / room, 0.0f, 1.0f) : 0.0f;
++		r += (1.0f - r) * t;
++		g += (1.0f - g) * t;
++		b += (1.0f - b) * t;
++	}
++	r_r = std::min(r, 1.0f);
++	r_g = std::min(g, 1.0f);
++	r_b = std::min(b, 1.0f);
++}
++
++static FILE *open_hdr_file(const String &p_path) {
++#ifdef _WIN32
++	return _wfopen(reinterpret_cast<const wchar_t *>(p_path.utf16().get_data()), L"rb");
++#else
++	return fopen(p_path.utf8().get_data(), "rb");
++#endif
++}
++
++static bool read_head(const String &p_path, uint8_t *r_bytes, size_t p_size, size_t &r_got) {
++	FILE *file = open_hdr_file(p_path);
++	if (file == nullptr) {
++		return false;
++	}
++	r_got = fread(r_bytes, 1, p_size, file);
++	fclose(file);
++	return true;
++}
++
++static bool is_exr_magic(const uint8_t *p_bytes, size_t p_size) {
++	return p_size >= 4 && p_bytes[0] == 0x76 && p_bytes[1] == 0x2f && p_bytes[2] == 0x31 && p_bytes[3] == 0x01;
++}
++
++static bool is_radiance_magic(const uint8_t *p_bytes, size_t p_size) {
++	return p_size >= 2 && p_bytes[0] == '#' && p_bytes[1] == '?';
++}
++
++bool vpx_is_hdr_path(const String &p_path) {
++	uint8_t head[4] = {};
++	size_t got = 0;
++	return read_head(p_path, head, sizeof(head), got) && (is_exr_magic(head, got) || is_radiance_magic(head, got));
++}
++
++static void exr_quiet(exr_const_context_t, exr_result_t, const char *) {
++}
++
++struct ExrReader {
++	exr_context_t context = nullptr;
++
++	~ExrReader() {
++		if (context != nullptr) {
++			exr_finish(&context);
++		}
++	}
++
++	exr_result_t open(const String &p_path) {
++		exr_context_initializer_t init = EXR_DEFAULT_CONTEXT_INITIALIZER;
++		init.error_handler_fn = exr_quiet;
++		return exr_start_read(&context, p_path.utf8().get_data(), &init);
++	}
++};
++
++struct RadianceHeader {
++	size_t data = 0;
++	int width = 0;
++	int height = 0;
++	bool flip = false;
++	bool xyz = false;
++};
++
++static String parse_radiance_header(const uint8_t *p_bytes, size_t p_size, RadianceHeader &r_header) {
++	if (!is_radiance_magic(p_bytes, p_size)) {
++		return "not a Radiance file";
++	}
++	size_t pos = 0;
++	bool blank = false;
++	while (pos < p_size) {
++		size_t end = pos;
++		while (end < p_size && p_bytes[end] != '\n') {
++			end++;
++		}
++		if (end >= p_size) {
++			return "truncated Radiance header";
++		}
++		const std::string line((const char *)p_bytes + pos, end - pos);
++		pos = end + 1;
++		if (blank) {
++			char y_sign = 0, x_sign = 0, y_axis = 0, x_axis = 0;
++			int height = 0, width = 0;
++			if (sscanf(line.c_str(), "%c%c %d %c%c %d", &y_sign, &y_axis, &height, &x_sign, &x_axis, &width) != 6 || y_axis != 'Y' || x_axis != 'X' || x_sign != '+' || (y_sign != '-' && y_sign != '+')) {
++				return "unsupported Radiance orientation: " + String(line.c_str());
++			}
++			if (width <= 0 || height <= 0) {
++				return "invalid Radiance size";
++			}
++			r_header.width = width;
++			r_header.height = height;
++			r_header.flip = y_sign == '+';
++			r_header.data = pos;
++			return String();
++		}
++		if (line.empty()) {
++			blank = true;
++		} else if (line.rfind("FORMAT=", 0) == 0) {
++			if (line.find("32-bit_rle_xyze") != std::string::npos) {
++				r_header.xyz = true;
++			} else if (line.find("32-bit_rle_rgbe") == std::string::npos) {
++				return "unsupported Radiance format: " + String(line.c_str());
++			}
++		}
++	}
++	return "truncated Radiance header";
++}
++
++bool vpx_hdr_size(const String &p_path, int &r_width, int &r_height) {
++	uint8_t head[4096] = {};
++	size_t got = 0;
++	if (!read_head(p_path, head, sizeof(head), got)) {
++		return false;
++	}
++	if (is_radiance_magic(head, got)) {
++		RadianceHeader header;
++		if (!parse_radiance_header(head, got, header).is_empty()) {
++			return false;
++		}
++		r_width = header.width;
++		r_height = header.height;
++		return true;
++	}
++	if (!is_exr_magic(head, got)) {
++		return false;
++	}
++	ExrReader reader;
++	exr_attr_box2i_t window;
++	if (reader.open(p_path) != EXR_ERR_SUCCESS || exr_get_data_window(reader.context, 0, &window) != EXR_ERR_SUCCESS) {
++		return false;
++	}
++	r_width = window.max.x - window.min.x + 1;
++	r_height = window.max.y - window.min.y + 1;
++	return r_width > 0 && r_height > 0;
++}
++
++static void run_jobs(int p_threads, int p_jobs, const std::function<void(std::atomic<int> &)> &p_work) {
++	std::atomic<int> next{ 0 };
++	const int count = std::max(1, std::min(p_threads, p_jobs));
++	std::vector<std::thread> threads;
++	for (int t = 1; t < count; t++) {
++		threads.emplace_back([&]() { p_work(next); });
++	}
++	p_work(next);
++	for (std::thread &thread : threads) {
++		thread.join();
++	}
++}
++
++static int exr_channel_rank(const char *p_name, char p_want) {
++	const char *dot = strrchr(p_name, '.');
++	const char *last = dot != nullptr ? dot + 1 : p_name;
++	if (last[1] != 0 || (last[0] != p_want && last[0] != p_want + ('a' - 'A'))) {
++		return -1;
++	}
++	return dot == nullptr ? 0 : (int)(dot - p_name) + 1;
++}
++
++static String decode_exr(const String &p_path, VpxHdrSink &p_sink, int p_threads) {
++	ExrReader reader;
++	if (reader.open(p_path) != EXR_ERR_SUCCESS) {
++		return "cannot open EXR";
++	}
++	exr_context_t ctx = reader.context;
++	exr_storage_t storage;
++	exr_attr_box2i_t window;
++	const exr_attr_chlist_t *channels = nullptr;
++	if (exr_get_storage(ctx, 0, &storage) != EXR_ERR_SUCCESS || exr_get_data_window(ctx, 0, &window) != EXR_ERR_SUCCESS || exr_get_channels(ctx, 0, &channels) != EXR_ERR_SUCCESS) {
++		return "invalid EXR header";
++	}
++	if (storage != EXR_STORAGE_SCANLINE && storage != EXR_STORAGE_TILED) {
++		return "deep EXR images are not supported";
++	}
++	const int width = window.max.x - window.min.x + 1;
++	const int height = window.max.y - window.min.y + 1;
++	if (width <= 0 || height <= 0) {
++		return "empty EXR data window";
++	}
++	const char wanted[4] = { 'R', 'G', 'B', 'Y' };
++	int picked[4] = { -1, -1, -1, -1 };
++	int ranks[4] = { 1 << 30, 1 << 30, 1 << 30, 1 << 30 };
++	for (int c = 0; c < channels->num_channels; c++) {
++		const exr_attr_chlist_entry_t &entry = channels->entries[c];
++		if (entry.x_sampling != 1 || entry.y_sampling != 1) {
++			continue;
++		}
++		for (int k = 0; k < 4; k++) {
++			const int rank = exr_channel_rank(entry.name.str, wanted[k]);
++			if (rank >= 0 && rank < ranks[k]) {
++				ranks[k] = rank;
++				picked[k] = c;
++			}
++		}
++	}
++	const bool rgb = picked[0] >= 0 && picked[1] >= 0 && picked[2] >= 0;
++	if (!rgb && picked[3] < 0) {
++		return "EXR has no full-resolution R/G/B or Y channels";
++	}
++	int band = 0;
++	int jobs = 0;
++	uint32_t tile_x = 0, tile_y = 0;
++	int32_t tiles_across = 0;
++	if (storage == EXR_STORAGE_SCANLINE) {
++		int32_t lines = 0;
++		if (exr_get_scanlines_per_chunk(ctx, 0, &lines) != EXR_ERR_SUCCESS || lines <= 0) {
++			return "invalid EXR chunk layout";
++		}
++		band = lines;
++		jobs = (height + lines - 1) / lines;
++	} else {
++		exr_tile_level_mode_t level_mode;
++		exr_tile_round_mode_t round_mode;
++		int32_t tiles_down = 0;
++		if (exr_get_tile_descriptor(ctx, 0, &tile_x, &tile_y, &level_mode, &round_mode) != EXR_ERR_SUCCESS || exr_get_tile_counts(ctx, 0, 0, 0, &tiles_across, &tiles_down) != EXR_ERR_SUCCESS) {
++			return "invalid EXR tile layout";
++		}
++		band = (int)tile_y;
++		jobs = tiles_down;
++	}
++	const String begun = p_sink.begin(width, height);
++	if (!begun.is_empty()) {
++		return begun;
++	}
++	std::mutex error_mutex;
++	String error;
++	run_jobs(p_threads, jobs, [&](std::atomic<int> &p_next) {
++		const int planes = rgb ? 3 : 1;
++		std::vector<uint16_t> buffer((size_t)width * band * planes);
++		exr_decode_pipeline_t decoder = EXR_DECODE_PIPELINE_INITIALIZER;
++		bool ready = false;
++		auto decode_chunk = [&](const exr_chunk_info_t &p_info, int p_x, int p_y) -> bool {
++			exr_result_t result = ready ? exr_decoding_update(ctx, 0, &p_info, &decoder) : exr_decoding_initialize(ctx, 0, &p_info, &decoder);
++			if (result != EXR_ERR_SUCCESS) {
++				return false;
++			}
++			for (int c = 0; c < decoder.channel_count; c++) {
++				exr_coding_channel_info_t &channel = decoder.channels[c];
++				channel.decode_to_ptr = nullptr;
++				for (int k = 0; k < 4; k++) {
++					if (rgb == (k == 3) || strcmp(channel.channel_name, channels->entries[picked[k]].name.str) != 0) {
++						continue;
++					}
++					const int plane = rgb ? k : 0;
++					channel.decode_to_ptr = reinterpret_cast<uint8_t *>(buffer.data() + (size_t)plane * width * band + (size_t)p_y * width + p_x);
++					channel.user_pixel_stride = sizeof(uint16_t);
++					channel.user_line_stride = width * (int)sizeof(uint16_t);
++					channel.user_bytes_per_element = sizeof(uint16_t);
++					channel.user_data_type = EXR_PIXEL_HALF;
++				}
++			}
++			if (!ready) {
++				if (exr_decoding_choose_default_routines(ctx, 0, &decoder) != EXR_ERR_SUCCESS) {
++					return false;
++				}
++				ready = true;
++			}
++			return exr_decoding_run(ctx, 0, &decoder) == EXR_ERR_SUCCESS;
++		};
++		while (!p_sink.is_cancelled()) {
++			const int job = p_next.fetch_add(1);
++			if (job >= jobs) {
++				break;
++			}
++			const int first = job * band;
++			const int rows = std::min(band, height - first);
++			bool ok = true;
++			if (storage == EXR_STORAGE_SCANLINE) {
++				exr_chunk_info_t info;
++				ok = exr_read_scanline_chunk_info(ctx, 0, window.min.y + first, &info) == EXR_ERR_SUCCESS && decode_chunk(info, 0, 0);
++			} else {
++				for (int t = 0; t < tiles_across && ok; t++) {
++					exr_chunk_info_t info;
++					ok = exr_read_tile_chunk_info(ctx, 0, t, job, 0, 0, &info) == EXR_ERR_SUCCESS && decode_chunk(info, t * (int)tile_x, 0);
++				}
++			}
++			if (!ok) {
++				std::lock_guard<std::mutex> lock(error_mutex);
++				if (error.is_empty()) {
++					error = vformat("corrupt EXR data near row %d", first);
++				}
++				if (p_sink.cancelled != nullptr) {
++					p_sink.cancelled->store(true);
++				}
++				break;
++			}
++			for (uint16_t &value : buffer) {
++				value = clean_half(value);
++			}
++			for (int r = 0; r < rows; r++) {
++				const uint16_t *line = buffer.data() + (size_t)r * width;
++				if (rgb) {
++					p_sink.row(first + r, line, line + (size_t)width * band, line + (size_t)2 * width * band);
++				} else {
++					p_sink.row(first + r, line, line, line);
++				}
++			}
++		}
++		exr_decoding_destroy(ctx, &decoder);
++	});
++	return error;
++}
++
++static bool radiance_scanline(const uint8_t *p_bytes, size_t p_size, size_t &r_pos, int p_width, uint8_t *r_rgbe) {
++	size_t pos = r_pos;
++	if (p_width >= 8 && p_width < 0x8000 && pos + 4 <= p_size && p_bytes[pos] == 2 && p_bytes[pos + 1] == 2 && !(p_bytes[pos + 2] & 0x80)) {
++		if (((int)p_bytes[pos + 2] << 8 | p_bytes[pos + 3]) != p_width) {
++			return false;
++		}
++		pos += 4;
++		for (int c = 0; c < 4; c++) {
++			int x = 0;
++			while (x < p_width) {
++				if (pos >= p_size) {
++					return false;
++				}
++				int count = p_bytes[pos++];
++				if (count > 128) {
++					count -= 128;
++					if (count > p_width - x || pos >= p_size) {
++						return false;
++					}
++					if (r_rgbe != nullptr) {
++						const uint8_t value = p_bytes[pos];
++						for (int i = 0; i < count; i++) {
++							r_rgbe[(x + i) * 4 + c] = value;
++						}
++					}
++					pos++;
++				} else {
++					if (count == 0 || count > p_width - x || pos + count > p_size) {
++						return false;
++					}
++					if (r_rgbe != nullptr) {
++						for (int i = 0; i < count; i++) {
++							r_rgbe[(x + i) * 4 + c] = p_bytes[pos + i];
++						}
++					}
++					pos += count;
++				}
++				x += count;
++			}
++		}
++		r_pos = pos;
++		return true;
++	}
++	int x = 0;
++	int shift = 0;
++	while (x < p_width) {
++		if (pos + 4 > p_size) {
++			return false;
++		}
++		const uint8_t *pixel = p_bytes + pos;
++		pos += 4;
++		if (pixel[0] == 1 && pixel[1] == 1 && pixel[2] == 1) {
++			if (x == 0) {
++				return false;
++			}
++			const int count = std::min((int)pixel[3] << shift, p_width - x);
++			if (r_rgbe != nullptr) {
++				for (int i = 0; i < count; i++) {
++					memcpy(r_rgbe + (x + i) * 4, r_rgbe + (x - 1) * 4, 4);
++				}
++			}
++			x += count;
++			shift += 8;
++		} else {
++			if (r_rgbe != nullptr) {
++				memcpy(r_rgbe + x * 4, pixel, 4);
++			}
++			x++;
++			shift = 0;
++		}
++	}
++	r_pos = pos;
++	return true;
++}
++
++static bool read_all(const String &p_path, std::vector<uint8_t> &r_bytes) {
++	FILE *file = open_hdr_file(p_path);
++	if (file == nullptr) {
++		return false;
++	}
++	fseek(file, 0, SEEK_END);
++	const long long size = ftell(file);
++	fseek(file, 0, SEEK_SET);
++	if (size <= 0) {
++		fclose(file);
++		return false;
++	}
++	r_bytes.resize((size_t)size);
++	const size_t got = fread(r_bytes.data(), 1, (size_t)size, file);
++	fclose(file);
++	return got == (size_t)size;
++}
++
++static String decode_radiance(const String &p_path, VpxHdrSink &p_sink, int p_threads, int64_t *r_read_usec) {
++	const int64_t begin = hdr_usec();
++	std::vector<uint8_t> bytes;
++	if (!read_all(p_path, bytes)) {
++		return "cannot read file";
++	}
++	if (r_read_usec != nullptr) {
++		*r_read_usec = hdr_usec() - begin;
++	}
++	RadianceHeader header;
++	const String parsed = parse_radiance_header(bytes.data(), bytes.size(), header);
++	if (!parsed.is_empty()) {
++		return parsed;
++	}
++	const int width = header.width;
++	const int height = header.height;
++	std::vector<size_t> offsets((size_t)height + 1);
++	size_t pos = header.data;
++	for (int y = 0; y < height; y++) {
++		offsets[y] = pos;
++		if (!radiance_scanline(bytes.data(), bytes.size(), pos, width, nullptr)) {
++			return vformat("corrupt Radiance data at row %d", y);
++		}
++	}
++	const String begun = p_sink.begin(width, height);
++	if (!begun.is_empty()) {
++		return begun;
++	}
++	float scales[256];
++	for (int e = 0; e < 256; e++) {
++		scales[e] = e == 0 ? 0.0f : std::ldexp(1.0f, e - 136);
++	}
++	const int jobs = (height + RADIANCE_BAND - 1) / RADIANCE_BAND;
++	run_jobs(p_threads, jobs, [&](std::atomic<int> &p_next) {
++		std::vector<uint8_t> rgbe((size_t)width * 4);
++		std::vector<float> planes((size_t)width * 3);
++		std::vector<uint16_t> halves((size_t)width * 3);
++		float *r = planes.data();
++		float *g = r + width;
++		float *b = g + width;
++		while (!p_sink.is_cancelled()) {
++			const int job = p_next.fetch_add(1);
++			if (job >= jobs) {
++				break;
++			}
++			const int last = std::min(height, (job + 1) * RADIANCE_BAND);
++			for (int y = job * RADIANCE_BAND; y < last; y++) {
++				size_t at = offsets[y];
++				radiance_scanline(bytes.data(), bytes.size(), at, width, rgbe.data());
++				for (int x = 0; x < width; x++) {
++					const uint8_t *p = rgbe.data() + (size_t)x * 4;
++					const float scale = scales[p[3]];
++					r[x] = p[0] * scale;
++					g[x] = p[1] * scale;
++					b[x] = p[2] * scale;
++				}
++				if (header.xyz) {
++					for (int x = 0; x < width; x++) {
++						const float cx = r[x], cy = g[x], cz = b[x];
++						r[x] = 3.2404542f * cx - 1.5371385f * cy - 0.4985314f * cz;
++						g[x] = -0.9692660f * cx + 1.8760108f * cy + 0.0415560f * cz;
++						b[x] = 0.0556434f * cx - 0.2040259f * cy + 1.0572252f * cz;
++					}
++				}
++				for (size_t i = 0; i < halves.size(); i++) {
++					halves[i] = vpx_half_from_float(planes[i]);
++				}
++				p_sink.row(header.flip ? height - 1 - y : y, halves.data(), halves.data() + width, halves.data() + (size_t)2 * width);
++			}
++		}
++	});
++	return String();
++}
++
++String vpx_decode_hdr(const String &p_path, VpxHdrSink &p_sink, int p_threads, int64_t *r_read_usec) {
++	uint8_t head[4] = {};
++	size_t got = 0;
++	if (!read_head(p_path, head, sizeof(head), got)) {
++		return "cannot read file";
++	}
++	if (is_exr_magic(head, got)) {
++		return decode_exr(p_path, p_sink, p_threads);
++	}
++	if (is_radiance_magic(head, got)) {
++		return decode_radiance(p_path, p_sink, p_threads, r_read_usec);
++	}
++	return "not an EXR or Radiance HDR file";
++}
++
++class PreviewSink : public VpxHdrSink {
++public:
++	int target_width = 0;
++	int source_width = 0;
++	int source_height = 0;
++	int factor = 1;
++	int width = 0;
++	int height = 0;
++	std::vector<float> sums;
++	std::mutex locks[PREVIEW_LOCKS];
++
++	String begin(int p_width, int p_height) override {
++		source_width = p_width;
++		source_height = p_height;
++		factor = std::max(1, (p_width + target_width - 1) / target_width);
++		width = (p_width + factor - 1) / factor;
++		height = (p_height + factor - 1) / factor;
++		sums.assign((size_t)width * height * 3, 0.0f);
++		return String();
++	}
++
++	void row(int p_y, const uint16_t *p_r, const uint16_t *p_g, const uint16_t *p_b) override {
++		const int y = p_y / factor;
++		const uint16_t *values[3] = { p_r, p_g, p_b };
++		std::vector<float> line((size_t)width * 3, 0.0f);
++		for (int x = 0; x < width; x++) {
++			const int last = std::min((x + 1) * factor, source_width);
++			for (int s = x * factor; s < last; s++) {
++				for (int c = 0; c < 3; c++) {
++					line[(size_t)x * 3 + c] += vpx_float_from_half(values[c][s]);
++				}
++			}
++		}
++		std::lock_guard<std::mutex> lock(locks[y % PREVIEW_LOCKS]);
++		float *dst = sums.data() + (size_t)y * width * 3;
++		for (int i = 0; i < width * 3; i++) {
++			dst[i] += line[i];
++		}
++	}
++};
++
++String vpx_write_hdr_preview(const String &p_path, const String &p_output, int p_width, float p_exposure) {
++	PreviewSink sink;
++	sink.target_width = std::max(p_width, 16);
++	const int threads = std::clamp((int)std::thread::hardware_concurrency() / 4, 1, PREVIEW_THREADS);
++	const String error = vpx_decode_hdr(p_path, sink, threads, nullptr);
++	if (!error.is_empty()) {
++		return error;
++	}
++	PackedByteArray pixels;
++	pixels.resize((int64_t)sink.width * sink.height * 3);
++	uint8_t *out = pixels.ptrw();
++	for (int y = 0; y < sink.height; y++) {
++		const int rows = std::min(sink.factor, sink.source_height - y * sink.factor);
++		for (int x = 0; x < sink.width; x++) {
++			const int cols = std::min(sink.factor, sink.source_width - x * sink.factor);
++			const float *sum = sink.sums.data() + ((size_t)y * sink.width + x) * 3;
++			const float norm = 1.0f / (float)(rows * cols);
++			float r = sum[0] * norm, g = sum[1] * norm, b = sum[2] * norm;
++			vpx_hdr_tonemap(r, g, b, p_exposure);
++			const float values[3] = { r, g, b };
++			for (int c = 0; c < 3; c++) {
++				const float v = values[c];
++				const float encoded = v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f;
++				out[((size_t)y * sink.width + x) * 3 + c] = (uint8_t)std::clamp((int)std::lround(encoded * 255.0f), 0, 255);
++			}
++		}
++	}
++	Ref<Image> image = Image::create_from_data(sink.width, sink.height, false, Image::FORMAT_RGB8, pixels);
++	if (image.is_null()) {
++		return "cannot build preview";
++	}
++	return image->save_jpg(p_output, 0.9f) == OK ? String() : String("cannot save preview");
++}
++
++#endif // GDEXTENSION

@@ -30,6 +30,7 @@ var cover_image: TextureRect
 var progress: HSlider
 var spectrum_view: TextureRect
 var immersive_button: Button
+var close_image_button: Button
 var previous_style_button: Button
 var next_style_button: Button
 var scene_picker: Dropdown
@@ -86,6 +87,8 @@ func _init() -> void:
 	metadata.add_child(time_label)
 	immersive_button = _icon_button(header, "format", Callable())
 	immersive_button.toggle_mode = true
+	close_image_button = _icon_button(header, "close", func() -> void: player.close_image())
+	Tooltips.set_text(close_image_button, "Close the photo and keep playing music")
 	favorite_button = _favorite_button(header)
 	volume_button = _icon_button(header, "volume", func() -> void: volume_row.visible = not volume_row.visible)
 	volume_button.toggle_mode = true
@@ -215,6 +218,7 @@ func refresh() -> void:
 	if not player._audio_only_playing():
 		scene_picker.close()
 	immersive_button.visible = player._audio_only_playing()
+	close_image_button.visible = player.is_image() and player._audio_only_playing()
 	var immersive := player.is_immersive_visualizer_active()
 	scene_picker._pull()
 	previous_style_button.visible = immersive

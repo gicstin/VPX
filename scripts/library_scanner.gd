@@ -3,7 +3,7 @@ extends Node
 signal finished(result: Dictionary)
 signal cover_found(path: String, cover: Dictionary)
 
-enum Sort { NAME, DATE, SIZE, PLAY_COUNT }
+enum Sort { NAME, DATE, SIZE, PLAY_COUNT, LAST_WATCHED }
 
 const BackgroundTask := preload("res://scripts/background_task.gd")
 const SCAN_TIMEOUT := 15.0
@@ -276,6 +276,8 @@ func _accept_file(state: Dictionary, directory: String, name: String) -> void:
 			state["keys"][entry] = FileAccess.get_size(path)
 		Sort.PLAY_COUNT:
 			state["keys"][entry] = state["request"].get("filter", {}).get("play_counts", {}).get(path, 0)
+		Sort.LAST_WATCHED:
+			state["keys"][entry] = state["request"].get("filter", {}).get("played_at", {}).get(path, 0.0)
 
 
 func _resolve_faces(state: Dictionary, only_directory := "") -> void:
@@ -587,6 +589,8 @@ func _ordered_playlist(files: PackedStringArray, request: Dictionary) -> PackedS
 		paths.append(path)
 		if sort == Sort.PLAY_COUNT:
 			keys[path] = filter.get("play_counts", {}).get(path, 0)
+		elif sort == Sort.LAST_WATCHED:
+			keys[path] = filter.get("played_at", {}).get(path, 0.0)
 		elif sort != Sort.NAME:
 			var source := path.trim_suffix("/")
 			keys[path] = FileAccess.get_modified_time(source) if sort == Sort.DATE else FileAccess.get_size(source)

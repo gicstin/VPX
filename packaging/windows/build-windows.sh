@@ -13,6 +13,7 @@ FFMPEG_VERSION="${FFMPEG_VERSION:-9.0.1}"
 DAV1D_VERSION="1.5.4"
 ZLIB_VERSION="1.3.1"
 JPEG_VERSION="3.2.0"
+OPENEXR_VERSION="3.5.4"
 NASM_VERSION="2.16.03"
 BUSYBOX_TAG="FRP-6075-g169694ebd"
 EXT_REPO="https://github.com/EIRTeam/EIRTeam.FFmpeg"
@@ -37,7 +38,14 @@ done
 step() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31merror: %s\033[0m\n' "$*" >&2; exit 1; }
 fetch() {
-	[ -f "$2" ] || { curl -fL --retry 3 -o "$2.part" "$1" && mv "$2.part" "$2"; }
+	[ -f "$2" ] && return 0
+	local i
+	for i in 1 2 3 4 5 6 7 8; do
+		rm -f "$2.part"
+		curl -fL --http1.1 -o "$2.part" "$1" && { mv "$2.part" "$2"; return 0; }
+		sleep 2
+	done
+	return 1
 }
 
 for tool in git curl tar make cmake cc c++ pkg-config python3 rsync bzip2 xz "$GODOT"; do
@@ -324,6 +332,21 @@ if [ ! -f "$PREFIX/lib/libjpeg.a" ]; then
 	ninja -C "$SRC/libjpeg-turbo-$JPEG_VERSION/build" install >/dev/null
 fi
 
+if [ ! -f "$PREFIX/lib/libOpenEXRCore.a" ]; then
+	step "OpenEXR $OPENEXR_VERSION"
+	fetch "https://github.com/AcademySoftwareFoundation/openexr/archive/refs/tags/v$OPENEXR_VERSION.tar.gz" "$SRC/openexr-$OPENEXR_VERSION.tar.gz"
+	rm -rf "$SRC/openexr-$OPENEXR_VERSION" && tar -xf "$SRC/openexr-$OPENEXR_VERSION.tar.gz" -C "$SRC"
+	cmake -S "$SRC/openexr-$OPENEXR_VERSION" -B "$SRC/openexr-$OPENEXR_VERSION/build" -G Ninja \
+		-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=AMD64 \
+		-DCMAKE_C_COMPILER="$TRIPLE-clang" -DCMAKE_CXX_COMPILER="$TRIPLE-clang++" -DCMAKE_RC_COMPILER="$TRIPLE-windres" \
+		-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_FIND_ROOT_PATH="$PREFIX" -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
+		-DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -DOPENEXR_BUILD_TOOLS=OFF -DOPENEXR_BUILD_EXAMPLES=OFF \
+		-DOPENEXR_INSTALL_DOCS=OFF -DOPENEXR_INSTALL_TOOLS=OFF -DOPENEXR_LIB_SUFFIX= \
+		-DOPENEXR_FORCE_INTERNAL_DEFLATE=ON -DOPENEXR_FORCE_INTERNAL_IMATH=ON -DOPENEXR_FORCE_INTERNAL_OPENJPH=ON -DOPENEXR_FORCE_INTERNAL_ZSTD=ON >/dev/null
+	ninja -C "$SRC/openexr-$OPENEXR_VERSION/build" install >/dev/null
+fi
+
 if [ ! -d "$PREFIX/include/vulkan" ]; then
 	cp -r /usr/include/vulkan "$PREFIX/include/"
 	[ -d /usr/include/vk_video ] && cp -r /usr/include/vk_video "$PREFIX/include/"
@@ -382,6 +405,7 @@ git -C "$EXT" apply "$ROOT/addons/ffmpeg/streaming.patch"
 git -C "$EXT" apply "$ROOT/addons/ffmpeg/radio-metadata.patch"
 git -C "$EXT" apply "$ROOT/addons/ffmpeg/music-analysis.patch"
 git -C "$EXT" apply "$ROOT/addons/ffmpeg/audio-downmix.patch"
+git -C "$EXT" apply "$ROOT/addons/ffmpeg/hdr-image.patch"
 mkdir -p "$BUILD/site_scons"
 cat >"$BUILD/site_scons/site_init.py" <<'PYEOF'
 import os
@@ -503,6 +527,7 @@ install -m 644 "$SRC/rubberband-4.0.0/COPYING" "$PAYLOAD/licenses/RubberBand-GPL
 install -m 644 "$SRC/ffmpeg-$FFMPEG_VERSION/COPYING.GPLv2" "$PAYLOAD/licenses/FFmpeg-GPLv2.txt"
 install -m 644 "$SRC/libdvdread/COPYING" "$PAYLOAD/licenses/libdvdread-COPYING.txt"
 install -m 644 "$SRC/libdvdnav/COPYING" "$PAYLOAD/licenses/libdvdnav-COPYING.txt"
+install -m 644 "$SRC/openexr-$OPENEXR_VERSION/LICENSE.md" "$PAYLOAD/licenses/OpenEXR-BSD-3-Clause.txt"
 install -m 644 "$DSD_SRC/LICENSE" "$PAYLOAD/licenses/DSD-Nexus-LGPL-2.1.txt"
 if [ -f "$SRC/libiconv-$LIBICONV_VERSION/COPYING.LIB" ]; then
 	install -m 644 "$SRC/libiconv-$LIBICONV_VERSION/COPYING.LIB" "$PAYLOAD/licenses/libiconv-LGPL.txt"

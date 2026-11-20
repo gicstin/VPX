@@ -9,6 +9,7 @@ uniform float sample_scale = 1.0;
 uniform int color_matrix = 1;
 uniform bool full_range = false;
 uniform int transfer_function = 0;
+uniform float hdr_exposure = 1.0;
 uniform bool wide_gamut = false;
 uniform vec2 chroma_offset = vec2(0.0);
 uniform bool packed_rgb = false;
@@ -135,6 +136,19 @@ vec3 tonemap_hdr(vec3 c)
 	return c * (mapped / max(luma, 1e-6));
 }
 
+vec3 tonemap_scene(vec3 c)
+{
+	const vec3 weights = vec3(0.2126, 0.7152, 0.0722);
+	vec3 mapped = tonemap_hdr(max(c, vec3(0.0)) * hdr_exposure);
+	float peak = max(max(mapped.r, mapped.g), mapped.b);
+	if (peak <= 1.0)
+		return mapped;
+	vec3 clipped = mapped / peak;
+	float lost = min(dot(mapped, weights), 1.0) - dot(clipped, weights);
+	float room = dot(vec3(1.0) - clipped, weights);
+	return clipped + (vec3(1.0) - clipped) * clamp(lost / max(room, 1e-6), 0.0, 1.0);
+}
+
 vec3 bt2020_to_bt709(vec3 c)
 {
 	return vec3(
@@ -150,6 +164,8 @@ vec3 video_to_linear(vec3 rgb_gamma)
 		linear = tonemap_hdr(pq_to_linear(rgb_gamma));
 	else if (transfer_function == 2)
 		linear = tonemap_hdr(hlg_to_linear(rgb_gamma));
+	else if (transfer_function == 3)
+		linear = tonemap_scene(rgb_gamma);
 	else
 		linear = srgb_to_linear(rgb_gamma);
 	if (wide_gamut)

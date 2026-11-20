@@ -428,6 +428,17 @@ step = 0.05
 display_scale = 100.0
 suffix = "%"
 
+[node name="HdrExposure" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/ColourGroup/Rows"]
+layout_mode = 2
+script = ExtResource("2")
+title = "HDR exposure (EXR / HDR photos)"
+setting = &"hdr_exposure"
+min_value = -8.0
+max_value = 8.0
+step = 0.5
+decimals = 1
+suffix = " EV"
+
 [node name="Gamma" type="HBoxContainer" parent="Sheet/Margin/Layout/Body/PageContent/PageScroll/PageStack/Picture/ColourGroup/Rows"]
 layout_mode = 2
 script = ExtResource("2")

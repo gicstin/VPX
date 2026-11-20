@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.0.13] - 2026-11-09
+
+### Added
+
+- Recent now follows the Sort menu (Name, Newest, Largest, Play count, Last watched); opening Recent on Name switches it to Last watched.
+- Flat view now works on Recent: it hides folders and lists only recently played files.
+- A "Last watched" sort puts the most recently watched media first in folders, flat view, search and playlists; folders sort by last visit.
+- In a headset, subtitles on flat 3D videos now float in front of the picture so they no longer clash with people or objects that pop out. "3D depth in front of video" sets the gap, and "Keep clear of nearest 3D picture" measures the closest part of the lower picture and moves the subtitles forward to stay in front of it.
+- HDR panoramas: OpenEXR (.exr, every compression, scanline or tiled) and Radiance (.hdr) photos open as 360 images or cube-face sets at full resolution, up to 24K, kept in half-float on the GPU and tone-mapped for display. A new "HDR exposure" setting (Picture and quick panel) brightens or darkens them in EV steps, and Library thumbnails are tone-mapped too. Library cards and rows show an "EXR" or "HDR" badge so the same photo in both formats can be told apart.
+
+### Fixed
+
+- Hovering the seek bar near a bookmark or chapter now snaps the preview to it and shows its name, without needing a click.
+- Stepping to a photo that takes a while to load no longer pops up the menu with a loading card; the current photo stays in view with a small "Loading image…" status, and the menu only opens if the photo fails.
+- Viewing a 24K HDR panorama no longer pre-loads the previous and next HDR photos, which held about 2.3 GB of video memory each.
+- While music plays over a photo, a close button on the music panel closes the photo and keeps the music playing.
+
 ## [0.0.12] - 2026-11-05
 
 ### Added

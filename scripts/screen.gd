@@ -18,6 +18,7 @@ const RANGE_JPEG := 2
 const TRC_PQ := 16
 const TRC_HLG := 18
 const PRI_BT2020 := 9
+const TRANSFER_SCENE_LINEAR := 3
 const CHROMA_LEFT := 1
 const CHROMA_CENTER := 2
 const CHROMA_TOPLEFT := 3
@@ -59,6 +60,7 @@ var material := ShaderMaterial.new()
 var pick_viewport: SubViewport
 var pick_material := ShaderMaterial.new()
 var probe: AlphaProbe
+var depth_probe: DepthProbe
 var bound_playback: FFmpegVideoStreamPlayback
 var bound_serial := -1
 var last_frame_time := -1.0
@@ -92,6 +94,8 @@ func _ready() -> void:
 	probe.player = player
 	probe.detected.connect(player.apply_probe)
 	add_child(probe)
+	depth_probe = DepthProbe.new()
+	add_child(depth_probe)
 	refresh()
 
 
@@ -134,6 +138,7 @@ func _process(delta: float) -> void:
 		if _geometry_key() != geometry_key:
 			refresh()
 	probe.tick(delta, bound_serial >= 0)
+	depth_probe.tick(delta, bound_serial)
 
 
 func _geometry_key() -> String:
@@ -160,9 +165,11 @@ func refresh() -> void:
 	material.set_shader_parameter("projection", Settings.projection)
 	material.set_shader_parameter("stereo_layout", Settings.stereo)
 	material.set_shader_parameter("swap_eyes", eyes_swapped())
+	depth_probe.configure(eyes_swapped())
 	material.set_shader_parameter("single_eye", Settings.single_eye)
 	material.set_shader_parameter("fisheye_fov", Settings.fisheye_fov)
 	material.set_shader_parameter("brightness", Settings.brightness)
+	material.set_shader_parameter("hdr_exposure", pow(2.0, Settings.hdr_exposure))
 	material.set_shader_parameter("picture_supersample", Settings.photo_supersampling)
 	material.set_shader_parameter("sharpness", Settings.SHARPNESS_GAINS[clampi(Settings.sharpness_level, 0, Settings.SHARPNESS_GAINS.size() - 1)])
 	material.set_shader_parameter("gamma", float(Settings.gamma))
@@ -239,6 +246,7 @@ func update_auto_swap(head: Basis) -> void:
 	auto_swapped = swapped
 	Log.info("auto eye swap %s" % ("on" if swapped else "off"))
 	material.set_shader_parameter("swap_eyes", eyes_swapped())
+	depth_probe.configure(eyes_swapped())
 
 
 func set_view_yaw(yaw: float) -> void:
@@ -283,7 +291,7 @@ func _bind_frame(playback: FFmpegVideoStreamPlayback, current: int) -> void:
 	var picture: Texture2D = player.get_video_texture() if rgb else chroma
 	if picture == null:
 		return
-	for target in [material, pick_material, probe.material] + glow_materials:
+	for target in [material, pick_material, probe.material, depth_probe.material] + glow_materials:
 		target.set_shader_parameter("packed_rgb", rgb)
 		if rgb:
 			target.set_shader_parameter("plane_y", picture)
@@ -313,7 +321,7 @@ func _bind_image(image: VPXPanorama, info: Dictionary) -> void:
 	material.set_shader_parameter("rgb_planes", bool(info["rgb"]))
 	material.set_shader_parameter("color_matrix", 0)
 	material.set_shader_parameter("full_range", true)
-	material.set_shader_parameter("transfer_function", 0)
+	material.set_shader_parameter("transfer_function", TRANSFER_SCENE_LINEAR if info.get("hdr", false) else 0)
 	material.set_shader_parameter("wide_gamut", false)
 	refresh()
 

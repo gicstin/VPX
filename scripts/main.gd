@@ -1,6 +1,7 @@
 extends Node3D
 
 const MENU_DISTANCE := 1.5
+const IMAGE_LOADING_STATUS := "Loading image…"
 const DESKTOP_VIEW := preload("res://scripts/desktop_view.gd")
 const MediaCard := preload("res://scripts/media_card.gd")
 const DisplayMode := preload("res://scripts/display_mode.gd")
@@ -235,6 +236,13 @@ func _ready() -> void:
 	ui.recovery_requested.connect(func() -> void:
 		panel.open()
 		panel.place_in_front(camera, MENU_DISTANCE, desktop_mode or reclined))
+	ui.menu_open_check = panel.is_open
+	ui.image_loading.connect(func(active: bool) -> void:
+		if active:
+			osd.show_status(IMAGE_LOADING_STATUS, camera)
+			osd.sticky = true
+		elif osd.title_label.text == IMAGE_LOADING_STATUS:
+			osd.release())
 	ui.recovery_finished.connect(func() -> void:
 		if Settings.hide_menu_on_play and not player.paused:
 			panel.close())

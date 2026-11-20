@@ -3,6 +3,7 @@ extends Control
 signal status_requested(message: String, busy: bool)
 signal recovery_requested
 signal recovery_finished
+signal image_loading(active: bool)
 signal quit_requested
 signal close_requested
 signal pick_requested
@@ -20,7 +21,7 @@ const SEEK_STEP := 10.0
 const NAV_HEIGHT := 50
 const PRESET_HEIGHT := 58
 const STATS_INTERVAL := 0.5
-const PICTURE_SETTINGS := ["screen_size", "screen_curve", "flat_image_repeat", "edge_fade", "brightness", "gamma", "saturation", "sharpness_level"]
+const PICTURE_SETTINGS := ["screen_size", "screen_curve", "flat_image_repeat", "edge_fade", "brightness", "hdr_exposure", "gamma", "saturation", "sharpness_level"]
 const ANGLE_SETTINGS := ["angle_yaw", "angle_pitch", "angle_roll"]
 const PAN_SETTINGS := ["photo_pan_x", "photo_pan_y"]
 const MEDIA_PAGE := "Audio & subs"
@@ -32,7 +33,7 @@ const PAGE_ICONS := {"Format": "format", "Picture": "picture", "Angles": "angles
 const QUICK_AUDIO_TAB := 3
 const QUICK_SUBTITLE_TAB := 4
 const SOURCES := [["Folder", "folder"], ["Recent", "recent"], ["Favourites", "star_outline"], ["Places", "drive"], ["Network", "network"], ["Discover", "audio"]]
-const SORTS := ["Name", "Newest", "Largest", "Play count"]
+const SORTS := ["Name", "Newest", "Largest", "Play count", "Last watched"]
 const END_ACTIONS := [["stop_end", "Stop at end"], ["repeat", "Repeat"], ["playlist", "Play next"]]
 const SOURCE_TITLES := ["", "Recently played", "Favourites", "Places", "Network", "Discover radio & streams"]
 const FILTERS := ["All", "2D", "3D", "180°", "360°", "Photos"]
@@ -295,6 +296,7 @@ var web_button: Button
 var resolving_path := ""
 var pending_play_path := ""
 var recovery: Control
+var menu_open_check := Callable()
 var accessibility_size := Vector2.ZERO
 var accessibility_text_size := 0.0
 var media_rename: Node
@@ -732,6 +734,8 @@ func _build_media_page() -> void:
 	Rows.choice(subtitles, "Colour", &"subtitle_color", PackedStringArray(["White", "Yellow", "Grey"]))
 	Rows.toggle(subtitles, "Background box", &"subtitle_box")
 	Rows.stepper(subtitles, "Distance in 180 / 360", &"subtitle_distance", 1.0, 8.0, 0.25, {"decimals": 2, "suffix": " m"})
+	Rows.stepper(subtitles, "3D depth in front of video", &"subtitle_depth", 0.0, 1.0, 0.05, {"decimals": 2, "suffix": " m"})
+	Rows.toggle(subtitles, "Keep clear of nearest 3D picture", &"subtitle_depth_auto")
 	Rows.hint(subtitles, "Set Size, then choose Save size for this format. Size restores separately for each projection and 2D / 3D layout.")
 	Rows.hint(page, "Subtitle files (.srt .ass .vtt .sup ...) next to the video or in a Subs folder are found automatically. Track choices and delays are remembered per video.")
 
@@ -1099,7 +1103,7 @@ func _build_filter_row() -> void:
 	row.add_child(search_button)
 	flat_view_button = _action_button("Flat view", "folder")
 	flat_view_button.toggle_mode = true
-	flat_view_button.tooltip_text = "Show media from this folder and all subfolders"
+	flat_view_button.tooltip_text = "Show media from this folder and all subfolders; in Recent, hide folders and list only files"
 	flat_view_button.toggled.connect(func(on: bool) -> void:
 		Settings.apply("library_flat_view", on)
 		refresh_directory())
@@ -1647,7 +1651,7 @@ func _sync() -> void:
 	search_button.get_parent().visible = not discovering
 	sort_button.visible = not discovering
 	up_button.visible = not discovering
-	flat_view_button.visible = Settings.library_source == Settings.LibrarySource.FOLDER
+	flat_view_button.visible = Settings.library_source in [Settings.LibrarySource.FOLDER, Settings.LibrarySource.RECENT]
 	clear_recent_button.visible = Settings.library_source == Settings.LibrarySource.RECENT
 	if not clear_recent_button.visible:
 		_disarm_clear_recent()
@@ -1830,6 +1834,10 @@ func _on_seek_hover(event: InputEvent) -> void:
 	var motion := event as InputEventMouseMotion
 	if motion == null or seeking or not seek_slider.editable:
 		return
+	var near := marks.mark_at(motion.position)
+	if near >= 0.0:
+		_show_bubble(near, _slider_x(near))
+		return
 	var ratio := clampf((motion.position.x - _grabber_half()) / maxf(seek_slider.size.x - _grabber_half() * 2.0, 1.0), 0.0, 1.0)
 	var value := ratio * seek_slider.max_value
 	_show_bubble(value, motion.position.x)
@@ -1995,6 +2003,8 @@ func _image_stats() -> String:
 		return "loading…"
 	var info := player.image_info
 	var source := "cube 6×%d²" % info["face_size"] if info["layout"] == VPXPanorama.LAYOUT_CUBE else "%dx%d" % [info["width"], info["height"]]
+	if info.get("hdr", false):
+		source += "  ·  HDR"
 	var loading := "  ·  loading…" if player.is_loading() else ""
 	return "%s  ·  loaded in %d ms  ·  %.0f MB VRAM%s" % [source, info["total_msec"], info["vram_bytes"] / 1048576.0, loading]
 
@@ -2245,7 +2255,7 @@ func _neighbor_images(path: String) -> PackedStringArray:
 				scanner.cover(folder)
 				continue
 			neighbor = folder_covers[folder].get("cover", "")
-		if not neighbor.is_empty() and neighbor != path and PanoramaFiles.is_image(neighbor) and neighbor not in neighbors:
+		if not neighbor.is_empty() and neighbor != path and PanoramaFiles.is_image(neighbor) and neighbor.get_extension().to_lower() not in PanoramaFiles.HDR_EXTENSIONS and neighbor not in neighbors:
 			neighbors.append(neighbor)
 	return neighbors
 
@@ -2270,7 +2280,7 @@ func _refresh_cards() -> void:
 
 func _on_watch_changed(path: String) -> void:
 	_on_media_updated(path)
-	if Settings.library_unplayed_only or Settings.library_sort == Settings.LibrarySort.PLAY_COUNT:
+	if Settings.library_unplayed_only or Settings.library_sort in [Settings.LibrarySort.PLAY_COUNT, Settings.LibrarySort.LAST_WATCHED]:
 		refresh_directory(false)
 
 
@@ -2632,6 +2642,8 @@ func _select_source(source: int) -> void:
 		discovery.directory.cancel()
 		discovery.directory.started = false
 	Settings.apply("library_source", source)
+	if source == Settings.LibrarySource.RECENT and Settings.library_sort == Settings.LibrarySort.NAME:
+		Settings.apply("library_sort", Settings.LibrarySort.LAST_WATCHED)
 	refresh_directory()
 
 
@@ -2727,6 +2739,13 @@ func _scan_filter() -> Dictionary:
 				counts[path] = count
 		filter["play_counts"] = counts
 		filter["unplayed"] = Settings.library_unplayed_only
+	if Settings.library_sort == Settings.LibrarySort.LAST_WATCHED:
+		var stamps := {}
+		for path: String in Library.entries:
+			var stamp: Variant = Library.entries[path].get("played")
+			if stamp != null:
+				stamps[path] = float(stamp)
+		filter["played_at"] = stamps
 	if Settings.library_filter == Settings.LibraryFilter.ALL:
 		return filter
 	var formats := {}
@@ -2819,11 +2838,13 @@ func _show_scan(result: Dictionary) -> void:
 
 
 func _list_recent(check_paths := true) -> void:
-	var folders := Array(Library.recent_folders(RECENT_LIMIT)).filter(_query_matches)
+	var folders: Array[String] = []
+	if not Settings.library_flat_view:
+		folders.assign(Array(Library.recent_folders(RECENT_LIMIT)).filter(_query_matches))
+		folders = _sorted(folders, true)
 	var paths: Array[String] = []
 	paths.assign(Array(Library.recent_paths(RECENT_LIMIT)).filter(_wanted))
-	if Settings.library_sort == Settings.LibrarySort.PLAY_COUNT:
-		paths = _sorted(paths, false)
+	paths = _sorted(paths, false)
 	for path: String in folders:
 		_queue_item(path, true, "", _saved_context(path))
 	for path: String in paths:
@@ -3216,6 +3237,11 @@ func _sorted(paths: Array[String], folders: bool) -> Array[String]:
 		Settings.LibrarySort.PLAY_COUNT when not folders:
 			for path in paths:
 				keys[path] = Library.play_count(path)
+			paths.sort_custom(func(a: String, b: String) -> bool: return keys[a] > keys[b] or (keys[a] == keys[b] and a.naturalnocasecmp_to(b) < 0))
+		Settings.LibrarySort.LAST_WATCHED:
+			var field := "folder_visited" if folders else "played"
+			for path in paths:
+				keys[path] = float(Library.get_pref(path, field, 0.0))
 			paths.sort_custom(func(a: String, b: String) -> bool: return keys[a] > keys[b] or (keys[a] == keys[b] and a.naturalnocasecmp_to(b) < 0))
 		Settings.LibrarySort.SIZE when not folders:
 			for path in paths:

@@ -4,7 +4,7 @@ const PATH := "user://view-profiles.cfg"
 const VERSION := 1
 const MAX_PROFILES := 32
 const MAX_NAME := 64
-const KEYS := ["subtitle_size", "subtitle_size_by_format", "subtitle_offset", "subtitle_distance", "subtitle_color", "subtitle_box", "subtitle_auto", "subtitle_language", "follow_posture", "lock_horizon", "video_follow", "menu_follow", "screen_size", "screen_curve", "background", "menu_translucent", "dim_behind_menu", "auto_swap_eyes", "face_on_open", "look_gain", "flat_video_pan", "edge_fade", "accent_color"]
+const KEYS := ["subtitle_size", "subtitle_size_by_format", "subtitle_offset", "subtitle_distance", "subtitle_depth", "subtitle_depth_auto", "subtitle_color", "subtitle_box", "subtitle_auto", "subtitle_language", "follow_posture", "lock_horizon", "video_follow", "menu_follow", "screen_size", "screen_curve", "background", "menu_translucent", "dim_behind_menu", "auto_swap_eyes", "face_on_open", "look_gain", "flat_video_pan", "edge_fade", "accent_color"]
 const ADDED_KEYS := ["accent_color"]
 
 var entries: Array = []

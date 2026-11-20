@@ -94,6 +94,8 @@ func _run() -> void:
 	check(ui.scanner._ordered_playlist(PackedStringArray([audio, unheard]), {"audio_only": true, "sort": settings.LibrarySort.PLAY_COUNT, "filter": ui._scan_filter()}) == PackedStringArray([unheard]), "audio playlists retain Unplayed and favourites")
 	var audio_request := {"audio_only": true, "sort": settings.LibrarySort.PLAY_COUNT, "filter": {"play_counts": {audio: 3, unheard: 1}}}
 	check(ui.scanner._ordered_playlist(PackedStringArray([unheard, audio]), audio_request) == PackedStringArray([audio, unheard]), "audio playlists follow descending listen counts")
+	var watched_request := {"audio_only": true, "sort": settings.LibrarySort.LAST_WATCHED, "filter": {"played_at": {audio: 10.0, unheard: 20.0}}}
+	check(ui.scanner._ordered_playlist(PackedStringArray([audio, unheard]), watched_request) == PackedStringArray([unheard, audio]), "audio playlists follow most recently watched first")
 	ui.unplayed_filter_button.button_pressed = false
 	ui.favorites_filter_button.button_pressed = false
 	ui.flat_view_button.button_pressed = false

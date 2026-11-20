@@ -16,7 +16,7 @@ const FILENAME_EXAMPLES := [
 	["clip_FLAT_SBS.mp4", "Flat side-by-side 3D"],
 	["clip_EAC_MONO.mp4", "360° equi-angular cubemap"],
 ]
-const MEDIA_EXTENSIONS := ["mp4", "mkv", "mov", "webm", "avi", "m4v", "mpg", "mpeg", "ts", "m2ts", "mts", "ogv", "wmv", "flv", "jpg", "jpeg", "png", "webp"]
+const MEDIA_EXTENSIONS := ["mp4", "mkv", "mov", "webm", "avi", "m4v", "mpg", "mpeg", "ts", "m2ts", "mts", "ogv", "wmv", "flv", "jpg", "jpeg", "png", "webp", "exr", "hdr"]
 
 static var token_regex := RegEx.create_from_string("[\\p{L}\\p{N}]+")
 static var compound_regex := RegEx.create_from_string("^(?:VR)?(180|360)(LR|RL|SBS|HSBS|FSBS|TB|BT|OU|HOU|HTB|MONO|3D|3DH|3DV)?$")
@@ -256,7 +256,7 @@ static func guess_format(path: String, aspect: float, metadata := {}, title := "
 			projection = 0
 		elif stereo >= 0:
 			projection = guess_projection(stereo, aspect)
-		elif path.get_extension().to_lower() in ["jpg", "jpeg", "png", "webp"] and is_finite(aspect) and absf(aspect - 2.0) < 0.05:
+		elif path.get_extension().to_lower() in ["jpg", "jpeg", "png", "webp", "exr", "hdr"] and is_finite(aspect) and absf(aspect - 2.0) < 0.05:
 			projection = 1
 		else:
 			projection = 0

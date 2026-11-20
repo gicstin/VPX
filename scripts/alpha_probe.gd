@@ -74,21 +74,25 @@ func _run() -> void:
 	if serial != player.open_serial:
 		busy = false
 		return
+	read_pixels(viewport, func(bytes: PackedByteArray, swapped: bool) -> void: _on_bytes(bytes, swapped, serial))
+
+
+static func read_pixels(source: SubViewport, done: Callable) -> void:
 	var rd := RenderingServer.get_rendering_device()
-	var rd_texture := RenderingServer.texture_get_rd_texture(viewport.get_texture().get_rid()) if rd != null else RID()
+	var rd_texture := RenderingServer.texture_get_rd_texture(source.get_texture().get_rid()) if rd != null else RID()
 	if rd_texture.is_valid():
 		var format := rd.texture_get_format(rd_texture).format
 		var swapped: bool = format in BGRA8_FORMATS
 		if format in RGBA8_FORMATS or swapped:
-			if rd.texture_get_data_async(rd_texture, 0, _on_bytes.bind(swapped, serial)) == OK:
+			if rd.texture_get_data_async(rd_texture, 0, func(bytes: PackedByteArray) -> void: done.call(bytes, swapped)) == OK:
 				return
-	var image := viewport.get_texture().get_image()
+	var image := source.get_texture().get_image()
 	if image == null:
-		busy = false
+		done.call(PackedByteArray(), false)
 		return
 	if image.get_format() != Image.FORMAT_RGBA8:
 		image.convert(Image.FORMAT_RGBA8)
-	_on_bytes(image.get_data(), false, serial)
+	done.call(image.get_data(), false)
 
 
 func _on_bytes(bytes: PackedByteArray, swapped: bool, serial: int) -> void:

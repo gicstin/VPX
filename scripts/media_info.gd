@@ -7,6 +7,7 @@ const INDEX_PATH := "user://cache/media.json"
 const THUMB_WIDTH := 480
 const THUMB_HEIGHT := 270
 const THUMB_ASPECT := 16.0 / 9.0
+const HDR_PREVIEW_WIDTH := 2048
 const MAX_JOBS := 2
 const MAX_LOADS := 6
 const RESULT_BUDGET_USEC := 2000
@@ -363,10 +364,11 @@ func _probe_job(job: Dictionary) -> Dictionary:
 			var source := cube[PanoramaFiles.CUBE_ORDER.find("front")]
 			result["cube_source"] = source
 			result["face_size"] = PanoramaFiles.probe_size(source)
-		if path.get_extension().to_lower() in ["jpg", "jpeg"]:
+		var extension := path.get_extension().to_lower()
+		if extension in ["jpg", "jpeg"] or extension in PanoramaFiles.HDR_EXTENSIONS:
 			var size := PanoramaFiles.probe_size(path)
 			if size.x > 0 and size.y > 0:
-				result["data"] = {"streams": [{"width": size.x, "height": size.y, "codec_name": "jpeg", "avg_frame_rate": "0/1"}]}
+				result["data"] = {"streams": [{"width": size.x, "height": size.y, "codec_name": "jpeg" if extension in ["jpg", "jpeg"] else extension, "avg_frame_rate": "0/1"}]}
 				return result
 	if not _run(PROBE_SCRIPT % NICE, [path, job["output"]]):
 		result["timeout"] = true
@@ -379,7 +381,15 @@ func _probe_job(job: Dictionary) -> Dictionary:
 
 
 func _thumb_job(job: Dictionary) -> Dictionary:
-	if not _run(job["script"], job["args"]):
+	if job.has("hdr_source"):
+		var failure := VPXPanorama.write_hdr_preview(job["hdr_source"], job["args"][0], HDR_PREVIEW_WIDTH, 1.0)
+		if not failure.is_empty():
+			Log.warn("media info: HDR preview %s: %s" % [job["hdr_source"], failure])
+			return {"failed": true}
+	var ran := _run(job["script"], job["args"])
+	if job.has("hdr_source"):
+		DirAccess.remove_absolute(job["args"][0])
+	if not ran:
 		return {"timeout": true}
 	var output: String = job["output"]
 	if not FileAccess.file_exists(output) or FileAccess.get_size(output) <= 0:
@@ -463,7 +473,12 @@ func _begin_thumb(path: String, entry: Dictionary, probe: Dictionary) -> void:
 	var previous: String = entries.get(path, {}).get("thumb", "")
 	if not previous.is_empty() and previous != thumb:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(THUMB_DIR.path_join(previous)))
-	var filter := _thumb_filter(path, size, entry.get("cube", false), entry.get("meta", {}))
+	var hdr_source := source if source.get_extension().to_lower() in PanoramaFiles.HDR_EXTENSIONS and size.x > 0 else ""
+	var thumb_size := size
+	if not hdr_source.is_empty():
+		var factor := ceili(float(size.x) / HDR_PREVIEW_WIDTH)
+		thumb_size = Vector2i(ceili(float(size.x) / factor), ceili(float(size.y) / factor))
+	var filter := _thumb_filter(path, thumb_size, entry.get("cube", false), entry.get("meta", {}))
 	var output := ProjectSettings.globalize_path(THUMB_DIR.path_join(thumb))
 	entries[path] = entry
 	_mark_dirty()
@@ -471,6 +486,9 @@ func _begin_thumb(path: String, entry: Dictionary, probe: Dictionary) -> void:
 	if PanoramaFiles.is_image(path):
 		job["script"] = IMAGE_THUMB_SCRIPT % NICE
 		job["args"] = [source, output, "0", filter]
+		if not hdr_source.is_empty():
+			job["hdr_source"] = hdr_source
+			job["args"][0] = output.get_basename() + "-hdr.jpg"
 	else:
 		job["script"] = VIDEO_THUMB_SCRIPT % NICE
 		job["args"] = [source, output, "%.3f" % (float(entry["duration"]) * THUMB_POSITION), filter]
