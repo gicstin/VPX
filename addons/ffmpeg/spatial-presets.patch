@@ -1,0 +1,424 @@
+--- a/vpx_spatial_audio.cpp
++++ b/vpx_spatial_audio.cpp
+@@ -9,14 +9,13 @@
+ static constexpr float HEAD_RADIUS = 0.0875f;
+ static constexpr float SOUND_SPEED = 343.0f;
+ static constexpr float PI_F = 3.14159265f;
+-static constexpr float LFE_GAIN = 0.25f;
+ static constexpr float AMBISONIC_DIRECTIVITY = 1.73f;
+-static constexpr float REAR_CUTOFF = 3000.0f;
+-static constexpr float REAR_DEPTH = 0.5f;
+ static constexpr float VOICE_LOW = 200.0f;
+ static constexpr float VOICE_HIGH = 5000.0f;
+ static constexpr float LIMIT_KNEE = 0.8f;
+-static constexpr float BROADBAND_ILD = 0.3f;
++static constexpr float PARAM_SLEW = 0.3f;
++static constexpr float SHADOW_MIN_ANGLE = 2.618f;
++static constexpr float BASS_SHELF_Q = 0.707f;
+ 
+ float VpxSpatialAudio::Biquad::run(float p_x) {
+ 	const float y = b0 * p_x + z1;
+@@ -49,6 +48,20 @@
+ 	a2 = (1.0f - alpha) / a0;
+ }
+ 
++void VpxSpatialAudio::Biquad::set_lowshelf(float p_frequency, float p_rate, float p_gain_db) {
++	const float amplitude = std::pow(10.0f, p_gain_db / 40.0f);
++	const float w = 2.0f * PI_F * p_frequency / p_rate;
++	const float alpha = std::sin(w) / (2.0f * BASS_SHELF_Q);
++	const float cosw = std::cos(w);
++	const float root = 2.0f * std::sqrt(amplitude) * alpha;
++	const float a0 = (amplitude + 1.0f) + (amplitude - 1.0f) * cosw + root;
++	b0 = amplitude * ((amplitude + 1.0f) - (amplitude - 1.0f) * cosw + root) / a0;
++	b1 = 2.0f * amplitude * ((amplitude - 1.0f) - (amplitude + 1.0f) * cosw) / a0;
++	b2 = amplitude * ((amplitude + 1.0f) - (amplitude - 1.0f) * cosw - root) / a0;
++	a1 = -2.0f * ((amplitude - 1.0f) + (amplitude + 1.0f) * cosw) / a0;
++	a2 = ((amplitude + 1.0f) + (amplitude - 1.0f) * cosw - root) / a0;
++}
++
+ Vector3 VpxSpatialAudio::_direction(float p_azimuth_deg, float p_elevation_deg) {
+ 	const float az = p_azimuth_deg * PI_F / 180.0f;
+ 	const float el = p_elevation_deg * PI_F / 180.0f;
+@@ -177,7 +190,6 @@
+ 	input_channels = p_layout.nb_channels;
+ 	sample_rate = p_sample_rate > 0 ? p_sample_rate : 48000;
+ 	tau_k = HEAD_RADIUS * (float)sample_rate / SOUND_SPEED;
+-	rear_coefficient = 1.0f - std::exp(-2.0f * PI_F * REAR_CUTOFF / (float)sample_rate);
+ 	char name[128] = {};
+ 	av_channel_layout_describe(&p_layout, name, sizeof(name));
+ 	layout_name = String(name);
+@@ -188,6 +200,7 @@
+ 		voice_low[i].reset();
+ 	}
+ 	_build_sources(p_layout);
++	params_warm = false;
+ 	listener_primed = false;
+ 	_update_mode();
+ }
+@@ -252,6 +265,7 @@
+ 	} else {
+ 		av_channel_layout_copy(&layout, &p_layout);
+ 	}
++	float left_sum = 0.0f;
+ 	int spatial_count = 0;
+ 	for (int i = 0; i < layout.nb_channels; i++) {
+ 		const AVChannel channel = av_channel_layout_channel_from_index(&layout, i);
+@@ -268,8 +282,8 @@
+ 		source.direction = _direction(azimuth, elevation);
+ 		const float rear = std::fabs(azimuth) > 91.0f ? 0.707f : 1.0f;
+ 		if (lfe) {
+-			source.left_gain = LFE_GAIN;
+-			source.right_gain = LFE_GAIN;
++			source.left_gain = 1.0f;
++			source.right_gain = 1.0f;
+ 		} else if (azimuth > 1.0f) {
+ 			source.left_gain = rear;
+ 		} else if (azimuth < -1.0f) {
+@@ -283,11 +297,13 @@
+ 			source.right_gain *= 0.707f;
+ 		}
+ 		if (!lfe) {
++			left_sum += source.left_gain;
+ 			spatial_count++;
+ 		}
+ 		sources.push_back(source);
+ 	}
+ 	av_channel_layout_uninit(&layout);
++	downmix_norm = spatial_count > 2 ? 1.41f / std::max(left_sum, 1.0f) : 1.0f;
+ }
+ 
+ void VpxSpatialAudio::_update_mode() {
+@@ -346,17 +362,23 @@
+ 	const float theta = std::acos(cos_theta);
+ 	EarParams params;
+ 	const float travel = theta < PI_F * 0.5f ? 1.0f - cos_theta : 1.0f + (theta - PI_F * 0.5f);
+-	params.delay = (float)sample_rate * HEAD_RADIUS / SOUND_SPEED * travel;
+-	const float frontal = 1.0f - std::min(1.0f, std::max(0.0f, (theta - PI_F * 0.5f) / (PI_F * 0.5f)));
+-	params.alpha = 0.1f + 1.15f * frontal;
+-	params.gain = 1.0f + BROADBAND_ILD * cos_theta;
++	params.delay = std::min((float)(RING_SIZE - 4), (float)sample_rate * HEAD_RADIUS / SOUND_SPEED * travel * active.itd_scale);
++	float alpha;
++	if (active.classic_shadow) {
++		alpha = std::max(0.1f, 0.75f + 0.65f * std::cos(std::min(theta, PI_F) * PI_F / SHADOW_MIN_ANGLE));
++	} else {
++		const float frontal = 1.0f - std::min(1.0f, std::max(0.0f, (theta - PI_F * 0.5f) / (PI_F * 0.5f)));
++		alpha = 0.1f + 1.15f * frontal;
++	}
++	params.alpha = active.shadow_strength == 1.0f ? alpha : 1.0f + active.shadow_strength * (alpha - 1.0f);
++	params.gain = 1.0f + active.ild * cos_theta;
+ 	return params;
+ }
+ 
+ float VpxSpatialAudio::_render_source(Source &p_source, float p_input, const EarParams p_from[2], const EarParams p_to[2], float p_back_from, float p_back_to, float p_t, float &r_right) {
+ 	const float back = p_back_from + (p_back_to - p_back_from) * p_t;
+ 	p_source.rear_state += rear_coefficient * (p_input - p_source.rear_state);
+-	const float input = p_input + back * REAR_DEPTH * (p_source.rear_state - p_input);
++	const float input = p_input + back * active.rear_depth * (p_source.rear_state - p_input);
+ 	p_source.ring[p_source.ring_pos] = input;
+ 	float out[2];
+ 	const float denominator = 1.0f + tau_k;
+@@ -371,15 +393,20 @@
+ 		const int index_b = (index_a - 1 + RING_SIZE) % RING_SIZE;
+ 		const int index_c = (index_a + 1) % RING_SIZE;
+ 		const int index_d = (index_b - 1 + RING_SIZE) % RING_SIZE;
+-		const float x0 = p_source.ring[index_c];
+ 		const float x1 = p_source.ring[index_a];
+ 		const float x2 = p_source.ring[index_b];
+-		const float x3 = p_source.ring[index_d];
+-		const float c0 = x1;
+-		const float c1 = 0.5f * (x2 - x0);
+-		const float c2 = x0 - 2.5f * x1 + 2.0f * x2 - 0.5f * x3;
+-		const float c3 = 0.5f * (x3 - x0) + 1.5f * (x1 - x2);
+-		const float delayed = ((c3 * fraction + c2) * fraction + c1) * fraction + c0;
++		float delayed;
++		if (active.linear_delay) {
++			delayed = x1 + (x2 - x1) * fraction;
++		} else {
++			const float x0 = p_source.ring[index_c];
++			const float x3 = p_source.ring[index_d];
++			const float c0 = x1;
++			const float c1 = 0.5f * (x2 - x0);
++			const float c2 = x0 - 2.5f * x1 + 2.0f * x2 - 0.5f * x3;
++			const float c3 = 0.5f * (x3 - x0) + 1.5f * (x1 - x2);
++			delayed = ((c3 * fraction + c2) * fraction + c1) * fraction + c0;
++		}
+ 		const float b0 = (1.0f + alpha * tau_k) / denominator;
+ 		const float b1 = (1.0f - alpha * tau_k) / denominator;
+ 		const float y = b0 * delayed + b1 * p_source.shadow_x1[ear] - a1 * p_source.shadow_y1[ear];
+@@ -396,6 +423,52 @@
+ 	return voice_low[p_channel].run(voice_high[p_channel].run(p_mid));
+ }
+ 
++float VpxSpatialAudio::_finish(int p_ear, float p_x) {
++	if (bass_on) {
++		p_x = bass_shelf[p_ear].run(p_x);
++	}
++	return _limit(p_x);
++}
++
++static float slew_value(float p_from, float p_to) {
++	const float delta = p_to - p_from;
++	return std::fabs(delta) <= 1e-4f * (1.0f + std::fabs(p_to)) ? p_to : p_from + delta * PARAM_SLEW;
++}
++
++void VpxSpatialAudio::_advance_params() {
++	if (!params_warm) {
++		active = target;
++		params_warm = true;
++	} else {
++		active.lfe_gain = slew_value(active.lfe_gain, target.lfe_gain);
++		active.bass_db = slew_value(active.bass_db, target.bass_db);
++		active.bass_hz = slew_value(active.bass_hz, target.bass_hz);
++		active.surround_level = slew_value(active.surround_level, target.surround_level);
++		active.shadow_strength = slew_value(active.shadow_strength, target.shadow_strength);
++		active.itd_scale = slew_value(active.itd_scale, target.itd_scale);
++		active.rear_depth = slew_value(active.rear_depth, target.rear_depth);
++		active.rear_cutoff = slew_value(active.rear_cutoff, target.rear_cutoff);
++		active.ild = slew_value(active.ild, target.ild);
++		active.classic_shadow = target.classic_shadow;
++		active.linear_delay = target.linear_delay;
++		active.normalize_downmix = target.normalize_downmix;
++	}
++	rear_coefficient = 1.0f - std::exp(-2.0f * PI_F * active.rear_cutoff / (float)sample_rate);
++	const bool shelf_active = std::fabs(active.bass_db) > 0.01f;
++	if (shelf_active && (!bass_on || active.bass_db != bass_applied_db || active.bass_hz != bass_applied_hz)) {
++		if (!bass_on) {
++			bass_shelf[0].reset();
++			bass_shelf[1].reset();
++		}
++		for (int i = 0; i < 2; i++) {
++			bass_shelf[i].set_lowshelf(active.bass_hz, (float)sample_rate, active.bass_db);
++		}
++		bass_applied_db = active.bass_db;
++		bass_applied_hz = active.bass_hz;
++	}
++	bass_on = shelf_active;
++}
++
+ float VpxSpatialAudio::_limit(float p_x) {
+ 	const float magnitude = std::fabs(p_x);
+ 	if (magnitude <= LIMIT_KNEE) {
+@@ -413,6 +486,7 @@
+ 		return;
+ 	}
+ 	float *out = r_out.ptrw();
++	_advance_params();
+ 	switch (mode) {
+ 		case PASSTHROUGH:
+ 			_process_passthrough(p_in, p_frames, out);
+@@ -452,6 +526,7 @@
+ 	for (int i = 0; i < 2; i++) {
+ 		voice_high[i].reset();
+ 		voice_low[i].reset();
++		bass_shelf[i].reset();
+ 	}
+ 	listener_primed = false;
+ 	seek_fade_total = std::max(1, sample_rate / 33);
+@@ -501,6 +576,7 @@
+ void VpxSpatialAudio::_process_downmix(const float *p_in, int p_frames, float *p_out) {
+ 	const float center_boost = 1.0f + dialogue;
+ 	const float other_cut = 1.0f - 0.3f * dialogue;
++	const float norm = active.normalize_downmix ? downmix_norm : 1.0f;
+ 	for (int i = 0; i < p_frames; i++) {
+ 		const float *frame = p_in + (int64_t)i * input_channels;
+ 		float left = 0.0f;
+@@ -508,11 +584,12 @@
+ 		for (const Source &source : sources) {
+ 			const float gain = source.center ? center_boost : other_cut;
+ 			const float sample = frame[source.channel] * gain;
+-			left += sample * source.left_gain;
+-			right += sample * source.right_gain;
++			const float source_gain = source.lfe ? active.lfe_gain : 1.0f;
++			left += sample * source.left_gain * source_gain;
++			right += sample * source.right_gain * source_gain;
+ 		}
+-		p_out[i * 2] = _limit(left);
+-		p_out[i * 2 + 1] = _limit(right);
++		p_out[i * 2] = _finish(0, left * norm);
++		p_out[i * 2 + 1] = _finish(1, right * norm);
+ 	}
+ }
+ 
+@@ -529,7 +606,7 @@
+ 	for (const Source &source : sources) {
+ 		spatial_count += source.lfe ? 0 : 1;
+ 	}
+-	const float binaural_scale = 1.9f / (0.5f * (float)spatial_count + 0.5f);
++	const float binaural_scale = active.surround_level / (0.5f * (float)spatial_count + 0.5f);
+ 	struct Plan {
+ 		EarParams from[2];
+ 		EarParams to[2];
+@@ -562,8 +639,8 @@
+ 			Source &source = sources[s];
+ 			const float sample = frame[source.channel];
+ 			if (source.lfe) {
+-				left += sample * LFE_GAIN;
+-				right += sample * LFE_GAIN;
++				left += sample * active.lfe_gain;
++				right += sample * active.lfe_gain;
+ 				continue;
+ 			}
+ 			const float gain = source.center ? center_boost : other_cut;
+@@ -572,8 +649,8 @@
+ 			left += ear_left;
+ 			right += ear_right;
+ 		}
+-		p_out[i * 2] = _limit(left * binaural_scale);
+-		p_out[i * 2 + 1] = _limit(right * binaural_scale);
++		p_out[i * 2] = _finish(0, left * binaural_scale);
++		p_out[i * 2 + 1] = _finish(1, right * binaural_scale);
+ 	}
+ }
+ 
+@@ -625,8 +702,8 @@
+ 			left += ear_left;
+ 			right += ear_right;
+ 		}
+-		p_out[i * 2] = _limit(left * 1.2f);
+-		p_out[i * 2 + 1] = _limit(right * 1.2f);
++		p_out[i * 2] = _finish(0, left * 1.2f);
++		p_out[i * 2 + 1] = _finish(1, right * 1.2f);
+ 	}
+ }
+ 
+@@ -643,8 +720,8 @@
+ 				right += frame[source.channel] * source.right_gain;
+ 			}
+ 		}
+-		p_out[i * 2] = _limit(left);
+-		p_out[i * 2 + 1] = _limit(right);
++		p_out[i * 2] = _finish(0, left);
++		p_out[i * 2 + 1] = _finish(1, right);
+ 	}
+ }
+ 
+--- a/vpx_spatial_audio.h
++++ b/vpx_spatial_audio.h
+@@ -29,6 +29,21 @@
+ 	static constexpr int RING_SIZE = 128;
+ 	static constexpr int AMBISONIC_SPEAKERS = 8;
+ 
++	struct Params {
++		float lfe_gain = 0.25f;
++		float bass_db = 0.0f;
++		float bass_hz = 120.0f;
++		float surround_level = 1.9f;
++		float shadow_strength = 1.0f;
++		float itd_scale = 1.0f;
++		float rear_depth = 0.5f;
++		float rear_cutoff = 3000.0f;
++		float ild = 0.3f;
++		bool classic_shadow = false;
++		bool linear_delay = false;
++		bool normalize_downmix = false;
++	};
++
+ private:
+ 	struct Biquad {
+ 		float b0 = 1.0f;
+@@ -41,6 +56,7 @@
+ 		float run(float p_x);
+ 		void set_lowpass(float p_frequency, float p_rate, float p_q);
+ 		void set_highpass(float p_frequency, float p_rate, float p_q);
++		void set_lowshelf(float p_frequency, float p_rate, float p_gain_db);
+ 		void reset() { z1 = z2 = 0.0f; }
+ 	};
+ 
+@@ -74,6 +90,14 @@
+ 	bool ambisonic = false;
+ 	bool spatial = true;
+ 	bool mono = false;
++	float downmix_norm = 1.0f;
++	Params target;
++	Params active;
++	bool params_warm = false;
++	bool bass_on = false;
++	float bass_applied_db = 0.0f;
++	float bass_applied_hz = 0.0f;
++	Biquad bass_shelf[2];
+ 	float dialogue = 0.0f;
+ 	float tau_k = 12.0f;
+ 	float rear_coefficient = 0.3f;
+@@ -99,6 +123,8 @@
+ 	float _render_source(Source &p_source, float p_input, const EarParams p_from[2], const EarParams p_to[2], float p_back_from, float p_back_to, float p_t, float &r_right);
+ 	float _voice(int p_channel, float p_mid);
+ 	static float _limit(float p_x);
++	float _finish(int p_ear, float p_x);
++	void _advance_params();
+ 	void _apply_seek_fade(float *p_out, int p_frames, int p_channels);
+ 
+ 	void _process_passthrough(const float *p_in, int p_frames, float *p_out);
+@@ -113,6 +139,7 @@
+ 	void set_spatial(bool p_spatial);
+ 	void set_mono(bool p_mono);
+ 	void set_dialogue_boost(float p_amount) { dialogue = p_amount; }
++	void set_params(const Params &p_params) { target = p_params; }
+ 	void set_listener(const Basis &p_head_in_field) { listener = p_head_in_field.orthonormalized(); }
+ 	void note_seek();
+ 	int get_input_channels() const { return input_channels; }
+--- a/ffmpeg_video_stream.cpp
++++ b/ffmpeg_video_stream.cpp
+@@ -29,6 +29,7 @@
+ /**************************************************************************/
+ 
+ #include "ffmpeg_video_stream.h"
++#include <cmath>
+ #include <iterator>
+ 
+ #ifdef GDEXTENSION
+@@ -815,6 +816,7 @@
+ 	ClassDB::bind_method(D_METHOD("set_spatial_audio", "enabled"), &FFmpegVideoStreamPlayback::set_spatial_audio);
+ 	ClassDB::bind_method(D_METHOD("set_audio_mono", "mono"), &FFmpegVideoStreamPlayback::set_audio_mono);
+ 	ClassDB::bind_method(D_METHOD("set_dialogue_boost", "amount"), &FFmpegVideoStreamPlayback::set_dialogue_boost);
++	ClassDB::bind_method(D_METHOD("set_spatial_params", "params"), &FFmpegVideoStreamPlayback::set_spatial_params);
+ 	ClassDB::bind_method(D_METHOD("set_audio_filter", "filter"), &FFmpegVideoStreamPlayback::set_audio_filter);
+ 	ClassDB::bind_method(D_METHOD("set_tempo_quality", "quality"), &FFmpegVideoStreamPlayback::set_tempo_quality);
+ 	ClassDB::bind_method(D_METHOD("set_visualizer_enabled", "enabled"), &FFmpegVideoStreamPlayback::set_visualizer_enabled);
+@@ -950,6 +952,37 @@
+ #endif
+ }
+ 
++void FFmpegVideoStreamPlayback::set_spatial_params(const Dictionary &p_params) {
++#ifdef GDEXTENSION
++	VpxSpatialAudio::Params params;
++	const auto number = [&p_params](const char *p_key, float p_default, float p_min, float p_max) {
++		const Variant value = p_params.get(String(p_key), p_default);
++		if (value.get_type() != Variant::FLOAT && value.get_type() != Variant::INT) {
++			return p_default;
++		}
++		const float parsed = value;
++		return std::isfinite(parsed) ? CLAMP(parsed, p_min, p_max) : p_default;
++	};
++	const auto flag = [&p_params](const char *p_key, bool p_default) {
++		const Variant value = p_params.get(String(p_key), p_default);
++		return value.get_type() == Variant::BOOL || value.get_type() == Variant::INT ? (bool)value : p_default;
++	};
++	params.lfe_gain = number("lfe_gain", params.lfe_gain, 0.0f, 2.0f);
++	params.bass_db = number("bass_db", params.bass_db, -12.0f, 18.0f);
++	params.bass_hz = number("bass_hz", params.bass_hz, 40.0f, 400.0f);
++	params.surround_level = number("surround_level", params.surround_level, 0.5f, 4.0f);
++	params.shadow_strength = number("shadow_strength", params.shadow_strength, 0.0f, 1.5f);
++	params.itd_scale = number("itd_scale", params.itd_scale, 0.0f, 1.5f);
++	params.rear_depth = number("rear_depth", params.rear_depth, 0.0f, 1.0f);
++	params.rear_cutoff = number("rear_cutoff", params.rear_cutoff, 500.0f, 12000.0f);
++	params.ild = number("ild", params.ild, 0.0f, 0.8f);
++	params.classic_shadow = flag("classic_shadow", params.classic_shadow);
++	params.linear_delay = flag("linear_delay", params.linear_delay);
++	params.normalize_downmix = flag("normalize_downmix", params.normalize_downmix);
++	spatial.set_params(params);
++#endif
++}
++
+ void FFmpegVideoStreamPlayback::set_audio_filter(int p_filter) {
+ 	if (decoder.is_valid()) {
+ 		decoder->set_audio_filter(p_filter);
+--- a/ffmpeg_video_stream.h
++++ b/ffmpeg_video_stream.h
+@@ -298,6 +298,7 @@
+ 	void set_spatial_audio(bool p_enabled);
+ 	void set_audio_mono(bool p_mono);
+ 	void set_dialogue_boost(float p_amount);
++	void set_spatial_params(const Dictionary &p_params);
+ 	void set_audio_filter(int p_filter);
+ 	void set_tempo_quality(int p_quality);
+ 	Dictionary get_audio_info() const;

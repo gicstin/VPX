@@ -107,6 +107,7 @@ static func import_settings(path: String, include_library := false) -> Dictionar
 	var previous_files: Dictionary = Library.entries.duplicate(true)
 	for property: String in values:
 		Settings.set(property, values[property])
+	Settings._validate_spatial()
 	Settings.save_config()
 	error = Settings.flush()
 	if error == OK and include_library and has_library:

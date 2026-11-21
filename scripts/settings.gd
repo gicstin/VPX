@@ -206,6 +206,9 @@ var text_size := 1.0
 var accent_color := VpxTheme.DEFAULT_ACCENT
 var spatial_audio := false
 var spatial_audio_explicit := false
+var spatial_preset := SpatialPresets.CURRENT
+var spatial_overrides := {}
+var spatial_advanced := false
 var audio_mono := false
 var dialogue_boost := false
 var audio_filter := AudioFilter.OFF
@@ -404,6 +407,69 @@ func random_visualizer_preset() -> void:
 	apply("visualizer_preset", remaining.pick_random())
 
 
+func _validate_spatial() -> void:
+	if not SpatialPresets.exists(spatial_preset):
+		spatial_preset = SpatialPresets.CURRENT
+	spatial_overrides = SpatialPresets.sanitize(spatial_overrides)
+
+
+func spatial_values() -> Dictionary:
+	return SpatialPresets.resolve(spatial_preset, spatial_overrides)
+
+
+func select_spatial_preset(name: String) -> void:
+	if not SpatialPresets.exists(name):
+		return
+	var had_overrides := not spatial_overrides.is_empty()
+	spatial_overrides = {}
+	if spatial_preset == name:
+		if had_overrides:
+			save_config()
+			changed.emit()
+		return
+	apply(&"spatial_preset", name)
+
+
+func set_spatial_value(key: String, value: Variant) -> void:
+	var clean: Variant = SpatialPresets.clean_value(key, value)
+	if clean == null:
+		return
+	var next := spatial_overrides.duplicate()
+	if SpatialPresets.differs(SpatialPresets.preset_values(spatial_preset)[key], clean):
+		next[key] = clean
+	else:
+		next.erase(key)
+	apply(&"spatial_overrides", next)
+
+
+func reset_spatial_value(key: String) -> void:
+	var next := spatial_overrides.duplicate()
+	next.erase(key)
+	apply(&"spatial_overrides", next)
+
+
+func store_spatial_preset(name: String) -> String:
+	var clean := SpatialPresets.valid_name(name)
+	var problem := SpatialPresets.name_error(name, SpatialPresets.exists(clean))
+	if not problem.is_empty():
+		return problem
+	var error := SpatialPresets.save(clean, spatial_values())
+	if error != OK:
+		return "Could not save the preset: " + error_string(error)
+	select_spatial_preset(clean)
+	return ""
+
+
+func delete_spatial_preset() -> String:
+	if SpatialPresets.is_builtin(spatial_preset):
+		return "Built-in presets cannot be deleted"
+	var error := SpatialPresets.delete(spatial_preset)
+	if error != OK and error != ERR_DOES_NOT_EXIST:
+		return "Could not delete the preset: " + error_string(error)
+	select_spatial_preset(SpatialPresets.CURRENT)
+	return ""
+
+
 func _validate_visualizer() -> void:
 	music_visualizer_mode = clampi(music_visualizer_mode, 0, 2)
 	if music_visualizer_mode == 1:
@@ -451,6 +517,10 @@ func apply(property: StringName, value: Variant) -> void:
 		value = clampf(float(value), ZOOM_MIN, ZOOM_MAX)
 	if property == &"spatial_audio":
 		spatial_audio_explicit = true
+	if property == &"spatial_preset" and not (value is String and SpatialPresets.exists(value)):
+		return
+	if property == &"spatial_overrides":
+		value = SpatialPresets.sanitize(value)
 	if get(property) == value:
 		return
 	set(property, value)
@@ -674,6 +744,7 @@ func load_config() -> void:
 	if not config.has_section_key("player", "immersive_music_visualizer"):
 		immersive_music_visualizer = music_visualizer and int(config.get_value("player", "music_visualizer_mode", 1)) == 1
 	_validate_visualizer()
+	_validate_spatial()
 	if int(config.get_value("player", "screen_placement_version", 0)) < SCREEN_PLACEMENT_VERSION:
 		face_on_open = false
 		save_config()
@@ -727,7 +798,7 @@ func _persisted() -> PackedStringArray:
 		"audio_language", "subtitle_auto", "subtitle_language", "subtitle_size", "subtitle_size_by_format", "subtitle_offset", "subtitle_color", "subtitle_box", "subtitle_distance", "subtitle_depth", "subtitle_depth_auto",
 		"last_directory", "last_file", "library_view", "library_flat_view", "library_favorites_only", "library_unplayed_only", "library_sort", "library_source", "library_filter", "library_tab_session", "library_folder_scroll", "network_servers",
 		"stereo_depth", "stereo_vertical", "picture_zoom", "single_eye", "flat_image_repeat", "photo_pan_x", "photo_pan_y",
-		"auto_crop", "deband", "dither", "compositor_layer", "spatial_audio", "spatial_audio_explicit", "audio_mono", "dialogue_boost", "audio_filter",
+		"auto_crop", "deband", "dither", "compositor_layer", "spatial_audio", "spatial_audio_explicit", "spatial_preset", "spatial_overrides", "spatial_advanced", "audio_mono", "dialogue_boost", "audio_filter",
 		"remote_control", "flat_video_pan", "music_visualizer", "audio_stretch_quality", "accent_color", "ui_size", "text_size",
 		"music_visualizer_mode", "immersive_music_visualizer", "visualizer_overlay", "visualizer_overlay_opacity", "visualizer_background_dim", "visualizer_atmosphere", "visualizer_preset", "visualizer_favorites", "visualizer_starred_only", "visualizer_shuffle", "visualizer_quality", "visualizer_intensity", "visualizer_sensitivity", "visualizer_motion", "visualizer_zoom", "visualizer_sync", "visualizer_auto_change", "visualizer_grab_mode",
 	])

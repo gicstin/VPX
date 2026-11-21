@@ -406,6 +406,7 @@ git -C "$EXT" apply "$ROOT/addons/ffmpeg/radio-metadata.patch"
 git -C "$EXT" apply "$ROOT/addons/ffmpeg/music-analysis.patch"
 git -C "$EXT" apply "$ROOT/addons/ffmpeg/audio-downmix.patch"
 git -C "$EXT" apply "$ROOT/addons/ffmpeg/hdr-image.patch"
+git -C "$EXT" apply "$ROOT/addons/ffmpeg/spatial-presets.patch"
 mkdir -p "$BUILD/site_scons"
 cat >"$BUILD/site_scons/site_init.py" <<'PYEOF'
 import os

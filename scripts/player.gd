@@ -627,6 +627,8 @@ func apply_audio_processing() -> void:
 	if playback == null:
 		return
 	playback.set_spatial_audio(Settings.spatial_audio)
+	if playback.has_method("set_spatial_params"):
+		playback.set_spatial_params(Settings.spatial_values())
 	playback.set_audio_mono(Settings.audio_mono)
 	playback.set_dialogue_boost(1.0 if Settings.dialogue_boost else 0.0)
 	playback.set_audio_filter(Settings.audio_filter)

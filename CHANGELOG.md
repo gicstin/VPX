@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.0.14] - 2026-11-21
+
+### Added
+
+- Choose how surround and 360° sound is rendered under Audio: a Spatial sound preset picker with Current, Classic (the 0.0.10 sound, with its stronger sub level), Bass boost and Heavy bass, plus your own saved presets.
+- Fine-tune sound exposes the sub (LFE) level, a bass shelf with adjustable range, surround level, head shadow, head delay, rear softening and a steady stereo downmix level; edits show as Modified, can be reset per value, and are saved with Save as… or Update.
+- Saved presets live in `spatial_audio.cfg` in the VPX user data folder (Preset file shows it); every setting, plus extras such as rear cutoff and ear level difference, can be edited by hand and is picked up while the menu is open.
+
 ## [0.0.13] - 2026-11-09
 
 ### Added

@@ -229,6 +229,7 @@ else
 	git -C "$EXT" apply "$ROOT/addons/ffmpeg/music-analysis.patch"
 	git -C "$EXT" apply "$ROOT/addons/ffmpeg/audio-downmix.patch"
 	git -C "$EXT" apply "$ROOT/addons/ffmpeg/hdr-image.patch"
+	git -C "$EXT" apply "$ROOT/addons/ffmpeg/spatial-presets.patch"
 	(cd "$EXT/gdextension_build" && scons --site-dir="$BUILD/site_scons" -j"$JOBS" platform=linux target=template_release \
 		ffmpeg_path="$FFMPEG_PREFIX" dsd_path="$DSD_PREFIX" debug_symbols=no)
 	(cd "$EXT/gdextension_build" && scons --site-dir="$BUILD/site_scons" -j"$JOBS" platform=linux target=template_debug \

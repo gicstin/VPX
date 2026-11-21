@@ -146,6 +146,7 @@ const RAIL_EXPANDED := 280.0
 const RAIL_OPEN_DELAY := 0.06
 const RAIL_CLOSE_DELAY := 0.25
 const RAIL_EASE := 30.0
+const RAIL_LABEL_ROLES := ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color", "font_focus_color", "font_disabled_color"]
 const SCROLL_RESERVE := 32.0
 const SCROLL_THIN := 8.0
 const SCROLL_WIDE := 26.0
@@ -275,6 +276,8 @@ var rail_overlay: Panel
 var rail_width := RAIL_COLLAPSED
 var rail_box: StyleBoxFlat
 var rail_labeled := false
+var rail_label_alpha := -1.0
+var rail_label_colors := {}
 var rail_brand_name: Label
 var rail_expanded_width := RAIL_EXPANDED
 var rail_open := false
@@ -290,6 +293,7 @@ var calibration_rows := {}
 var photo_repeat_row: Choice
 var photo_pan_section: VBoxContainer
 var audio_info_label: Label
+var spatial_controls: VBoxContainer
 var remote_label: Label
 var web_label: Label
 var web_button: Button
@@ -532,6 +536,7 @@ func _build_rail() -> void:
 	body.move_child(rail_slot, rail.get_index())
 	rail_overlay = Panel.new()
 	rail_overlay.theme_type_variation = &"RailOverlay"
+	rail_overlay.top_level = true
 	add_child(rail_overlay)
 	rail_box = rail_overlay.get_theme_stylebox("panel").duplicate() as StyleBoxFlat
 	rail_overlay.add_theme_stylebox_override("panel", rail_box)
@@ -545,6 +550,10 @@ func _build_rail() -> void:
 	rail.size_flags_vertical = SIZE_EXPAND_FILL
 	rail.custom_minimum_size.x = 0
 	rail.position = Vector2.ZERO
+	var bottom_gap := Control.new()
+	bottom_gap.custom_minimum_size.y = 6
+	bottom_gap.mouse_filter = MOUSE_FILTER_IGNORE
+	rail.add_child(bottom_gap)
 	var brand: HBoxContainer = rail.get_node("Brand")
 	brand.alignment = BoxContainer.ALIGNMENT_BEGIN
 	brand.add_theme_constant_override("separation", 0)
@@ -593,7 +602,8 @@ func _collapse_rail() -> void:
 
 func _update_rail(delta: float) -> void:
 	rail_overlay.visible = $Sheet.visible
-	var hovering := rail_overlay.visible and Rect2(rail_overlay.global_position, Vector2(rail_width, rail_overlay.size.y)).has_point(pointer_position)
+	var hover_width := maxf(rail_width, rail_expanded_width if rail_open else RAIL_COLLAPSED)
+	var hovering := rail_overlay.visible and Rect2(rail_overlay.global_position, Vector2(hover_width, rail_overlay.size.y)).has_point(pointer_position)
 	if not hovering:
 		rail_suppressed = false
 	if hovering and not rail_suppressed:
@@ -628,6 +638,24 @@ func _layout_rail() -> void:
 	rail.custom_minimum_size.x = maxf(rail_width - rail_scroll.get_v_scroll_bar().size.x, 0.0)
 	settings_heading.modulate.a = clampf((rail_width - 140.0) / 80.0, 0.0, 1.0)
 	rail_brand_name.modulate.a = clampf((rail_width - RAIL_COLLAPSED - 8.0) / 60.0, 0.0, 1.0)
+	_fade_rail_labels(roundf(clampf((rail_width - RAIL_COLLAPSED - 24.0) / 90.0, 0.0, 1.0) * 24.0) / 24.0)
+
+
+func _fade_rail_labels(alpha: float) -> void:
+	if is_equal_approx(alpha, rail_label_alpha):
+		return
+	rail_label_alpha = alpha
+	for button: Button in nav_buttons + [tabs.get_node("SettingsSearch"), %ModeButton, %CloseButton, %QuitButton]:
+		if not rail_label_colors.has(button):
+			var base := {}
+			for role in RAIL_LABEL_ROLES:
+				base[role] = button.get_theme_color(role)
+			rail_label_colors[button] = base
+		var base: Dictionary = rail_label_colors[button]
+		for role in RAIL_LABEL_ROLES:
+			var color: Color = base[role]
+			color.a *= alpha
+			button.add_theme_color_override(role, color)
 
 
 func _build_scroll_bars() -> void:
@@ -704,6 +732,11 @@ func _build_media_page() -> void:
 	var audio := Rows.section(page, "Audio")
 	Rows.dropdown(audio, "Preferred audio language", &"audio_language", PackedStringArray(["File default"]) + Languages.names())
 	Rows.toggle(audio, "Spatial audio (surround and 360 sound follow your head)", &"spatial_audio")
+	spatial_controls = preload("res://scripts/spatial_controls.gd").new()
+	spatial_controls.name_requested.connect(func() -> void:
+		keyboard_purpose = "spatial_preset"
+		keyboard.open("Save spatial sound preset", "", "Name your sound preset"))
+	audio.add_child(spatial_controls)
 	Rows.toggle(audio, "Downmix to mono", &"audio_mono")
 	Rows.toggle(audio, "Dialogue boost", &"dialogue_boost")
 	Rows.choice(audio, "Loudness", &"audio_filter", PackedStringArray(["Off", "Even out", "Night mode"]))
@@ -1420,6 +1453,8 @@ func _on_keyboard_submitted(text: String) -> void:
 		"rename_media":
 			rename_name.text = text
 			_validate_rename_name(text)
+		"spatial_preset":
+			spatial_controls.save_named(text)
 		"profile_save":
 			Settings.profiles.save_current(text)
 			Settings.changed.emit()
