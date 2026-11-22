@@ -737,6 +737,7 @@ func _build_media_page() -> void:
 		keyboard_purpose = "spatial_preset"
 		keyboard.open("Save spatial sound preset", "", "Name your sound preset"))
 	audio.add_child(spatial_controls)
+	audio.add_child(preload("res://scripts/stereo_controls.gd").new())
 	Rows.toggle(audio, "Downmix to mono", &"audio_mono")
 	Rows.toggle(audio, "Dialogue boost", &"dialogue_boost")
 	Rows.choice(audio, "Loudness", &"audio_filter", PackedStringArray(["Off", "Even out", "Night mode"]))
@@ -1995,8 +1996,10 @@ func _refresh_audio_info() -> void:
 	audio_info_label.text = "Now playing: %s%s" % [info.get("description", "no audio"), "  ·  separate web audio" if info.get("external", false) else ""]
 	if bool(info.get("mono", false)):
 		audio_info_label.text += "\nDownmixed to mono."
+	elif int(info.get("channels", 0)) == 2 and int(info.get("stereo_mode", 0)) != 0:
+		audio_info_label.text += "\nStereo sound is on. Surround processing needs 5.1 / 7.1 or ambisonic audio."
 	elif int(info.get("channels", 0)) in [1, 2] and not bool(info.get("ambisonic", false)):
-		audio_info_label.text += "\nMono / stereo plays unchanged. Head-tracked spatial processing needs surround or ambisonic audio."
+		audio_info_label.text += "\nMono / stereo plays unchanged unless Stereo sound is turned on. Head-tracked surround needs 5.1 / 7.1 or ambisonic audio."
 
 
 func _update_stats() -> void:
@@ -4117,7 +4120,7 @@ func _build_speed_control() -> void:
 	speed_button.action_mode = BaseButton.ACTION_MODE_BUTTON_RELEASE
 	speed_button.theme_type_variation = &"CompactOption"
 	speed_button.custom_minimum_size = Vector2(120, 52)
-	speed_button.tooltip_text = "Playback speed · 1× resets normal speed"
+	speed_button.tooltip_text = "Playback speed · 1× resets normal speed · other speeds stretch the audio and lower its quality"
 	for speed: float in SPEEDS:
 		speed_button.add_item("%.2f×" % speed)
 	speed_button.item_selected.connect(func(index: int) -> void: Settings.apply("playback_speed", SPEEDS[index]))

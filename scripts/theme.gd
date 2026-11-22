@@ -24,6 +24,7 @@ const ACCENT_PRESETS := [
 ]
 const TEXT := Color("e4e8ec")
 const MUTED := Color("adb6bf")
+const WARNING := Color("f2b950")
 const FAINT := Color("858f99")
 const FOCUS := Color("f3ce85")
 const FAVORITE := Color("e8bd72")
@@ -556,6 +557,9 @@ static func _labels(theme: Theme) -> void:
 	theme.set_type_variation("Hint", "Label")
 	theme.set_font_size("font_size", "Hint", 21)
 	theme.set_color("font_color", "Hint", MUTED)
+	theme.set_type_variation("Warning", "Label")
+	theme.set_font_size("font_size", "Warning", 21)
+	theme.set_color("font_color", "Warning", WARNING)
 
 
 static func _panels(theme: Theme) -> void:

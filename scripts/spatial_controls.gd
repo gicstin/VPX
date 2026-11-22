@@ -168,7 +168,7 @@ func _sync() -> void:
 	advanced.visible = Settings.spatial_advanced
 	var text := notice
 	if text.is_empty():
-		text = "Presets shape 5.1 / 7.1 surround and 360° sound; stereo plays unchanged. Classic restores the 0.0.10 sound."
+		text = "Presets shape 5.1 / 7.1 surround and 360° sound. Classic restores the 0.0.10 sound. Stereo has its own settings below."
 		if SpatialPresets.file_exists():
 			text += "\nSaved presets: " + SpatialPresets.file_path()
 	status.text = text

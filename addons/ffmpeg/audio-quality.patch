@@ -1,0 +1,26 @@
+--- a/video_decoder.cpp
++++ b/video_decoder.cpp
+@@ -3223,6 +3223,12 @@
+ 	const bool high_quality = !p_fast && requested_tempo_quality.load() == 0 && avfilter_get_by_name("rubberband") != nullptr;
+ 	if (Math::abs(p_tempo - 1.0) > 0.001) {
+ 		chain.push_back(high_quality ? vformat("rubberband=tempo=%f:transients=mixed:detector=soft:phase=laminar:channels=together", p_tempo) : vformat("atempo=%f", p_tempo));
++		if (high_quality) {
++			chain.push_back("volume=1.5dB");
++			if (p_filter == 0) {
++				chain.push_back("alimiter=limit=0.98:level=0");
++			}
++		}
+ 	}
+ 	if (p_filter == 1) {
+ 		chain.push_back("acompressor=threshold=0.125:ratio=3:attack=10:release=300:makeup=2.5:knee=4");
+@@ -3286,6 +3292,10 @@
+ 		const int alloc_result = swr_alloc_set_opts2(&swr_context, &output_ch_layout, p_target_audio_format, output_sample_rate,
+ 				&in_layout, (AVSampleFormat)p_frame->format, p_frame->sample_rate, 0, nullptr);
+ 		av_channel_layout_uninit(&in_layout);
++		if (alloc_result >= 0) {
++			av_opt_set_int(swr_context, "filter_size", 128, 0);
++			av_opt_set_double(swr_context, "cutoff", 0.995, 0);
++		}
+ 		if (alloc_result < 0 || swr_init(swr_context) < 0) {
+ 			print_line("Failed to obtain SWR context");
+ 			swr_free(&swr_context);

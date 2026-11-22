@@ -120,7 +120,7 @@ func _process(delta: float) -> void:
 	var texture := player.get_video_texture()
 	var has_video := playback != null and texture != null and texture.get_height() > 0
 	var immersive_music := player.is_immersive_visualizer_active() and not player.is_visualizer_overlay_active()
-	visible = has_video and not hidden_by_layer and not immersive_music
+	visible = has_video and not hidden_by_layer and not immersive_music and not player.is_music_mode()
 	if not has_video:
 		return
 	var state: Dictionary = playback.get_frame_state()

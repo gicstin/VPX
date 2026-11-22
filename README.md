@@ -31,7 +31,7 @@ Use it on desktop or in VR. Music can play over photos or with a 3D visualiser t
 
 Play surround-sound music and video, including AC3 (Dolby Digital), DTS and multichannel FLAC files from DVD and Blu-ray music collections.
 
-With **Spatial audio** enabled under **Audio & subs**, VPX renders 5.1 / 7.1 multichannel audio as virtual speakers around the screen. Head-tracked 3D audio responds as you turn your head in VR, including audio rotation for 360° ambisonic sound. Mono and stereo tracks play unchanged.
+With **Spatial audio** enabled under **Audio & subs**, VPX renders 5.1 / 7.1 multichannel audio as virtual speakers around the screen. Head-tracked 3D audio responds as you turn your head in VR, including audio rotation for 360° ambisonic sound. Mono and stereo tracks play unchanged unless you turn on **Stereo sound** (virtual speakers or crossfeed, with optional treble softening) to ease the hard left/right separation of headphones.
 
 ## Start playing
 

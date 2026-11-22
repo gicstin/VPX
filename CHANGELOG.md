@@ -6,6 +6,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.0.15] - 2026-11-22
+
+### Added
+
+- Stereo sound under Audio, off by default: Speakers turns stereo music and video into two virtual speakers in front of you (angle 20° to 60°, adjustable effect strength, tone-matched so centred sound and the overall loudness stay put), so each ear also hears the far side with a natural delay, level and softening instead of the hard left and right separation of headphones. Crossfeed narrows only the low-frequency stereo difference and adds a softened, slightly delayed bleed to the other ear, leaving centred sound and the mono sum exactly as recorded.
+- Stereo sound has a fourth mode, Upmix: it finds the centre of a recording (voices, bass, solos) and its ambience, and plays them from five virtual speakers, a real centre in front and the ambience softened behind you. Centred sound comes out cleaner than with Speakers (no phantom-centre comb filtering), and mono recordings play from a true centre. Centre extraction and Ambience behind you each have a 0 to 100% control.
+- Room reflections (0 to 100%) add six light early reflections, with the bass filtered out of them so low notes stay tight, to take sound out of your head. Virtual distance (0 to 100%) moves the speakers away: more treble rolloff (up to 6 dB) and more room together. Both work in every stereo mode and keep the overall loudness steady.
+- Head width (13 to 22 cm, default 17.5) personalises the delay between your ears for all spatial sound: stereo speakers and upmix, 5.1 and 7.1.
+- Bass translation (0 to 100%) adds harmonics of deep bass so small headphones and speakers hint at notes they cannot reproduce, without touching anything above 150 Hz.
+- Soften highs (0 to 9 dB) gently rolls off the treble in either stereo mode, and the speakers can stay put or follow your head turns in a headset.
+- Switching stereo sound on, off or between modes crossfades instead of clicking.
+
+### Changed
+
+- A warning now appears under Speed (in the menu and the quick panel) whenever the speed is not 1× and the audio time stretcher is on, saying that it lowers sound quality; Fast mode gets stronger wording. The speed button's tooltip says the same.
+- Stereo speakers and crossfeed limit loud peaks with a clean look-ahead limiter (1.5 ms delay, 80 ms release) instead of a soft clip, so loud masters keep their shape.
+- Crossfeed no longer lifts the stereo difference by up to 3 dB around 1 to 3 kHz; it now only narrows it.
+- Changing playback speed with the high quality time stretcher no longer makes music 1.5 to 2.5 dB quieter; a 1.5 dB makeup gain and a 0.98 safety limiter now keep the level steady.
+- Sample rate conversion (for example 44.1 kHz files on a 48 kHz output) uses a longer, sharper filter: flat to 20 kHz instead of drooping 0.5 dB, and 35 dB better rejection of images above the old cutoff.
+
+### Fixed
+
+- A single corrupt audio sample (NaN, infinity or a huge value from a damaged file or stream) no longer leaves the spatial and stereo processing stuck on garbage until the next seek.
+- Spatial audio, crossfeed and speakers no longer stall or crackle after loud sound ends: tiny floating point values are flushed instead of slowing the processor down.
+- Turning bass boost or treble softening on, off or changing it mid-playback no longer clicks.
+- Spatial filters stay stable at unusual output sample rates (8 kHz to 192 kHz).
+
+### Fixed
+
+- Music without a visualizer no longer shows a dark blue backdrop (after a photo, a visualizer, or on tracks without album art); the background is pure black again.
+
 ## [0.0.14] - 2026-11-21
 
 ### Added

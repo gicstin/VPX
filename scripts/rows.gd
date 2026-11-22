@@ -81,5 +81,6 @@ static func playback(parent: Control) -> VBoxContainer:
 	var rows := section(parent, "Playback")
 	dropdown(rows, "Audio speed quality", &"audio_stretch_quality", PackedStringArray(["High quality", "Fast"]))
 	stepper(rows, "Speed", &"playback_speed", 0.5, 2.0, 0.25, {"decimals": 2, "suffix": "×", "resettable": true})
+	rows.add_child(preload("res://scripts/stretch_warning.gd").new())
 	choice(rows, "Sleep timer", &"sleep_timer", PackedStringArray(["Off", "15 m", "30 m", "45 m", "60 m", "90 m", "End"]))
 	return rows

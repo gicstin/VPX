@@ -22,6 +22,7 @@ enum SleepTimer { OFF, MIN_15, MIN_30, MIN_45, MIN_60, MIN_90, END_OF_VIDEO }
 enum LibraryFilter { ALL, FLAT_2D, FLAT_3D, VR_180, VR_360, PHOTOS }
 enum AudioFilter { OFF, LEVEL, NIGHT }
 enum Deband { OFF, LOW, MEDIUM, HIGH }
+enum StereoMode { OFF, SPEAKERS, CROSSFEED, UPMIX }
 
 const CONFIG_PATH := "user://settings.cfg"
 const VISUALIZER_PRESET_MAX := 112
@@ -124,6 +125,20 @@ const VISUALIZER_STUDIO_GUIDES := [
 	"Walk-in hall · Each light shaft is a sound, placed left ↔ right where it sits in the mix · Pillars glow toward louder directions and carry a band of light up on every beat · The vault brightens before louder sections · Drops lift the whole hall",
 	"Walk-in deep sea · Each glowing drifter is a sound, placed left ↔ right where it sits in the mix · Kelp lights toward louder directions and pulses on the beat · Surface caustics follow sustained tones · Build-ups pull light ahead, drops send a wave across the seabed",
 ]
+const STEREO_LIMITS := {
+	&"stereo_mode": Vector2(0, 3),
+	&"stereo_angle": Vector2(20, 60),
+	&"stereo_amount": Vector2(0, 1),
+	&"crossfeed_db": Vector2(-12, -1),
+	&"crossfeed_hz": Vector2(300, 2000),
+	&"air_db": Vector2(0, 9),
+	&"head_width_cm": Vector2(13, 22),
+	&"room_amount": Vector2(0, 1),
+	&"stereo_distance": Vector2(0, 1),
+	&"bass_translate": Vector2(0, 1),
+	&"upmix_centre": Vector2(0, 1),
+	&"upmix_ambience": Vector2(0, 1),
+}
 const SCREEN_PLACEMENT_VERSION := 1
 const SCREEN_DISTANCE := 3.0
 const ZOOM_MIN := 0.5
@@ -209,6 +224,19 @@ var spatial_audio_explicit := false
 var spatial_preset := SpatialPresets.CURRENT
 var spatial_overrides := {}
 var spatial_advanced := false
+var stereo_mode := StereoMode.OFF
+var stereo_angle := 30.0
+var stereo_amount := 1.0
+var crossfeed_db := -4.5
+var crossfeed_hz := 700.0
+var air_db := 0.0
+var stereo_tracked := false
+var head_width_cm := 17.5
+var room_amount := 0.0
+var stereo_distance := 0.0
+var bass_translate := 0.0
+var upmix_centre := 1.0
+var upmix_ambience := 0.5
 var audio_mono := false
 var dialogue_boost := false
 var audio_filter := AudioFilter.OFF
@@ -417,6 +445,28 @@ func spatial_values() -> Dictionary:
 	return SpatialPresets.resolve(spatial_preset, spatial_overrides)
 
 
+func stereo_values() -> Dictionary:
+	var values := {"stereo_tracked": stereo_tracked}
+	for key: StringName in STEREO_LIMITS:
+		if key == &"head_width_cm":
+			values["head_radius"] = head_width_cm / 200.0
+		else:
+			values[key] = get(key)
+	return values
+
+
+func _validate_stereo() -> void:
+	for key: StringName in STEREO_LIMITS:
+		var limit: Vector2 = STEREO_LIMITS[key]
+		var value: Variant = get(key)
+		if not (value is int or value is float) or not is_finite(float(value)):
+			set(key, defaults.get(key))
+			continue
+		value = clampf(float(value), limit.x, limit.y)
+		set(key, int(round(value)) if key == &"stereo_mode" else value)
+	stereo_tracked = bool(stereo_tracked)
+
+
 func select_spatial_preset(name: String) -> void:
 	if not SpatialPresets.exists(name):
 		return
@@ -515,6 +565,13 @@ func apply(property: StringName, value: Variant) -> void:
 		if not (value is float or value is int) or not is_finite(float(value)):
 			return
 		value = clampf(float(value), ZOOM_MIN, ZOOM_MAX)
+	if STEREO_LIMITS.has(property):
+		if not (value is int or value is float) or not is_finite(float(value)):
+			return
+		var limit: Vector2 = STEREO_LIMITS[property]
+		value = clampf(float(value), limit.x, limit.y)
+		if property == &"stereo_mode":
+			value = int(round(value))
 	if property == &"spatial_audio":
 		spatial_audio_explicit = true
 	if property == &"spatial_preset" and not (value is String and SpatialPresets.exists(value)):
@@ -745,6 +802,7 @@ func load_config() -> void:
 		immersive_music_visualizer = music_visualizer and int(config.get_value("player", "music_visualizer_mode", 1)) == 1
 	_validate_visualizer()
 	_validate_spatial()
+	_validate_stereo()
 	if int(config.get_value("player", "screen_placement_version", 0)) < SCREEN_PLACEMENT_VERSION:
 		face_on_open = false
 		save_config()
@@ -798,7 +856,7 @@ func _persisted() -> PackedStringArray:
 		"audio_language", "subtitle_auto", "subtitle_language", "subtitle_size", "subtitle_size_by_format", "subtitle_offset", "subtitle_color", "subtitle_box", "subtitle_distance", "subtitle_depth", "subtitle_depth_auto",
 		"last_directory", "last_file", "library_view", "library_flat_view", "library_favorites_only", "library_unplayed_only", "library_sort", "library_source", "library_filter", "library_tab_session", "library_folder_scroll", "network_servers",
 		"stereo_depth", "stereo_vertical", "picture_zoom", "single_eye", "flat_image_repeat", "photo_pan_x", "photo_pan_y",
-		"auto_crop", "deband", "dither", "compositor_layer", "spatial_audio", "spatial_audio_explicit", "spatial_preset", "spatial_overrides", "spatial_advanced", "audio_mono", "dialogue_boost", "audio_filter",
+		"auto_crop", "deband", "dither", "compositor_layer", "spatial_audio", "spatial_audio_explicit", "spatial_preset", "spatial_overrides", "spatial_advanced", "stereo_mode", "stereo_angle", "stereo_amount", "crossfeed_db", "crossfeed_hz", "air_db", "stereo_tracked", "head_width_cm", "room_amount", "stereo_distance", "bass_translate", "upmix_centre", "upmix_ambience", "audio_mono", "dialogue_boost", "audio_filter",
 		"remote_control", "flat_video_pan", "music_visualizer", "audio_stretch_quality", "accent_color", "ui_size", "text_size",
 		"music_visualizer_mode", "immersive_music_visualizer", "visualizer_overlay", "visualizer_overlay_opacity", "visualizer_background_dim", "visualizer_atmosphere", "visualizer_preset", "visualizer_favorites", "visualizer_starred_only", "visualizer_shuffle", "visualizer_quality", "visualizer_intensity", "visualizer_sensitivity", "visualizer_motion", "visualizer_zoom", "visualizer_sync", "visualizer_auto_change", "visualizer_grab_mode",
 	])
